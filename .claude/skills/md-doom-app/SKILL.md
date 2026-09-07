@@ -92,7 +92,7 @@ while (true) {
   `fb_core1_dispatch` per `fb_core1_wait`, never across a publish.
 - **Flash programming** (`pack_load`) parks Core 1 and disables
   interrupts per chunk; never call it from Core 1 or from an IRQ, and stop
-  sounds first (Core 1 mixes from the pack while idle).
+  sounds first (the audio interrupt mixes from the pack).
 - **The cart FB is written in place** by `doom_video_publish` between
   `fb_wait_blit_ack` and `fb_frame_done`; keep that window short.
 

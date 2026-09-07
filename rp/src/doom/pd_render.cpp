@@ -274,11 +274,8 @@ static __aligned(4) int16_t column_heads[SCREENWIDTH * 2] __cart_app_free("colhe
 #define fuzzy_column_heads (&column_heads[SCREENWIDTH])
 
 static void SafeUpdateSound() {
-    /* MD/DOOM: on Core 1 this is the audio refill (it paces itself to the
-     * VBL); on Core 0 there is nothing to do. */
-    if (get_core_num()) {
-        audio_render_frame();
-    }
+    /* MD/DOOM: nothing to do -- the audio buffer is refilled from a
+     * VBL-synced timer interrupt on Core 0 (audio_start_vbl_timer). */
 }
 
 static bool column_is_psprite(const pd_column &c) {

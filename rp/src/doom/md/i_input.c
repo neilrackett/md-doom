@@ -18,6 +18,7 @@
 #include "i_input.h"
 #include "m_argv.h"
 
+#include "audio.h"
 #include "doom/doomstat.h"
 #include "doom_input.h"
 #include "doom_video.h"
@@ -29,6 +30,7 @@
  * means anything to Doom. */
 #define SCAN_KP_MULTIPLY 0x66
 #define SCAN_KP_DIVIDE 0x65
+#define SCAN_KP_MINUS 0x4A /* debug: toggle the audio refill interrupt */
 
 extern void I_MD_SaveVideoSettings(void);
 
@@ -115,6 +117,16 @@ void I_GetEvent(void) {
   while (ikbd_pop_key(&k)) {
     if (k.scancode == SCAN_KP_MULTIPLY || k.scancode == SCAN_KP_DIVIDE) {
       if (k.is_press) cycle_video_mode(k.scancode);
+      continue;
+    }
+    if (k.scancode == SCAN_KP_MINUS) {
+      if (k.is_press) {
+        const int c = audio_vbl_timer_core();
+        audio_stop_vbl_timer();
+        if (c < 0) audio_start_vbl_timer(0); else if (c == 0) audio_start_vbl_timer(1);
+        players[consoleplayer].message = audio_vbl_timer_core() < 0 ? "AUDIO IRQ OFF"
+                                         : audio_vbl_timer_core() == 0 ? "AUDIO IRQ CORE 0" : "AUDIO IRQ CORE 1";
+      }
       continue;
     }
     const int key = doom_input_translate(k.scancode);

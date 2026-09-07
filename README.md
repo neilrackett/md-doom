@@ -70,7 +70,7 @@ python3 tools/levelpack.py DOOM1.WAD packs --doom-src rp/src/doom/doom \
 
 ## How it works
 
-The RP2040 runs Doom on Core 0 at 400 MHz, rendering 320x200 bytes of palette indices. After every frame both cores map those through a 16-colour dither lookup and pack the ST's four bitplanes straight into the cartridge framebuffer, in the m68k's slack between one blit and the next; the m68k blits that to the ST screen every VBL. Core 1 also mixes the sound effects whenever it's idle, so audio keeps up however long a frame takes. Input, the palette and sound ride the cartridge bus in both directions.
+The RP2040 runs Doom on Core 0 at 400 MHz, rendering 320x200 bytes of palette indices. After every frame both cores map those through a 16-colour dither lookup and pack the ST's four bitplanes straight into the cartridge framebuffer, in the m68k's slack between one blit and the next; the m68k blits that to the ST screen every VBL. Sound effects are mixed from a timer interrupt in step with the ST's VBL, so audio keeps up however long a frame takes. Input, the palette and sound ride the cartridge bus in both directions.
 
 ```
 IKBD keys + joystick       ──$FB82xx──►  demux → Doom events

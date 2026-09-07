@@ -15,8 +15,9 @@
  *              and replaces the I2S buffer pool with the framework's
  *              per-VBL fill callback: mono 8-bit, at whichever rate and
  *              length the m68k asks for (STE DMA PCM or YM volume pairs).
- *              Mixing runs on Core 1 while it is otherwise idle, so it
- *              keeps up regardless of the frame rate. No music.
+ *              Mixing runs from the VBL-synced timer interrupt on Core 1
+ *              (audio_start_vbl_timer), so it keeps up regardless of the
+ *              frame rate. No music.
  */
 #include "config.h"
 
@@ -34,12 +35,14 @@
 #include "i_picosound.h"
 #include "audio.h"
 #include "doom_sound.h"
-#include "hardware/regs/addressmap.h"
+#include "hardware/sync.h"
 
 #define ADPCM_BLOCK_SIZE 128
 
 /* MD/DOOM: output rate follows the detected back-end. */
 static uint32_t s_out_rate = DOOM_SOUND_RATE_DMA;
+static spin_lock_t *s_mix_lock; /* channel state: game core vs. the mixer's interrupt */
+extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing; /* debug counters, defined below */
 static audio_mode_t s_mode_for_steps = AUDIO_MODE_SILENT;
 #define PICO_SOUND_SAMPLE_FREQ s_out_rate
 #define ADPCM_SAMPLES_PER_BLOCK_SIZE 249
@@ -291,12 +294,19 @@ static int I_Pico_StartSound(should_be_const sfxinfo_t *sfxinfo, int channel, in
 {
     if (!check_and_init_channel(channel)) return -1;
 
+    /* MD/DOOM: the mixer runs from a timer interrupt on this core, so the
+     * channel must not look playable while it is half set up (upstream
+     * decodes the first block before zeroing the offset). */
+    md_sound_dbg_starts++;
+    /* The mixer may be running from an interrupt on either core. */
+    uint32_t ints = spin_lock_blocking(s_mix_lock);
     stop_channel(channel);
     channel_t *ch = &channels[channel];
     if (!init_channel_for_sfx(ch, sfxinfo, pitch)) {
         assert(!is_channel_playing(channel)); // don't expect to have to mark it sotpped
     }
     I_Pico_UpdateSoundParams(channel, vol, sep);
+    spin_unlock(s_mix_lock, ints);
     return channel;
 }
 
@@ -321,7 +331,19 @@ static void I_Pico_UpdateSound(void)
 
 /* Per-VBL fill: mix every playing channel onto `bytes` of output in the
  * detected back-end's format. Runs on Core 1 (see fb_core1_loop). */
+volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
+
+static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes);
+
 void I_MD_SoundFill(uint8_t *buf, uint32_t bytes)
+{
+    if (!s_mix_lock) { memset(buf, 0, bytes); return; }
+    uint32_t ints = spin_lock_blocking(s_mix_lock);
+    I_MD_SoundFillLocked(buf, bytes);
+    spin_unlock(s_mix_lock, ints);
+}
+
+static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes)
 {
     const audio_mode_t mode = audio_get_mode();
     if (!sound_initialized || mode == AUDIO_MODE_SILENT) {
@@ -340,14 +362,16 @@ void I_MD_SoundFill(uint8_t *buf, uint32_t bytes)
         s_mode_for_steps = mode;
     }
 
-    /* MD/DOOM: 1 KB at the bottom of the USB DPRAM, which nothing else
-     * uses (the renderer's vpatch lists sit at +0x400). */
-    int16_t *mix = (int16_t *)USBCTRL_DPRAM_BASE;
+    /* MD/DOOM: 1 KB in scratch X, below Core 1's stack. */
+    static int16_t mix[512] __attribute__((section(".scratch_x.sfxmix")));
     if (nsamp > 512u) return;
     memset(mix, 0, nsamp * sizeof(mix[0]));
 
+    uint32_t playing = 0;
     for (int ch = 0; ch < NUM_SOUND_CHANNELS; ch++) {
         if (!is_channel_playing(ch)) continue;
+        playing++;
+        if (playing > md_sound_dbg_max_playing) md_sound_dbg_max_playing = playing;
         channel_t *channel = &channels[ch];
         /* Mono: the louder side, so a sound to one side keeps its level. */
         int vol = channel->left > channel->right ? channel->left : channel->right;
@@ -407,6 +431,7 @@ static void I_Pico_ShutdownSound(void)
 static boolean I_Pico_InitSound(boolean _use_sfx_prefix)
 {
     use_sfx_prefix = _use_sfx_prefix;
+    s_mix_lock = spin_lock_instance(PICO_SPINLOCK_ID_OS1);
     for (int i = 0; i < NUM_SOUND_CHANNELS; i++) stop_channel(i);
     audio_set_fill_callback(I_MD_SoundFill);
     sound_initialized = true;

@@ -120,6 +120,9 @@ void emul_start() {
   // reported by the m68k over the cart bus; audio.c decodes that report
   // from the ROM3 ring and picks the matching sample format.
   audio_init();
+  // Refill the cart audio buffer from a timer interrupt, in step with the
+  // m68k's VBL, so sound never depends on how long a frame takes.
+  audio_start_vbl_timer(1);
 
   // SD card -- best effort. Level packs live in `folderName`.
   FATFS fsys;

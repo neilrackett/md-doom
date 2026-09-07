@@ -35,6 +35,7 @@
 #ifndef AUDIO_H_INCLUDED
 #define AUDIO_H_INCLUDED
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -89,8 +90,27 @@ void audio_init(void);
 
 /* Drain the per-VBL pacing timer and (if a callback is installed)
  * invoke it to refill the cart buffer. Call once per main-loop
- * iteration; the internal time_us_32 pacing throttles to ~50 Hz. */
+ * iteration; the internal time_us_32 pacing throttles to ~50 Hz.
+ * Not needed once audio_start_vbl_timer() is running. */
 void audio_render_frame(void);
+
+/* MD/DOOM: refill from a 1 ms timer interrupt instead, each time the
+ * m68k's end-of-blit ack ($FB8400) shows up in the ROM3 ring. That is
+ * right after the m68k has copied the previous buffer, so the refill can
+ * never tear under its copy, and it happens every VBL however long the
+ * main loop's frames take. `core` is the core that takes the interrupt:
+ * use 1 (a Core 1 alarm pool, created via a framework job, so call it
+ * between publishes). On Core 0 the same interrupt stalls the game's
+ * renderer for 100-200 ms at a time, cause unknown; it is kept for A/B
+ * tests only. Call after commemul_init() and audio_init(); the main loop
+ * must then stop calling audio_render_frame. */
+void audio_start_vbl_timer(int core); /* 0 or 1: which core takes the interrupt */
+void audio_stop_vbl_timer(void);
+int audio_vbl_timer_core(void);         /* -1 when stopped */
+
+/* Debug counters since the last call: longest fill, number of fills,
+ * longest timer callback (fill or not). */
+void audio_debug_stats(uint32_t *fill_max_us, uint32_t *fills, uint32_t *cb_max_us, uint32_t *cbs);
 
 /* Install (or clear, if cb == NULL) the fill callback. */
 void audio_set_fill_callback(audio_fill_cb_t cb);

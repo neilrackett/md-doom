@@ -31,8 +31,8 @@
 
 #include <string.h>
 
-#include "audio.h"
 #include "cart_shared.h"
+#include "hardware/sync.h"
 #include "pico/multicore.h"
 
 /* Per-file -O3: the global build is MinSizeRel (-Os). The chunky->planar
@@ -57,13 +57,6 @@ extern void fb_c2p_half(uint16_t *dst,
  * doesn't pay XIP cost on every dispatch. */
 static void __not_in_flash_func(fb_core1_loop)(void) {
   for (;;) {
-    /* MD/DOOM: between jobs Core 1 keeps the cart audio buffer topped up,
-     * so sound effects stay continuous however long a frame takes on
-     * Core 0. audio_render_frame paces itself to the VBL. It is never
-     * called here while Core 1 is parked for flash programming. */
-    while (!multicore_fifo_rvalid()) {
-      audio_render_frame();
-    }
     fb_core1_job_t job = (fb_core1_job_t)(uintptr_t)multicore_fifo_pop_blocking();
     void *arg = (void *)(uintptr_t)multicore_fifo_pop_blocking();
     job(arg);
@@ -102,7 +95,11 @@ static volatile uint32_t s_core1_parked;
 
 static void __not_in_flash_func(fb_core1_park_job)(void *arg) {
   volatile uint32_t *flag = (volatile uint32_t *)arg;
+  /* MD/DOOM: with interrupts masked, so a Core 1 timer (the audio refill)
+   * cannot run flash-resident code while Core 0 has XIP disabled. */
+  uint32_t ints = save_and_disable_interrupts();
   while (*flag) tight_loop_contents();
+  restore_interrupts(ints);
 }
 
 void fb_core1_park(void) {

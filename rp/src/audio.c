@@ -23,6 +23,8 @@
 #include "debug.h"
 #include "ff.h"
 #include "pico/stdlib.h"
+#include "commemul.h"
+#include "fb_chunked.h"
 #include "pico/time.h"
 
 /* Per-VBL fill cadence. The gate only exists to reject re-entry from a
@@ -261,6 +263,78 @@ int audio_play_yms_file(const char *path) {
           path, (unsigned long)rate, (unsigned)hdr[12]);
   return 0;
 }
+
+/* VBL-synced refill (see audio.h). The scan cursor is the timer's own,
+ * separate from commemul_poll's read index. A fill is never repeated
+ * within 5 ms, in case an ack is seen twice across a scan boundary. */
+#define AUDIO_VBLSYNC_HIBYTE 0x8400u
+#define AUDIO_MIN_FILL_GAP_US 5000u
+
+static repeating_timer_t s_vbl_timer;
+static uint32_t s_scan_cursor;
+static volatile uint32_t s_dbg_fill_max_us, s_dbg_fills, s_dbg_cb_max_us, s_dbg_cbs;
+
+static bool __not_in_flash_func(audio_vbl_timer_cb)(repeating_timer_t *rt) {
+  (void)rt;
+  s_dbg_cbs++;
+  const uint32_t t0 = time_us_32();
+  if (commemul_scan(&s_scan_cursor, AUDIO_VBLSYNC_HIBYTE) && s_fill_cb) {
+    if (t0 - s_last_frame_us >= AUDIO_MIN_FILL_GAP_US) {
+      s_last_frame_us = t0;
+      s_fill_cb(s_audio_buf, s_fill_bytes);
+      const uint32_t dt = time_us_32() - t0;
+      if (dt > s_dbg_fill_max_us) s_dbg_fill_max_us = dt;
+      s_dbg_fills++;
+    }
+  }
+  const uint32_t cb = time_us_32() - t0;
+  if (cb > s_dbg_cb_max_us) s_dbg_cb_max_us = cb;
+  return true;
+}
+
+void audio_debug_stats(uint32_t *fill_max_us, uint32_t *fills, uint32_t *cb_max_us, uint32_t *cbs) {
+  *fill_max_us = s_dbg_fill_max_us;
+  *fills = s_dbg_fills;
+  *cb_max_us = s_dbg_cb_max_us;
+  *cbs = s_dbg_cbs;
+  s_dbg_fill_max_us = s_dbg_fills = s_dbg_cb_max_us = s_dbg_cbs = 0;
+}
+
+static int s_vbl_timer_core = -1; /* -1 off, else the core the IRQ runs on */
+static alarm_pool_t *s_core1_pool;
+
+/* Runs on Core 1 (as a framework job): a Core 1 alarm pool binds its
+ * interrupt to Core 1, so the refill then never interrupts Core 0. */
+static void core1_start_timer_job(void *arg) {
+  (void)arg;
+  if (!s_core1_pool) {
+    s_core1_pool = alarm_pool_create_with_unused_hardware_alarm(4);
+  }
+  alarm_pool_add_repeating_timer_us(s_core1_pool, -1000, audio_vbl_timer_cb, NULL, &s_vbl_timer);
+}
+
+void audio_start_vbl_timer(int core) {
+  if (s_vbl_timer_core >= 0) return;
+  s_scan_cursor = 0;
+  if (core == 1) {
+    fb_core1_dispatch(core1_start_timer_job, NULL);
+    fb_core1_wait();
+  } else {
+    add_repeating_timer_us(-1000, audio_vbl_timer_cb, NULL, &s_vbl_timer);
+  }
+  s_vbl_timer_core = core ? 1 : 0;
+  DPRINTF("audio: VBL-synced refill timer started on core %d\n", s_vbl_timer_core);
+}
+
+void audio_stop_vbl_timer(void) {
+  if (s_vbl_timer_core < 0) return;
+  cancel_repeating_timer(&s_vbl_timer);
+  s_vbl_timer_core = -1;
+  memset(s_audio_buf, 0, CART_AUDIO_BUFFER_SIZE);
+  DPRINTF("audio: VBL-synced refill timer stopped\n");
+}
+
+int audio_vbl_timer_core(void) { return s_vbl_timer_core; }
 
 void audio_render_frame(void) {
   if (s_fill_cb == NULL) {
