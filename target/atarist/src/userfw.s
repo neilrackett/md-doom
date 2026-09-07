@@ -269,6 +269,8 @@ MFP_IMRA              equ $FFFFFA13          ; interrupt mask A
 MFP_IMRB              equ $FFFFFA15          ; interrupt mask B
 MFP_VR                equ $FFFFFA17          ; vector register (high nibble = vector base, bit 3 = S: 1=software EOI, 0=auto-EOI)
 MFP_TACR              equ $FFFFFA19          ; Timer-A control register (cleared at boot for safety)
+MFP_TADR              equ $FFFFFA1F          ; Timer-A data register
+MFP_TIMERA_BIT        equ 5                  ; IERA/IMRA bit for Timer-A
 MFP_TBCR              equ $FFFFFA1B          ; Timer-B control register (delay-mode + prescaler)
 MFP_TBDR              equ $FFFFFA21          ; Timer-B data register (8-bit countdown)
 
@@ -341,6 +343,17 @@ STE_DMA_CNT_LO        equ $FFFF890D          ; frame COUNTER low byte (read-only
 ; the DMA read pointer. Which buffer the DMA is in is read from bit 7
 ; of the frame-counter mid byte: A ($77Dxx -> bit7=0) vs B ($7FDxx ->
 ; bit7=1).
+;
+; START/END are written by userfw_snd_irq, not by the VBL loop. The
+; chip latches them only when it reaches END, and the frame end pulses
+; MFP Timer-A's event input, so the handler runs the moment the chip
+; has switched buffers and points START/END at the one it just left --
+; a full frame before the next latch. Written from the VBL loop after
+; the copy, the six byte writes sat at an arbitrary phase of the DMA
+; frame; whenever the chip's slow drift brought its frame end into that
+; ~6 us window, it latched a START from one buffer and an END from the
+; other and played the 32 KB of screen memory between them: ~1.3 s of
+; noise, every few minutes.
 STE_SND_BUF_A         equ $00077D00          ; page A tail
 STE_SND_BUF_B         equ $0007FD00          ; page B tail
 STE_SND_BUF_MASK      equ $7D00              ; low 16 bits of either base, bit 15 cleared
@@ -750,6 +763,17 @@ userfw:
     move.b  #((STE_SND_A_END>>16)&$FF), STE_DMA_END_HI.w
     move.b  #((STE_SND_A_END>>8)&$FF), STE_DMA_END_MID.w
     move.b  #(STE_SND_A_END&$FF), STE_DMA_END_LO.w
+    ; Timer-A in event-count mode, one event per DMA frame end, so
+    ; userfw_snd_irq re-points START/END right after every buffer switch
+    ; (see the handler). Vector, data, control, then enable + unmask;
+    ; interrupts are still masked here, so nothing fires until the
+    ; caller's level is restored below.
+    lea     userfw_snd_irq(pc), a0
+    move.l  a0, VEC_TIMERA.w
+    move.b  #1, MFP_TADR.w                ; interrupt on every event
+    move.b  #$08, MFP_TACR.w              ; event-count mode
+    bset    #MFP_TIMERA_BIT, MFP_IERA.w
+    bset    #MFP_TIMERA_BIT, MFP_IMRA.w
     move.b  #$03, STE_DMA_CTRL.w          ; play + loop
 
 .boot_audio_done:
@@ -907,9 +931,10 @@ userfw:
     endc
 
     ; When DMA sound is active, refill the buffer the DMA is NOT reading
-    ; (double-buffer) and point the loop at it, so the write never
-    ; crosses the DMA read pointer. Bit 7 of the frame-counter mid byte
-    ; tells us the current buffer: 0 = A -> refill B; 1 = B -> refill A.
+    ; (double-buffer), so the write never crosses the DMA read pointer.
+    ; userfw_snd_irq has already pointed the loop at it. Bit 7 of the
+    ; frame-counter mid byte tells us the current buffer: 0 = A ->
+    ; refill B; 1 = B -> refill A.
     ; D1/D2/D3/A1/A2 are scratch (clobbered by FBDRV_INLINE; the
     ; page-flip below uses A5/D0). 125 longwords from the cart via
     ; move.l (a1)+,(a2)+ / dbf, which is 30 cycles an iteration =
@@ -982,7 +1007,7 @@ userfw:
     tst.b   (a1, d1.w)
 
     ; Refill the buffer the chip is NOT in, so the write never crosses
-    ; the read pointer, then point the loop at it.
+    ; the read pointer. The loop already points at it (userfw_snd_irq).
     tst.b   d3
     bne.s   .snd_use_a                   ; DMA in B -> refill A
     move.l  #STE_SND_BUF_B, d2           ; DMA in A -> refill B
@@ -990,29 +1015,14 @@ userfw:
 .snd_use_a:
     move.l  #STE_SND_BUF_A, d2
 .snd_have_buf:
-    ; Fixed-size copy from the cart buffer; END below decides how much
-    ; of it is actually played.
+    ; Fixed-size copy from the cart buffer; END (set by userfw_snd_irq
+    ; from UFW_SND_LEN) decides how much of it is actually played.
     lea     AUDIO_BUFFER_ADDR, a1
     movea.l d2, a2
     move.w  #(STE_SND_COPY/4)-1, d1
 .ste_snd_copy:
     move.l  (a1)+, (a2)+
     dbf     d1, .ste_snd_copy
-    ; start = d2, end = d2 + UFW_SND_LEN (each split hi/mid/lo).
-    move.l  d2, d3
-    move.b  d3, STE_DMA_START_LO.w
-    lsr.l   #8, d3
-    move.b  d3, STE_DMA_START_MID.w
-    lsr.l   #8, d3
-    move.b  d3, STE_DMA_START_HI.w
-    moveq   #0, d1
-    move.w  UFW_SND_LEN, d1
-    add.l   d1, d2
-    move.b  d2, STE_DMA_END_LO.w
-    lsr.l   #8, d2
-    move.b  d2, STE_DMA_END_MID.w
-    lsr.l   #8, d2
-    move.b  d2, STE_DMA_END_HI.w
 .no_dma_refill:
 
     ; Flip the video base to the just-written page. A5 still holds
@@ -1191,9 +1201,39 @@ userfw_acia_irq:
     rte
 
 ; -------------------------------------------------------------------
+; userfw_snd_irq -- MFP Timer-A in event-count mode, one event per STE
+; DMA sound frame end. The chip has just latched START/END and begun the
+; other buffer, so point START/END at the buffer it left; the VBL loop
+; fills that one during the frame (.after_copy). Done here, the update
+; is a whole frame away from the next latch and can never be caught
+; half-written (see the STE_SND_BUF comment for what that did). Only the
+; MID byte of START and the MID/LO bytes of END differ between the two
+; buffers; the HI bytes ($07) were written at boot. UFW_SND_LEN is
+; steered by the VBL loop with single-instruction adds, so the read here
+; is atomic. Saves D0 only; auto-EOI, so no in-service ack; level 6, so
+; it can fire inside FBDRV_INLINE like the ACIA handler.
+userfw_snd_irq:
+    move.l  d0, -(sp)
+    btst    #7, STE_DMA_CNT_MID.w         ; 1 = the chip is now in B
+    beq.s   .snd_irq_in_a
+    move.b  #((STE_SND_BUF_A>>8)&$FF), STE_DMA_START_MID.w
+    move.l  #STE_SND_BUF_A, d0
+    bra.s   .snd_irq_end
+.snd_irq_in_a:
+    move.b  #((STE_SND_BUF_B>>8)&$FF), STE_DMA_START_MID.w
+    move.l  #STE_SND_BUF_B, d0
+.snd_irq_end:
+    add.w   UFW_SND_LEN, d0               ; <= 512: no carry out of the low word
+    move.b  d0, STE_DMA_END_LO.w
+    lsr.w   #8, d0
+    move.b  d0, STE_DMA_END_MID.w
+    move.l  (sp)+, d0
+    rte
+
+; -------------------------------------------------------------------
 ; userfw_dummy_irq -- single-rte IRQ handler for vectors we want to
-; silence (HBL $68, Timer-A $134, Timer-C $114, Timer-D $110, ACIA
-; $118). Stopping TOS's handlers cuts the per-frame jitter they
+; silence (HBL $68, Timer-A $134 until the STE DMA path claims it,
+; Timer-C $114, Timer-D $110, ACIA $118). Stopping TOS's handlers cuts the per-frame jitter they
 ; impose on the blit; we don't need their behaviour because the
 ; framebuffer template owns the screen + IKBD until ESC exit.
 userfw_dummy_irq:
