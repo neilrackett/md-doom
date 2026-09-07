@@ -30,4 +30,20 @@ md-framebuffer-template as carried in MD/Lynx.
   wipe, music or saves yet.
 - Loading and missing-pack screens on a 1-bit backdrop (`desc/bg-mono.png`).
 
+## v0.2.0 (2026-09-07)
+
+- Loading screen drawn in plain black and white, whatever tint the game was
+  showing when the level ended.
+- Keypad `*` and `/` cycle the dither mode and palette source in-game.
+- Fixed palettes for fun: EGA, CGA (palette 1), C64, ZX Spectrum, PICO-8.
+- Blue-noise dither mode (md-mjpeg's 32×32 void-and-cluster tile).
+- Intermission background painted every frame (the stats were drawn over
+  the last level frame).
+- Sound refilled from a VBL-synced timer interrupt on Core 1 instead of
+  Core 1's idle time, which fell silent on heavy frames and looped the
+  buffer (a 50 Hz buzz). The same interrupt on Core 0 stalled the renderer
+  for 100–200 ms at a time; keypad `-` switches between off / Core 0 /
+  Core 1 for comparison.
+- Dither and palette choices are saved and restored at the next boot.
+
 ---
