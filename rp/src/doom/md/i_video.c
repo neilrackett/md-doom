@@ -177,6 +177,11 @@ void I_MD_PresentFrame(void) {
 
   doom_video_publish();
   sem_release(&display_frame_freed);
+
+  /* Core 1 is idle from here until the next pd_begin_frame, so this is
+   * where anything that needs to park it (a flash write) can run. */
+  extern void I_MD_FlushVideoSettings(void);
+  I_MD_FlushVideoSettings();
 }
 
 void I_InitGraphics(void) {

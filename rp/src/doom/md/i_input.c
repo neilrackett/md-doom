@@ -42,7 +42,7 @@ static void cycle_video_mode(uint8_t scancode) {
     doom_video_set_palette_mode((doom_video_get_palette_mode() + 1) % DOOM_VIDEO_PAL_COUNT);
     players[consoleplayer].message = doom_video_palette_name(doom_video_get_palette_mode());
   }
-  I_MD_SaveVideoSettings(); /* survives the next power-up */
+  I_MD_SaveVideoSettings(); /* survives the next power-up (written at frame end) */
 }
 
 static bool s_shift_down;

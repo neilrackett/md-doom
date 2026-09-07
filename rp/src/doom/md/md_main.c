@@ -205,9 +205,18 @@ void doomgame_start(void) {
   D_DoomMain(); /* never returns */
 }
 
-/* Remember the dither and palette across sessions. Writes the app's
- * settings sector, so Core 1 is held in RAM for the flash access. */
-void I_MD_SaveVideoSettings(void) {
+/* Remember the dither and palette across sessions. The key is seen from
+ * the input poll, which the renderer also runs mid-frame while Core 1 is
+ * busy in its render job, so the write is only requested here and done
+ * from I_MD_PresentFrame, where Core 1 is idle and can be parked for the
+ * flash access. */
+static bool s_video_settings_dirty;
+
+void I_MD_SaveVideoSettings(void) { s_video_settings_dirty = true; }
+
+void I_MD_FlushVideoSettings(void) {
+  if (!s_video_settings_dirty) return;
+  s_video_settings_dirty = false;
   SettingsContext *ctx = aconfig_getContext();
   settings_put_integer(ctx, ACONFIG_PARAM_DITHER, (int)doom_video_get_dither());
   settings_put_integer(ctx, ACONFIG_PARAM_PALETTE, (int)doom_video_get_palette_mode());

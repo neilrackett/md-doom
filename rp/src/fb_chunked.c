@@ -91,20 +91,26 @@ void fb_chunked_init(void) {
  *
  * Pairs like any other dispatch: park, do the flash work with interrupts
  * off, unpark. */
-static volatile uint32_t s_core1_parked;
+static volatile uint32_t s_core1_parked, s_core1_park_ack;
 
 static void __not_in_flash_func(fb_core1_park_job)(void *arg) {
   volatile uint32_t *flag = (volatile uint32_t *)arg;
   /* MD/DOOM: with interrupts masked, so a Core 1 timer (the audio refill)
    * cannot run flash-resident code while Core 0 has XIP disabled. */
   uint32_t ints = save_and_disable_interrupts();
+  s_core1_park_ack = 1;
   while (*flag) tight_loop_contents();
   restore_interrupts(ints);
 }
 
 void fb_core1_park(void) {
   s_core1_parked = 1;
+  s_core1_park_ack = 0;
   fb_core1_dispatch(fb_core1_park_job, (void *)&s_core1_parked);
+  /* MD/DOOM: only return once Core 1 is actually in the job with its
+   * interrupts off. Before this, a flash erase could start while Core 1
+   * was still finishing an audio refill from flash-resident code. */
+  while (!s_core1_park_ack) tight_loop_contents();
 }
 
 void fb_core1_unpark(void) {
