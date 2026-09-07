@@ -27,20 +27,21 @@ See below if you'd prefer to build the level packs yourself.
 
 Controls match the original PC Doom:
 
-| Key       | Action                                                                             |
-| --------- | ---------------------------------------------------------------------------------- |
-| ↑ ↓ ← →   | Move and turn (the keypad works too)                                               |
-| Control   | Fire                                                                               |
-| Space     | Use (doors, switches)                                                              |
-| Alternate | Strafe                                                                             |
-| Shift     | Run                                                                                |
-| 1 to 7    | Weapons                                                                            |
-| Esc       | Menu                                                                               |
-| Tab       | Automap                                                                            |
-| F1 to F10 | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
-| Help      | Gamma (F11 on a PC)                                                                |
-| Undo      | Pause                                                                              |
-| - and +   | Screen size                                                                        |
+| Key             | Action                                                                             |
+| --------------- | ---------------------------------------------------------------------------------- |
+| ↑ ↓ ← →         | Move and turn (the keypad works too)                                               |
+| Control         | Fire                                                                               |
+| Space           | Use (doors, switches)                                                              |
+| Alternate       | Strafe                                                                             |
+| Shift           | Run                                                                                |
+| 1 to 7          | Weapons                                                                            |
+| Esc             | Menu                                                                               |
+| Tab             | Automap                                                                            |
+| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
+| Help            | Gamma (F11 on a PC)                                                                |
+| Undo            | Pause                                                                              |
+| - and +         | Screen size                                                                        |
+| Keypad \* and / | Cycle the dither (nearest, 2×2 and 4×4 Bayer, halftone, blue noise) and the palette (STDOOM, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8) |
 
 A joystick in port 1 moves, turns and fires. A gamepad through an [Xpad](https://github.com/neilrackett/atarist-xpad) provider does the rest: South fires, East uses, West strafes, North runs, Start opens the menu and Select the map.
 

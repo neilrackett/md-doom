@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bluenoise.h" /* 32x32 threshold tile, 16 levels, in flash */
 #include "cart_shared.h"
 #include "fb.h"
 #include "fb_chunked.h"
@@ -48,11 +49,18 @@ static doom_video_palette_t s_pal_mode = DOOM_VIDEO_PAL_SUBSET;
 static doom_video_dither_t s_dither = DOOM_VIDEO_DITHER_BAYER4;
 
 static uint8_t s_ref_rgb[16][3];  /* the 16 colours as the ST shows them */
+static int s_ref_count = 16;      /* fewer for the 4-colour CGA palette   */
 static uint16_t s_st_colors[16];  /* the same, as ST palette words       */
 static uint8_t s_nearest[256];    /* PLAYPAL index -> nearest pen        */
 
 /* [cell][index] -> pen, cell = ((y & 3) << 2) | (x & 3). 4 KB. */
 static uint8_t s_lut[16][256] __attribute__((aligned(4)));
+
+/* For the blue-noise mode, which cannot be a per-cell LUT (1024 cells):
+ * per index, nearest pen (bits 0..3), second pen (bits 4..7) and the
+ * 0..16 mix level (bits 8..12); a pixel takes the second pen where the
+ * level beats the tile's threshold. */
+static uint16_t s_pair[256];
 
 static uint32_t s_convert_us;
 
@@ -62,6 +70,32 @@ static uint32_t s_convert_us;
  * up well on flesh tones, the sky and the status bar. */
 static const uint8_t s_subset[16] = {0,   201, 205, 117, 123, 185, 87,  100,
                                      60,  95,  227, 104, 69,  79,  179, 159};
+
+/* Fixed palettes, RGB 0..255, snapped to the ST hardware palette. The 16
+ * ST colours become the famous palette and every PLAYPAL colour maps to
+ * its nearest two. From the DOOM Accelerator, plus CGA. */
+static const uint8_t s_pal_ega[16][3] = {
+    {0, 0, 0},     {0, 0, 170},     {0, 170, 0},     {0, 170, 170},
+    {170, 0, 0},   {170, 0, 170},   {170, 85, 0},    {170, 170, 170},
+    {85, 85, 85},  {85, 85, 255},   {85, 255, 85},   {85, 255, 255},
+    {255, 85, 85}, {255, 85, 255},  {255, 255, 85},  {255, 255, 255}};
+static const uint8_t s_pal_cga[4][3] = { /* palette 1, high intensity */
+    {0, 0, 0}, {85, 255, 255}, {255, 85, 255}, {255, 255, 255}};
+static const uint8_t s_pal_c64[16][3] = { /* Pepto reconstruction */
+    {0, 0, 0},       {255, 255, 255}, {104, 55, 43},   {112, 164, 178},
+    {111, 61, 134},  {88, 141, 67},   {53, 40, 121},   {184, 199, 111},
+    {111, 79, 37},   {67, 57, 0},     {154, 103, 89},  {68, 68, 68},
+    {108, 108, 108}, {154, 210, 132}, {108, 94, 181},  {149, 149, 149}};
+static const uint8_t s_pal_zx[16][3] = { /* non-bright 0xD7, bright 0xFF */
+    {0, 0, 0},       {0, 0, 215},     {215, 0, 0},     {215, 0, 215},
+    {0, 215, 0},     {0, 215, 215},   {215, 215, 0},   {215, 215, 215},
+    {0, 0, 0},       {0, 0, 255},     {255, 0, 0},     {255, 0, 255},
+    {0, 255, 0},     {0, 255, 255},   {255, 255, 0},   {255, 255, 255}};
+static const uint8_t s_pal_pico8[16][3] = {
+    {0, 0, 0},       {29, 43, 83},    {126, 37, 83},   {0, 135, 81},
+    {171, 82, 54},   {95, 87, 79},    {194, 195, 199}, {255, 241, 232},
+    {255, 0, 77},    {255, 163, 0},   {255, 236, 39},  {0, 228, 54},
+    {41, 173, 255},  {131, 118, 156}, {255, 119, 168}, {255, 204, 170}};
 
 /* ------------------------------------------------------------------ */
 /* ST colour helpers                                                   */
@@ -100,7 +134,7 @@ static void two_nearest_ref(const uint8_t *c, uint8_t *out_a,
                             uint8_t *out_b) {
   long best = 0x7FFFFFFFL, best2 = 0x7FFFFFFFL;
   uint8_t a = 0, b = 0;
-  for (uint8_t k = 0; k < 16u; k++) {
+  for (uint8_t k = 0; k < (uint8_t)s_ref_count; k++) {
     long d = color_dist(c[0], c[1], c[2], s_ref_rgb[k][0], s_ref_rgb[k][1],
                         s_ref_rgb[k][2]);
     if (d < best) {
@@ -245,12 +279,16 @@ static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
 /* ------------------------------------------------------------------ */
 /* Palette + LUT build                                                 */
 
-static void set_refs_from_rgb(const uint8_t src[16][3]) {
+static void set_refs_from_rgb(const uint8_t (*src)[3], int count) {
+  s_ref_count = count;
   for (uint8_t k = 0; k < 16u; k++) {
-    s_st_colors[k] = st_color_word(src[k][0], src[k][1], src[k][2]);
-    s_ref_rgb[k][0] = displayed_channel(src[k][0]);
-    s_ref_rgb[k][1] = displayed_channel(src[k][1]);
-    s_ref_rgb[k][2] = displayed_channel(src[k][2]);
+    /* Pens past `count` are never chosen by the LUT; park them on the
+     * first colour so the ST palette slot holds nothing surprising. */
+    const uint8_t *c = src[k < count ? k : 0];
+    s_st_colors[k] = st_color_word(c[0], c[1], c[2]);
+    s_ref_rgb[k][0] = displayed_channel(c[0]);
+    s_ref_rgb[k][1] = displayed_channel(c[1]);
+    s_ref_rgb[k][2] = displayed_channel(c[2]);
   }
 }
 
@@ -264,6 +302,11 @@ static void build_refs(void) {
     case DOOM_VIDEO_PAL_GREY:
       for (int k = 0; k < 16; k++) pal[k][0] = pal[k][1] = pal[k][2] = (uint8_t)(k * 17);
       break;
+    case DOOM_VIDEO_PAL_EGA: set_refs_from_rgb(s_pal_ega, 16); return;
+    case DOOM_VIDEO_PAL_CGA: set_refs_from_rgb(s_pal_cga, 4); return;
+    case DOOM_VIDEO_PAL_C64: set_refs_from_rgb(s_pal_c64, 16); return;
+    case DOOM_VIDEO_PAL_ZX: set_refs_from_rgb(s_pal_zx, 16); return;
+    case DOOM_VIDEO_PAL_PICO8: set_refs_from_rgb(s_pal_pico8, 16); return;
     default:
       for (int k = 0; k < 16; k++) {
         const uint8_t *c = &s_playpal[(uint32_t)s_subset[k] * 3u];
@@ -273,7 +316,7 @@ static void build_refs(void) {
       }
       break;
   }
-  set_refs_from_rgb(pal);
+  set_refs_from_rgb(pal, 16);
 }
 
 static void rebuild(void) {
@@ -288,6 +331,7 @@ static void rebuild(void) {
 
     if (s_dither == DOOM_VIDEO_DITHER_NEAREST) {
       for (uint8_t cell = 0; cell < 16u; cell++) s_lut[cell][i] = a;
+      s_pair[i] = (uint16_t)(a | (a << 4));
       continue;
     }
 
@@ -310,6 +354,7 @@ static void rebuild(void) {
     for (uint8_t cell = 0; cell < 16u; cell++) {
       s_lut[cell][i] = (t16 > (int)dither_threshold(s_dither, cell)) ? b : a;
     }
+    s_pair[i] = (uint16_t)(a | (b << 4) | (t16 << 8));
   }
 
   palette_set(s_st_colors);
@@ -353,6 +398,11 @@ const char *doom_video_palette_name(doom_video_palette_t mode) {
     case DOOM_VIDEO_PAL_SUBSET: return "STDOOM 16";
     case DOOM_VIDEO_PAL_GENERATED: return "GENERATED";
     case DOOM_VIDEO_PAL_GREY: return "GREYSCALE";
+    case DOOM_VIDEO_PAL_EGA: return "EGA";
+    case DOOM_VIDEO_PAL_CGA: return "CGA";
+    case DOOM_VIDEO_PAL_C64: return "C64";
+    case DOOM_VIDEO_PAL_ZX: return "ZX SPECTRUM";
+    case DOOM_VIDEO_PAL_PICO8: return "PICO-8";
     default: return "?";
   }
 }
@@ -363,6 +413,7 @@ const char *doom_video_dither_name(doom_video_dither_t mode) {
     case DOOM_VIDEO_DITHER_BAYER2: return "BAYER 2X2";
     case DOOM_VIDEO_DITHER_BAYER4: return "BAYER 4X4";
     case DOOM_VIDEO_DITHER_HALFTONE: return "HALFTONE";
+    case DOOM_VIDEO_DITHER_BLUENOISE: return "BLUE NOISE";
     default: return "?";
   }
 }
@@ -413,6 +464,45 @@ static inline void __not_in_flash_func(doom_c2p_block)(uint32_t *dst, const uint
   dst[1] = p23;
 }
 
+/* Blue-noise variant: pens chosen per pixel against the 32x32 tile.
+ * `x` is the block's column (a multiple of 16), so the tile row slice
+ * for these 16 pixels is contiguous: (x & 31) is 0 or 16. */
+static inline void __not_in_flash_func(doom_c2p_block_bn)(uint32_t *dst, const uint8_t *src,
+                                                          unsigned x, unsigned y) {
+  const uint8_t *nz = &bluenoise[(y & (BLUENOISE_N - 1u)) * BLUENOISE_N + (x & (BLUENOISE_N - 1u))];
+  uint32_t p01 = 0, p23 = 0;
+  for (unsigned g = 0; g < 4u; g++) {
+    uint32_t q = 0;
+    for (unsigned i = 0; i < 4u; i++) {
+      const uint16_t v = s_pair[src[i]];
+      const uint32_t pen = ((v >> 8) > nz[i]) ? ((v >> 4) & 15u) : (v & 15u);
+      q |= pen << (8u * i);
+    }
+    src += 4;
+    nz += 4;
+    const unsigned sh = 12u - 4u * g;
+    uint32_t n0 = (((q >> 0) & 0x01010101u) * 0x80402010u) >> 28;
+    uint32_t n1 = (((q >> 1) & 0x01010101u) * 0x80402010u) >> 28;
+    uint32_t n2 = (((q >> 2) & 0x01010101u) * 0x80402010u) >> 28;
+    uint32_t n3 = (((q >> 3) & 0x01010101u) * 0x80402010u) >> 28;
+    p01 |= (n0 << sh) | (n1 << (sh + 16u));
+    p23 |= (n2 << sh) | (n3 << (sh + 16u));
+  }
+  dst[0] = p01;
+  dst[1] = p23;
+}
+
+static bool s_use_bn; /* latched per frame from s_dither */
+
+static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const uint8_t *src,
+                                                           unsigned pix) {
+  if (s_use_bn) {
+    doom_c2p_block_bn(dst, src, pix % FB_CHUNKED_W, pix / FB_CHUNKED_W);
+  } else {
+    doom_c2p_block(dst, src, pix / FB_CHUNKED_W);
+  }
+}
+
 /* Chunk k: 96 pixels = 6 blocks; block b of chunk k starts at pixel
  * k*96 + b*16, on row (that / 320). Its 8 planar bytes land at
  * fb_cart_offset(k*48 + b*8). */
@@ -422,8 +512,8 @@ static void __not_in_flash_func(doom_c2p_chunks)(unsigned k0, unsigned k1) {
     const uint32_t cart0 = fb_cart_offset(k * (uint32_t)CART_FB_CHUNK_BYTES);
     for (unsigned b = 0; b < 6u; b++) {
       const unsigned pix = pix0 + b * 16u;
-      doom_c2p_block((uint32_t *)(s_cart_fb + cart0 + b * 8u),
-                     fb_chunked_buffer + pix, pix / FB_CHUNKED_W);
+      doom_c2p_block_any((uint32_t *)(s_cart_fb + cart0 + b * 8u),
+                         fb_chunked_buffer + pix, pix);
     }
   }
 }
@@ -435,6 +525,7 @@ static void __not_in_flash_func(doom_c2p_bottom_job)(void *arg) {
 
 void doom_video_publish(void) {
   s_cart_fb = (uint8_t *)fb_screen.framebuffer;
+  s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
 
   /* The cart FB is written in place, so only in the m68k's post-blit
    * slack: wait for its ack, convert on both cores, mark ready. */
@@ -446,8 +537,8 @@ void doom_video_publish(void) {
   /* Tail: the last 64 pixels, natural order at the end of the FB. */
   for (unsigned b = 0; b < CART_FB_CHUNK_TAIL / 8u; b++) {
     const unsigned pix = 2u * CART_FB_CHUNK_COVERED + b * 16u;
-    doom_c2p_block((uint32_t *)(s_cart_fb + CART_FB_CHUNK_COVERED + b * 8u),
-                   fb_chunked_buffer + pix, pix / FB_CHUNKED_W);
+    doom_c2p_block_any((uint32_t *)(s_cart_fb + CART_FB_CHUNK_COVERED + b * 8u),
+                       fb_chunked_buffer + pix, pix);
   }
   fb_core1_wait();
 

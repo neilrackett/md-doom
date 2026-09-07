@@ -18,9 +18,27 @@
 #include "i_input.h"
 #include "m_argv.h"
 
+#include "doom/doomstat.h"
 #include "doom_input.h"
+#include "doom_video.h"
 #include "fb.h"
 #include "ikbd.h"
+
+/* Keypad * and / cycle the dither mode and the palette source at run
+ * time, as the DOOM Accelerator did, and say so in the HUD. Neither key
+ * means anything to Doom. */
+#define SCAN_KP_MULTIPLY 0x66
+#define SCAN_KP_DIVIDE 0x65
+
+static void cycle_video_mode(uint8_t scancode) {
+  if (scancode == SCAN_KP_MULTIPLY) {
+    doom_video_set_dither((doom_video_get_dither() + 1) % DOOM_VIDEO_DITHER_COUNT);
+    players[consoleplayer].message = doom_video_dither_name(doom_video_get_dither());
+  } else {
+    doom_video_set_palette_mode((doom_video_get_palette_mode() + 1) % DOOM_VIDEO_PAL_COUNT);
+    players[consoleplayer].message = doom_video_palette_name(doom_video_get_palette_mode());
+  }
+}
 
 static bool s_shift_down;
 
@@ -92,6 +110,10 @@ void I_GetEvent(void) {
 
   ikbd_key_event_t k;
   while (ikbd_pop_key(&k)) {
+    if (k.scancode == SCAN_KP_MULTIPLY || k.scancode == SCAN_KP_DIVIDE) {
+      if (k.is_press) cycle_video_mode(k.scancode);
+      continue;
+    }
     const int key = doom_input_translate(k.scancode);
     if (key == KEY_RSHIFT) s_shift_down = k.is_press;
     post_key(key, k.is_press);

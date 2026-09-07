@@ -38,6 +38,11 @@ typedef enum {
   DOOM_VIDEO_PAL_SUBSET = 0, /* STDOOM's hand-picked PLAYPAL subset  */
   DOOM_VIDEO_PAL_GENERATED,  /* median cut + k-means over the page   */
   DOOM_VIDEO_PAL_GREY,       /* 16-step grey ramp                    */
+  DOOM_VIDEO_PAL_EGA,        /* the famous fixed palettes, for fun:  */
+  DOOM_VIDEO_PAL_CGA,        /*   CGA palette 1 (4 colours)          */
+  DOOM_VIDEO_PAL_C64,
+  DOOM_VIDEO_PAL_ZX,
+  DOOM_VIDEO_PAL_PICO8,
   DOOM_VIDEO_PAL_COUNT
 } doom_video_palette_t;
 
@@ -47,6 +52,7 @@ typedef enum {
   DOOM_VIDEO_DITHER_BAYER2,      /* 2x2 ordered                        */
   DOOM_VIDEO_DITHER_BAYER4,      /* 4x4 ordered (default)              */
   DOOM_VIDEO_DITHER_HALFTONE,    /* 4x4 clustered dot                  */
+  DOOM_VIDEO_DITHER_BLUENOISE,   /* 32x32 void-and-cluster tile        */
   DOOM_VIDEO_DITHER_COUNT
 } doom_video_dither_t;
 
