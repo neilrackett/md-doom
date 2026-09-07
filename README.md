@@ -8,11 +8,9 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
-MD/DOOM brings full speed, playable Doom to your Atari ST via your SidecarT. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
+MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
 
-You need the shareware `DOOM1.WAD`, which id Software lets anyone distribute.
-
-A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which help make this possible, and Jonas Eschenburg because I borrowed the colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
+A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
 ## Installation
 
@@ -27,27 +25,32 @@ See below if you'd prefer to build the level packs yourself.
 
 Controls match the original PC Doom:
 
-| Key             | Action                                                                             |
-| --------------- | ---------------------------------------------------------------------------------- |
-| ↑ ↓ ← →         | Move and turn (the keypad works too)                                               |
-| Control         | Fire                                                                               |
-| Space           | Use (doors, switches)                                                              |
-| Alternate       | Strafe                                                                             |
-| Shift           | Run                                                                                |
-| 1 to 7          | Weapons                                                                            |
-| Esc             | Menu                                                                               |
-| Tab             | Automap                                                                            |
-| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
-| Help            | Gamma (F11 on a PC)                                                                |
-| Undo            | Pause                                                                              |
-| - and +         | Screen size                                                                        |
-| Keypad \* and / | Cycle the dither (nearest, 2×2 and 4×4 Bayer, halftone, blue noise) and the palette (STDOOM, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8) |
+| Key             | Action                                                                              |
+| --------------- | ----------------------------------------------------------------------------------- |
+| ↑ ↓ ← →         | Move and turn (the keypad works too)                                                |
+| Control         | Fire                                                                                |
+| Space           | Use (doors, switches)                                                               |
+| Alternate       | Strafe                                                                              |
+| Shift           | Run                                                                                 |
+| 1 to 7          | Weapons                                                                             |
+| Esc             | Menu                                                                                |
+| Tab             | Automap                                                                             |
+| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit  |
+| Help            | Gamma (F11 on a PC)                                                                 |
+| Undo            | Pause                                                                               |
+| - and +         | Screen size                                                                         |
+| Keypad \* and / | Cycle through dither and the palette options (see below); your choice is remembered |
 
 A joystick in port 1 moves, turns and fires. A gamepad through an [Xpad](https://github.com/neilrackett/atarist-xpad) provider does the rest: South fires, East uses, West strafes, North runs, Start opens the menu and Select the map.
 
 Quit from the menu (or pressing F10) returns you to GEM.
 
+Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
+Colour palettes: STDOOM (default), generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
+
 ### Level packs
+
+You need the shareware `DOOM1.WAD`, which id Software lets anyone distribute.
 
 Your SidecarT only got 1,152KB available for both code and data, and the smallest we can compress the shareware WAD to is 1,758KB, so MD/DOOM loads level pack at a time (maximim 780KB each), which contains just the map, sprites, textures, flats and sounds needed. We also had to drop the help and credits screens, have monsters that always face you, and sound effects are 5 kHz; `levelpack.py` reports every pack's size against the budget.
 

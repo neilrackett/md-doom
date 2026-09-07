@@ -8,9 +8,8 @@ MD/DOOM is built on the **md-framebuffer-template** as carried in md-lynx;
 most of what follows describes that platform, and the app-specific parts are
 under "MD/DOOM" below.
 
-See also: `README.md` (the user-facing guide), `CHANGELOG.md`,
-`MD-DOOM-FEASIBILITY.md` (the original scoping notes plus the measured
-findings that set the current design), `programming.md` (the **upstream**
+See also: `README.md` (the user-facing guide), `CHANGELOG.md` (what each
+version changed and why), `programming.md` (the **upstream**
 `md-microfirmware-template` reference — useful for background, but its
 shared-region table describes the upstream layout, *not* this template's:
 the table below and `cart_shared.h` are authoritative here).
@@ -23,7 +22,9 @@ game and hands the ST a finished 320×200 16-colour screen every VBL, while
 also handling SD card I/O, keyboard/joystick input and audio. The ST is a
 display and an input device; everything else happens on the Pico.
 
-**Status: engine vendored and linking, not yet run on hardware.** What is
+**Status: playable.** The shareware episode runs on real hardware (v0.1.0,
+7 Sep 2026); since then the palettes, blue-noise dither, saved settings,
+the Core 1 audio interrupt and the STE DMA handover fix (v0.2.x). What is
 here and builds:
 
 - The framebuffer platform (below), taken from md-lynx.
@@ -33,7 +34,8 @@ here and builds:
   the chunky-to-planar conversion, split across both cores.
 - `doom_input.c` — IKBD scancode → Doom key codes (original PC bindings),
   joystick + Xpad gamepad folded into a Doom-shaped joystick state.
-- `doom_sound.c` — 8-channel sfx mixer producing STE DMA PCM or YM pairs.
+- `doom_sound.c` — the framework-era 8-channel PCM mixer (test card only;
+  the game mixes in `doom/md/i_mdsound.c`) and the Ghostbusters YM LUT.
 - `pack.c` — SD card → `PACK_FLASH` programmer for per-level asset packs.
 - `tools/levelpack.py` + `tools/whd_gen/` — the offline pack builder;
   `tools/png_to_mono.py` — the backdrop converter; `tools/gen_bluenoise.py`
@@ -107,7 +109,7 @@ Build flow (orchestrated by `build.sh`):
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests
-There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the test card appears and responds — plus the serial debug console. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_rows`.
+There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`.
 
 ## Architecture
 
@@ -148,7 +150,7 @@ asks for; the fill callback keys off `audio_get_mode()`.
 2. **Reporting.** Every VBL the m68k does one cart-bus read at `SNDCAP_WINDOW_BASE + has_dma` (`$FB8600`). `audio_consume_rom3_sample()` decodes it and calls `audio_set_mode(AUDIO_MODE_DMA | AUDIO_MODE_YM)`. Before the first report the mode is `AUDIO_MODE_SILENT`.
 3. **STE DMA path (preferred).** Mono, 8-bit **signed** PCM at 25,033 Hz = ~500 bytes per PAL VBL. The DMA runs in loop mode over a double buffer parked in the unused tails of the two ST screen pages (`$77D00` / `$7FD00`). Each VBL the m68k reads which buffer the DMA is playing and copies the fresh bytes from the cart audio buffer into the *other* one. **The loop's START/END registers are re-pointed from `userfw_snd_irq`**, an MFP Timer-A event-count interrupt that fires at the DMA's own frame end: the chip has just latched START/END and switched buffers, and the handler points them at the buffer it left, a full frame before the next latch. They must not be written from the VBL loop: the chip latches them whenever it reaches END, the six byte writes are not atomic, and a latch landing between the START and END writes plays from one buffer's start to the other's end, i.e. 32 KB of screen memory as ~1.3 s of noise, which happened every few minutes as the chip's phase drifted through the window.
 4. **YM2149 fallback.** MFP Timer-B in /4 delay mode with TBDR=110 → 5,585.45 Hz, ~112 fires per PAL VBL = **224 bytes per VBL** of (vA, vB) volume pairs. Pairing two channels through the 1988 Ghostbusters demo's 64-entry LUT extracts ~6 effective bits from the YM's logarithmic volume curve where one channel would give 4. A0 is the dedicated Timer-B read cursor, reset to the buffer base by `userfw_vbl` every vsync.
-5. **RP side.** The fill callback is asked for exactly the current mode's byte count and writes into the 1 KB cart buffer at `CART_AUDIO_BUFFER_OFFSET` (`$FA4100`). **MD/DOOM drives it from a 1 ms timer interrupt on Core 1** (`audio_start_vbl_timer(1)`, an alarm pool created on Core 1 so its IRQ is bound there): the handler peeks at the ROM3 ring (`commemul_scan`, non-consuming) for the m68k's end-of-blit ack at `$FB8400` and fills right after it, i.e. just after the m68k has copied the previous buffer and before it will copy the next. That keeps the refill on every VBL however long a frame takes, and it can never tear under the m68k's copy. The main loop no longer calls `audio_render_frame()`. The engine's sfx module (`i_mdsound.c`) is the callback; a spinlock (`PICO_SPINLOCK_ID_OS1`) guards the channel state between the game on Core 0 and the mixer's interrupt. **The interrupt must not run on Core 0**: measured on hardware, the same 1 ms timer on Core 0 (`audio_start_vbl_timer(0)`) makes the renderer's pure-compute phases stall for 100–200 ms every second or two, although the handler itself costs under 1 ms per VBL and fires at the expected rate; the mechanism was not identified. Keypad `-` cycles off / Core 0 / Core 1 at run time for A/B tests. Core 1's park job (`fb_core1_park`) masks interrupts while parked so the refill cannot execute flash code while a pack is being programmed.
+5. **RP side.** The fill callback is asked for exactly the current mode's byte count and writes into the 1 KB cart buffer at `CART_AUDIO_BUFFER_OFFSET` (`$FA4100`). **MD/DOOM drives it from a 1 ms timer interrupt on Core 1** (`audio_start_vbl_timer(1)`, an alarm pool created on Core 1 so its IRQ is bound there): the handler peeks at the ROM3 ring (`commemul_scan`, non-consuming) for the m68k's end-of-blit ack at `$FB8400` and fills right after it, i.e. just after the m68k has copied the previous buffer and before it will copy the next. That keeps the refill on every VBL however long a frame takes, and it can never tear under the m68k's copy. Nothing on the game path calls `audio_render_frame()` (the test card still does). The engine's sfx module (`i_mdsound.c`) is the callback; a spinlock (`PICO_SPINLOCK_ID_OS1`) guards the channel state between the game on Core 0 and the mixer's interrupt. **The interrupt must not run on Core 0**: measured on hardware, the same 1 ms timer on Core 0 (`audio_start_vbl_timer(0)`) makes the renderer's pure-compute phases stall for 100–200 ms every second or two, although the handler itself costs under 1 ms per VBL and fires at the expected rate; the mechanism was not identified. Keypad `-` cycles off / Core 0 / Core 1 at run time for A/B tests. Core 1's park job (`fb_core1_park`) masks interrupts while parked so the refill cannot execute flash code while a pack is being programmed.
 
 **The STE buffer length is measured, not assumed.** The sound DMA and the video run off different oscillators, so the samples the chip eats per frame is about 501.5 and machine-dependent. `userfw.s` steers the length ±1 byte every fourth frame from the drift of the DMA's frame counter and sends it to the RP each VBL through `SNDLEN_WINDOW_BASE` (`$FB8C00`), biased by `STE_SND_LEN_MIN`; `audio_set_fill_bytes()` applies it. **This is why the mixer must produce however many samples it is asked for**, which `doom_sound_fill` does by resampling every channel onto the requested count. `AUDIO_SNDLEN_BIAS` in `audio.c` must match `STE_SND_LEN_MIN` in `userfw.s`; `TIMERB_COUNT` must stay in step with `AUDIO_FILL_BYTES_YM`.
 
@@ -175,7 +177,7 @@ The Atari ST sees a 64 KB window at `$FA0000`–`$FAFFFF` (mirrored RP-side at `
 
 ### RP2040 side (`rp/src/`)
 - `main.c` — only sets voltage then clock, calls `gconfig_init` then `aconfig_init`, and hands off to `emul_start()`. If config init fails it jumps to the **Booster** app. **Don't add features to `main.c`.**
-- `emul.c` — the boot sequence and main loop: erase + copy firmware to RAM, init IKBD + Xpad receivers, init romemul, init commemul, init fb (launches Core 1), palette, audio, mount SD, configure SELECT, `doomapp_init()`, install `doomapp_audio_fill`, then loop `{ikbd_clear_command(); fb_pump_rom3(); ikbd_pump(); drain keys → doomapp_handle_key(); doomapp_render_frame(); audio_render_frame();}`. The `cart_check()` canary compares the first 16 bytes of the served cart region against the embedded image at each stage and every frame — the first thing to look at if the ST bombs.
+- `emul.c` — the boot sequence: erase + copy firmware to RAM, init IKBD + Xpad receivers, init romemul, init commemul, init fb (launches Core 1), palette, audio + `audio_start_vbl_timer(1)`, mount SD, configure SELECT, then hand over to `doomgame_start()` (`md/md_main.c`), which never returns — the engine's `I_GetEvent` and `I_MD_PresentFrame` do per frame what a framework main loop would. Only with `MDDOOM_TEST_CARD=1` does `emul.c` run its own loop `{ikbd_clear_command(); fb_pump_rom3(); ikbd_pump(); drain keys → doomapp_handle_key(); doomapp_render_frame();}`. The `cart_check()` canary compares the first 16 bytes of the served cart region against the embedded image at each boot stage — the first thing to look at if the ST bombs.
 - `fb.c` / `fb.h` — owns the 32 KB planar framebuffer at `$FA8300` + boot splash. `fb_publish()` = `fb_wait_blit_ack()` + `fb_chunky_to_planar()` + `fb_frame_done()`; the two bracketing calls are public for `doom_video_publish`. `fb_rom3_dispatch` routes ROM3 samples to ikbd / xpadin / audio / VBL-sync.
 - `fb_chunked.c` / `fb_chunked.h` — `fb_chunked_buffer` (64 KB, also Doom's video buffer) + the Core 1 job dispatcher (`fb_core1_dispatch` / `fb_core1_wait`, one dispatch per wait, never straddling a publish) + `fb_core1_park` / `fb_core1_unpark` (hold Core 1 in RAM, interrupts masked, while flash is programmed; `fb_core1_park` returns only once Core 1 has acknowledged, and like any dispatch it must be called with no job outstanding -- in the game that means the tics phase or the end of `I_MD_PresentFrame`, never from the input poll, which the renderer runs mid-frame).
 - `fb_chunked_asm.S` — the Thumb c2p worker (`fb_c2p_half`) and the chunk-reversed copy (`fb_chunk_reverse_copy48`).
@@ -191,7 +193,7 @@ The RP2040's 2 MB flash is sliced into named regions, and code is responsible fo
 
 | Region | Origin | Length | Purpose |
 | --- | --- | --- | --- |
-| `FLASH` | `0x10000000` | 372 K | App code (~336 K release / ~378 K debug -- debug has ~3 K left; trim its printf chatter before moving the pack boundary) |
+| `FLASH` | `0x10000000` | 372 K | App code (~342 K release / ~379 K debug at v0.2.2 -- debug has ~2 K left; trim its printf chatter before moving the pack boundary) |
 | `PACK_FLASH` | `0x1005D000` | 780 K | The current level's asset pack, programmed from SD (see below) |
 | `BOOSTER_APP_FLASH` | `0x10120000` | 768 K | Reserved for the Booster app (do not write from this app) |
 | `CONFIG_FLASH` | `0x101E0000` | 120 K | 30 sectors of per-app config |
@@ -207,25 +209,28 @@ see "Flash budget" under MD/DOOM. Move the boundary between the two regions
 if the code ends up a different size, and keep `tools/levelpack.py --budget`
 (default = `PACK_FLASH` length) in step.
 
-**RAM is the binding constraint.** With the engine in, the release build
-leaves a **49.8 KB heap window** (`__bss_end__` .. `__StackLimit`), of which
-newlib's boot-time allocations (the settings library, ~8 KB) and
-`ZONE_HEAP_MARGIN` (4 KB, for FatFs while a pack loads) come off the top, so
-Doom's zone is roughly 38 KB. Upstream rp2040-doom reports its zone using up
-to ~45 KB on the busiest levels, so this is tight and may need another
-lever. What already went: the engine renders single-buffered into
-`fb_chunked_buffer` (upstream double-buffers 2 × 54 KB), the 32 KB planar
-scratch is gone (direct c2p), `RENDER_COL_MAX` is 3000 (upstream 3600;
-overflow degrades to black columns), the renderer's `visplane_bit`, patch
-decoder buffers and `column_heads` (12.6 KB) live in `CART_APP_FREE`, the
-sfx mix buffer and the vpatch lists live in the unused USB DPRAM, Core 1's
-stack is 2 KB. Left to pull if needed: `RENDER_COL_MAX` lower still, the
-4 KB dither LUT into scratch X, freeing the settings contexts after boot.
+**RAM is the binding constraint.** With the engine in, the build leaves a
+**~48 KB heap window** (`__bss_end__` .. `__StackLimit`, 48,428 B in the
+v0.2.2 debug build), of which newlib's boot-time allocations (the settings
+library and friends) and `ZONE_HEAP_MARGIN` (4 KB, for FatFs while a pack
+loads) come off the top: **Doom's zone is 32,768 B on hardware**
+(`0x20028000..0x20030000` in the boot log), less than the ~38 KB estimated
+from the map. Upstream rp2040-doom reports its zone using up to ~45 KB on
+the busiest levels; E1M1 and E1M2 play, so watch the UART for `Z_Malloc`
+errors on later maps. What already went: the engine renders
+single-buffered into `fb_chunked_buffer` (upstream double-buffers
+2 × 54 KB), the 32 KB planar scratch is gone (direct c2p),
+`RENDER_COL_MAX` is 3000 (upstream 3600; overflow degrades to black
+columns), the renderer's `visplane_bit`, patch decoder buffers and
+`column_heads` (12.6 KB) live in `CART_APP_FREE`, the vpatch lists live in
+the unused USB DPRAM, the sfx mix buffer (1 KB) in scratch X below Core 1's
+2 KB stack. Left to pull if needed: `RENDER_COL_MAX` lower still, the 4 KB
+dither LUT into scratch X, freeing the settings contexts after boot.
 
 - **`CART_APP_FREE`** overlays the 15,104-byte hole between `CART_APP_FREE_OFFSET` (`$4500`) and `CART_FRAMEBUFFER_OFFSET` (`$8300`) inside the shared region — ordinary SRAM that neither the ST nor the framebuffer path reads. Buffers tagged `__cart_app_free("name")` live there (the commemul ring and 12.6 KB of renderer scratch; ~1.4 KB is free). It is `NOLOAD`, so only park things first touched after `emul_start()` has called `ERASE_FIRMWARE_IN_RAM()`. `emul_start()` re-checks the window against `cart_shared.h` at boot, and the linker script asserts the section starts on `ORIGIN`.
 - If you add a `static` array, check the link: `__bss_end__` .. `__StackLimit` in `rp/build-*/rp.elf.map` is the whole heap window. The boot-time settings library needs ~8.4 KB of it; "the app launches then lands straight back in Booster" is a heap failure, not a crash. `DPRINT_HEAP()` in `debug.h` reports the window at boot.
 
-The build assumes Core 0 owns flash writes (`PICO_FLASH_ASSUME_CORE0_SAFE=1`). **Core 1 is parked in `fb_core1_loop`** (`fb_chunked.c`), a generic job dispatcher; the c2p bottom half rides it, and so does the RAM-resident park job `pack.c` uses to hold Core 1 still while it programs flash. **Core 1 is otherwise free**: the cartridge bus is served by PIO + DMA with no CPU involvement, so the feasibility note's "one core is reserved for the cartridge interface" does not hold — upstream's Core 1 render split can be kept via `fb_core1_dispatch`.
+The build assumes Core 0 owns flash writes (`PICO_FLASH_ASSUME_CORE0_SAFE=1`). **Core 1 is parked in `fb_core1_loop`** (`fb_chunked.c`), a generic job dispatcher; the c2p bottom half rides it, and so does the RAM-resident park job `pack.c` uses to hold Core 1 still while it programs flash. **Core 1 is otherwise free**: the cartridge bus is served by PIO + DMA with no CPU involvement (the original scoping assumption that one core is reserved for the cartridge interface does not hold), so upstream's Core 1 render split is kept via `fb_core1_dispatch`. The one other thing on Core 1 is the audio refill interrupt (see "Audio pipeline"), which is why it must never be moved to Core 0.
 
 Core 0 runs at **400 MHz at `VREG_VOLTAGE_1_30`** (`RP2040_CLOCK_FREQ_KHZ` in `constants.h`); the cart-bus PIO programs keep their proven 225 MHz cycle timing via the `SAMPLE_DIV_FREQ` clock divider, and the QSPI flash divider is raised to /4 (`PICO_FLASH_SPI_CLKDIV=4`) so flash SCK stays at 100 MHz. That is lower XIP bandwidth than upstream rp2040-doom's 135 MHz, and WHX decompression is XIP-heavy — one of the things to measure once the engine runs. If a board fails to boot at 400 MHz (silicon lottery), step down: 360000 @ `VREG_VOLTAGE_1_25`, then 300000 @ `VREG_VOLTAGE_1_15`, then 225000 @ `VREG_VOLTAGE_1_10` (a /2 flash divider is only safe at 225).
 
@@ -277,29 +282,38 @@ shrinks enough to move the boundary.
 block erase up front and Core 1 parked + interrupts off around each flash
 call (SD reads need XIP live, so the two cannot overlap). The display holds
 the last published frame throughout, and the progress callback may draw and
-publish between chunks. A 700 KB pack takes a few seconds. The engine will
-call this from its level-setup hook before touching any lump, and must
-tolerate a WHX that lacks lumps the full WAD has (other maps, other monsters'
-sprites, demos, music).
+publish between chunks. A 700 KB pack takes a few seconds. The engine calls
+it from `I_MD_LoadLevelPack` at the top of `P_SetupLevel` before touching
+any lump (see "The engine port"), and tolerates a WHX that lacks lumps the
+full WAD has (other maps, other monsters' sprites, demos, music). Only ever
+call it with Core 1 idle (it parks Core 1): the tics phase or the end of
+`I_MD_PresentFrame`, never from the input poll.
 
 ### Video (`doom_video.c`)
 Doom writes 320×200 PLAYPAL indices into `fb_chunked_buffer`;
 `doom_video_publish()` maps each pixel through a per-dither-cell LUT to one
 of 16 pens and packs the ST planes in the same pass, top half on Core 0 and
-bottom half on Core 1, then `fb_publish_scratch()` hands it to the m68k. The
-LUT is rebuilt whenever the PLAYPAL page or a mode changes
+bottom half on Core 1, between `fb_wait_blit_ack()` and `fb_frame_done()`.
+The LUT is rebuilt whenever the PLAYPAL page or a mode changes
 (`doom_video_set_playpal` — Doom's `I_SetPalette` — is expected on every
 tint, and the rebuild is cheap enough not to cache the 14 pages).
 
-The 16 colours come from one of three sources: STDOOM's hand-picked subset of
-PLAYPAL indices (Jonas Eschenburg's, refined over a long time on the
-shareware WAD; the default), a median-cut + k-means palette generated from
-the current page, or a 16-step grey ramp. Dither modes: nearest, 2×2 Bayer,
-4×4 Bayer (default), 4×4 clustered-dot, and blue noise (md-mjpeg's 32×32
-void-and-cluster tile, `bluenoise.h`, regenerated by `tools/gen_bluenoise.py`;
-it cannot be a per-cell LUT so it takes a per-pixel path with a per-index
-(nearest, second, level) table, about twice the cost of the LUT modes --
-debug builds log the conversion time every 256 frames). A colour is drawn as its nearest
+The 16 colours come from one of eight sources (`doom_video_palette_t`):
+STDOOM's hand-picked subset of PLAYPAL indices (Jonas Eschenburg's, refined
+over a long time on the shareware WAD; the default), a median-cut + k-means
+palette generated from the current page, a 16-step grey ramp, and the fixed
+EGA, CGA (palette 1, four colours — the reducer handles a reference set
+smaller than 16), C64, ZX Spectrum and PICO-8 palettes. Dither modes:
+nearest, 2×2 Bayer, 4×4 Bayer (default), 4×4 clustered-dot, and blue noise
+(md-mjpeg's 32×32 void-and-cluster tile, `bluenoise.h`, regenerated by
+`tools/gen_bluenoise.py`; it cannot be a per-cell LUT so it takes a
+per-pixel path with a per-index (nearest, second, level) table). Measured
+on hardware the whole LUT + c2p pass takes ~2.1 ms with Bayer and ~3.4 ms
+with blue noise, against the m68k's ~3 ms post-blit slack — blue noise is
+over, and no tearing has been reported yet, but it is the first suspect if
+any is. Keypad `*` and `/` cycle the modes in-game and the choice is saved
+in the app config (`DITHER` / `PALETTE`, `aconfig.c`) and restored at boot.
+A colour is drawn as its nearest
 reference on some cells and its second-nearest on the others, split by where
 it falls on the line between them (`t` in 0..16 against the cell threshold).
 Distances use the redmean approximation; the reference colours are snapped
@@ -316,16 +330,19 @@ Ctrl fire, Space use, Alt strafe, Shift run, 1-7 weapons, Esc, Tab, F1-F10,
 -/= — with Help → F11 (gamma), Undo → Pause, and keypad digits acting as the
 cursor cluster. `doom_input_poll_joystick()` folds the port-1 stick and an
 Xpad pad (`xpadin.c`) into `doom_joy_state_t` (x/y in -1..1 plus a button
-mask: fire, use, strafe, run, weapon prev/next, menu, map, strafe l/r). The
-engine glue will post these as `ev_keydown`/`ev_keyup` and `ev_joystick`.
+mask: fire, use, strafe, run, weapon prev/next, menu, map, strafe l/r).
+`md/i_input.c` posts the keys as `ev_keydown`/`ev_keyup` and turns the
+stick and pad into key presses on their edges.
 
-### Sound (`doom_sound.c`)
-Eight channels of 8-bit unsigned PCM (Doom's format; the WHX's ADPCM will be
-decoded into a channel by the engine glue, as upstream's `i_picosound.c`
-does), resampled onto however many output samples the m68k asks for each
-VBL — signed 8-bit at 25,033 Hz on the STE path, Ghostbusters (vA, vB) pairs
-at 5,585 Hz on the YM path. Volume 0..127 and stereo separation fold to a
-mono gain. No music.
+### Sound (`doom_sound.c`, `md/i_mdsound.c`)
+The game's mixer is `md/i_mdsound.c` (upstream's channel model and ADPCM
+decoder, eight channels), resampled onto however many output samples the
+m68k asks for each VBL — signed 8-bit at 25,033 Hz on the STE path,
+Ghostbusters (vA, vB) pairs at 5,585 Hz on the YM path — from the
+VBL-synced timer interrupt on Core 1 (see "Audio pipeline"). Volume 0..127
+and stereo separation fold to a mono gain. No music. `doom_sound.c` is the
+framework-era PCM mixer the test card uses; the game only takes its
+Ghostbusters LUT (`doom_sound_ghost_lut`) from it.
 
 ### The test card (`doomapp.c`)
 A stand-in for the engine that exercises the pipeline on real hardware: a
@@ -366,8 +383,13 @@ from.
   edge-triggered key events (stick = cursors + Ctrl; pad South/East/West/North
   = Ctrl/Space/Alt/Shift, Start = Esc, Select = Tab). Keypad `*` and `/`
   cycle the dither mode and palette source (`doom_video`) with a HUD
-  message, as the DOOM Accelerator did. ESC auto-exit is off; quitting is
-  `I_Quit` → `ikbd_request_boot_gem()`.
+  message, as the DOOM Accelerator did, and flag the settings for saving
+  (`I_MD_SaveVideoSettings`; the flash write itself happens at frame end,
+  see `md_main.c`). Keypad `-` cycles the audio interrupt off / Core 0 /
+  Core 1 for A/B tests. `I_GetEvent` is also called by the renderer
+  mid-frame (`NetUpdate`), so nothing in it may park Core 1 or touch
+  flash. ESC auto-exit is off; quitting is `I_Quit` →
+  `ikbd_request_boot_gem()`.
 - `md/i_system.c` — the zone is everything from the C heap's break plus
   `ZONE_HEAP_MARGIN` to `__StackLimit`; `malloc`/`calloc`/`realloc`/`free`
   are `--wrap`ped into it once it exists (`SKIP_PICO_MALLOC` keeps the SDK's
@@ -387,7 +409,13 @@ from.
   `P_SetupLevel`: stops sounds, programs `/doom/E?M?.whx` with a loading
   screen, then re-points what was resolved against the old pack
   (`W_AddFile("")`, `R_InitData()`, sfx lump numbers, `V_ResetSharedPalettes`,
-  the PLAYPAL pointer). Save-game slots are stubbed to "none".
+  the PLAYPAL pointer). It also reads the saved dither/palette at boot and
+  owns `I_MD_FlushVideoSettings()`, called at the end of
+  `I_MD_PresentFrame` (Core 1 idle) to write them. Save-game slots are
+  stubbed to "none".
+- `md/md_prof.c` — debug-only per-phase frame timer (tics / render / pre /
+  cols / join / overlay / present), marked from `d_main.c` and
+  `pd_render.cpp`, reported on the 64-frame debug line.
 - `pd_render.cpp` — Core 1's `pd_core1_loop` runs as a framework job
   dispatched in `pd_begin_frame` and joined after `core1_done`; the
   per-frame scratch arrays are `__cart_app_free`; `RENDER_COL_MAX` 3000.
@@ -422,8 +450,6 @@ revisited in order of visible payoff.
   per-level generated palette could be precomputed offline too.
 - **No music.** The YM2149 is free on STE-class machines while DMA sound
   plays; STDOOM's `atari_ym.c` MUS player is a template.
-- **Planar scratch.** The 32 KB scratch could go by converting straight into
-  the cart FB inside the m68k's post-blit slack, freeing RAM for the engine.
 - **Save games** go nowhere at first; the SD card is the place.
 - **Demos and the finale cast** are skipped; they need lumps the packs
   leave out.
@@ -432,13 +458,17 @@ revisited in order of visible payoff.
   near plane before the sprite lookup, but a look in a mirror-like
   situation (a second player, a corpse view) would want it back.
 - **Direct c2p tearing.** The frame is written into the cart FB in the
-  m68k's ~3 ms post-blit slack; if the fused LUT+c2p ever exceeds that
-  (it should take ~1 ms on both cores) the m68k blits a torn frame. A
-  timings overlay would confirm on hardware.
+  m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
+  ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
+  A faster blue-noise path (a per-row LUT slice) would close it.
 - **`RENDER_COL_MAX` 3000** (upstream 3600): very busy views drop columns
   to black. Raise it if RAM allows.
-- **Zone heap ~38 KB.** If levels fail to load (`Z_Malloc` errors in the
-  UART log), the next levers are listed under "Memory layout".
+- **Zone heap 32 KB** (measured; ~38 KB was the estimate). E1M1 and E1M2
+  load; if a later map fails (`Z_Malloc` errors in the UART log), the next
+  levers are listed under "Memory layout".
+- **A freeze on picking up a clip in E1M2** was seen once on v0.1.x and
+  has not recurred since the park handshake and the deferred settings
+  write were fixed (v0.2.2); not confirmed fixed.
 - **Melt wipe** is off; it needs a second frame buffer.
 - **ST high resolution** (640×400 mono, low priority). Today the m68k bails
   to GEM in high-res. It would need a 1-bit reduction (the 4x4 dither
@@ -455,7 +485,7 @@ revisited in order of visible payoff.
 ## Editing guardrails
 
 - **Never modify** `pico-sdk/`, `pico-extras/`, `fatfs-sdk/` or `lib/xpad/` — they are git submodules pinned to specific upstream revisions, and the build re-pins them on every run. To change FatFs configuration, edit `rp/src/ff/ffconf.h`.
-- Don't touch `main.c` for feature work — start in `emul.c`, or `doomapp.c` for anything the app owns.
+- Don't touch `main.c` for feature work — boot changes go in `emul.c`, game-side changes in `rp/src/doom/md/` (or `doomapp.c` for the test card).
 - Match the existing C style (clang-format config in `.clang-format`, clang-tidy in `.clang-tidy` — both wired up via CMake when the binaries are on `PATH`).
 - Keep `cart_shared.h` and `main.s` in step: they are the two halves of one layout.
 
