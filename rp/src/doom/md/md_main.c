@@ -47,6 +47,8 @@ extern void I_MD_SoundStopAll(void);
 extern void V_ResetSharedPalettes(void);
 extern const struct FB_FONT font8x8;
 
+static uint8_t s_boot_pal[768];
+
 /* The map the pack in flash was built for, e.g. "E1M1"; empty if unknown. */
 static char s_pack_map[8];
 static char s_folder[64] = "/doom";
@@ -149,6 +151,7 @@ void I_MD_LoadLevelPack(int ep, int mp) {
 
   DPRINTF("level pack: %s -> %s\n", s_pack_map, map);
   I_MD_SoundStopAll();
+  doom_video_set_playpal(s_boot_pal); /* plain black and white for the loading screen */
   program_pack(map);
 
   /* Re-point everything resolved against the previous pack. */
@@ -170,16 +173,15 @@ void doomgame_start(void) {
   }
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
-   * makes the loading screen legible: 0 black, 1..15 white, then greys. */
-  {
-    static uint8_t boot_pal[768];
-    for (int i = 0; i < 256; i++) {
-      const uint8_t v = (i == 0) ? 0 : (i < 16) ? 255 : (uint8_t)i;
-      boot_pal[3 * i] = boot_pal[3 * i + 1] = boot_pal[3 * i + 2] = v;
-    }
-    doom_video_init();
-    doom_video_set_playpal(boot_pal);
+   * makes the firmware's screens legible: 0 black, 1..15 white, then
+   * greys. Reinstalled around every pack swap too, so a loading screen is
+   * never drawn through whatever tint the game happened to be showing. */
+  for (int i = 0; i < 256; i++) {
+    const uint8_t v = (i == 0) ? 0 : (i < 16) ? 255 : (uint8_t)i;
+    s_boot_pal[3 * i] = s_boot_pal[3 * i + 1] = s_boot_pal[3 * i + 2] = v;
   }
+  doom_video_init();
+  doom_video_set_playpal(s_boot_pal);
 
   /* Boot into E1M1. If flash still holds it from last time, skip the
    * (several seconds of) programming. */

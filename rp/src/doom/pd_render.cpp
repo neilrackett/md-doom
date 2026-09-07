@@ -2825,15 +2825,11 @@ void pd_end_frame(int wipe_start) {
 
             case GS_INTERMISSION: {
                 static int16_t *wipe_yoffsets_raw;
-                if (!wipestate && post_wipecount < 2) {
-                    // todo we don't need to check wi_background_patch_num
-                    if (post_wipecount == 1 && wi_background_patch_num) {
-                        // at this point the text should be drawn by overlay, so we must erease it from the background
-                        draw_splash(wi_background_patch_num, 0, MAIN_VIEWHEIGHT, frame_buffer[render_frame_index]);
-                        draw_splash(wi_background_patch_num, MAIN_VIEWHEIGHT, SCREENHEIGHT,
-                                    frame_buffer[0] + MAIN_VIEWHEIGHT * SCREENWIDTH /* MD/DOOM */);
-                    }
-                    post_wipecount++;
+                /* MD/DOOM: the overlays are composited into this one buffer, so
+                 * the background is repainted under them every frame (upstream
+                 * painted it once, on the second intermission frame). */
+                if (!wipestate && wi_background_patch_num) {
+                    draw_splash(wi_background_patch_num, 0, SCREENHEIGHT, frame_buffer[0]);
                 }
                 // todo we should draw static stuff except the numbers on the background above, which also would be we might need to refresh the first time here
                 if (pre_wipe_state) {
