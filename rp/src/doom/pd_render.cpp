@@ -93,6 +93,7 @@ void I_UpdateSound(void);
 #include "audio.h"
 #include "cart_shared.h"
 #include "fb_chunked.h"
+#include "md_prof.h"
 void I_MD_PresentFrame(void);
 }
 void pd_core1_loop();
@@ -774,6 +775,7 @@ void pd_begin_frame() {
      * pd_core1_loop, which returns once core0_done is seen. */
     fb_core1_dispatch(pd_core1_job, nullptr);
     sem_release(&core1_wake);
+    md_prof_begin(MD_PROF_RENDER);
 
     reset_framedrawables();
 #if !PICO_ON_DEVICE
@@ -2593,6 +2595,8 @@ static void uh_oh_discard_columns(int render_col_limit) {
 }
 void pd_end_frame(int wipe_start) {
     wipe_start = 0; /* MD/DOOM: no melt wipe (it needs the second buffer) */
+    md_prof_end(MD_PROF_RENDER);
+    md_prof_begin(MD_PROF_PRE);
     DEBUG_PINS_SET(start_end, 2);
 #if !PICO_ON_DEVICE
 //    tex_count.record_print(textures.size());
@@ -2783,7 +2787,11 @@ void pd_end_frame(int wipe_start) {
 #if USE_CORE1_FOR_REGULAR
     sem_release(&core1_do_regular);
 #endif
+    md_prof_end(MD_PROF_PRE);
+    md_prof_begin(MD_PROF_COLS);
     draw_regular_columns(0);
+    md_prof_end(MD_PROF_COLS);
+    md_prof_begin(MD_PROF_JOIN);
 #if !DEMO1_ONLY
     if (gamestate == GS_FINALE && finalestage == F_STAGE_CAST && !wipestate) {
         // note we do this before core0_done so core1 is still playing music
@@ -2794,6 +2802,8 @@ void pd_end_frame(int wipe_start) {
     sem_release(&core0_done);
     sem_acquire_blocking(&core1_done);
     fb_core1_wait(); /* MD/DOOM: join the framework job */
+    md_prof_end(MD_PROF_JOIN);
+    md_prof_begin(MD_PROF_OVERLAY);
     draw_fuzz_columns();
     DEBUG_PINS_CLR(full_render, 1);
     NetUpdate();
@@ -2958,7 +2968,10 @@ void pd_end_frame(int wipe_start) {
     DEBUG_PINS_CLR(start_end, 2);
     /* MD/DOOM: composite the overlays and hand the frame to the ST now;
      * there is no scan-out side to do it asynchronously. */
+    md_prof_end(MD_PROF_OVERLAY);
+    md_prof_begin(MD_PROF_PRESENT);
     I_MD_PresentFrame();
+    md_prof_end(MD_PROF_PRESENT);
     /* Full-screen pages are repainted every frame (see
      * maybe_draw_single_screen); the intermission background too. */
     sub_gamestate = 0;

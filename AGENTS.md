@@ -191,7 +191,7 @@ The RP2040's 2 MB flash is sliced into named regions, and code is responsible fo
 
 | Region | Origin | Length | Purpose |
 | --- | --- | --- | --- |
-| `FLASH` | `0x10000000` | 372 K | App code (331 K release / 366 K debug with the engine) |
+| `FLASH` | `0x10000000` | 372 K | App code (~336 K release / ~378 K debug -- debug has ~3 K left; trim its printf chatter before moving the pack boundary) |
 | `PACK_FLASH` | `0x1005D000` | 780 K | The current level's asset pack, programmed from SD (see below) |
 | `BOOSTER_APP_FLASH` | `0x10120000` | 768 K | Reserved for the Booster app (do not write from this app) |
 | `CONFIG_FLASH` | `0x101E0000` | 120 K | 30 sectors of per-app config |

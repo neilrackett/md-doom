@@ -82,6 +82,9 @@ void fb_publish(void);
 void fb_wait_blit_ack(void);
 void fb_frame_done(void);
 
+/* Debug: longest fb_wait_blit_ack since the last call, in microseconds. */
+uint32_t fb_debug_wait_max_us(void);
+
 /** @brief Drain the ROM3 commemul ring once, routing each captured
  *         sample to BOTH the IKBD demux and the VBL frame-sync
  *         detector. Call from the main loop in place of a bare

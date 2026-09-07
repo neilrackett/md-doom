@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "md_prof.h" /* MD/DOOM */
 #include "config.h"
 #include "deh_main.h"
 #include "doomdef.h"
@@ -491,7 +492,9 @@ void D_RunFrame()
     // frame syncronous IO operations
     I_StartFrame ();
 
+    md_prof_begin(MD_PROF_TICS); /* MD/DOOM */
     TryRunTics (); // will run at least one tic
+    md_prof_end(MD_PROF_TICS);
 
     S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
 

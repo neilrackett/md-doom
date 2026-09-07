@@ -29,8 +29,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio.h"
 #include "bluenoise.h" /* 32x32 threshold tile, 16 levels, in flash */
 #include "cart_shared.h"
+#include "debug.h"
 #include "fb.h"
 #include "fb_chunked.h"
 #include "palette.h"
@@ -544,6 +546,33 @@ void doom_video_publish(void) {
 
   s_convert_us = time_us_32() - t0;
   fb_frame_done();
+
+#if defined(_DEBUG) && (_DEBUG != 0)
+  /* Every 64 frames: the conversion time (must stay inside the m68k's
+   * ~3 ms post-blit slack), the longest frame-to-frame interval, the
+   * longest wait for the m68k's ack, and the audio interrupt's worst
+   * cases -- enough to see where a stall comes from. */
+  static uint32_t s_frames, s_last_us, s_frame_max_us;
+  const uint32_t now = time_us_32();
+  if (s_last_us && now - s_last_us > s_frame_max_us) s_frame_max_us = now - s_last_us;
+  s_last_us = now;
+  if ((++s_frames & 63u) == 0) {
+    uint32_t fill_max, fills, cb_max, cbs;
+    audio_debug_stats(&fill_max, &fills, &cb_max, &cbs);
+    extern void md_prof_report(char *buf, int len);
+    extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
+    char prof[96];
+    md_prof_report(prof, sizeof(prof));
+    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | audio core %d: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
+            doom_video_dither_name(s_dither), (unsigned long)s_convert_us,
+            (unsigned long)(s_frame_max_us / 1000u), (unsigned long)fb_debug_wait_max_us(),
+            audio_vbl_timer_core(), (unsigned long)cbs,
+            (unsigned long)fills, (unsigned long)fill_max, (unsigned long)cb_max,
+            (unsigned long)md_sound_dbg_starts, (unsigned long)md_sound_dbg_max_playing, prof);
+    md_sound_dbg_starts = md_sound_dbg_max_playing = 0;
+    s_frame_max_us = 0;
+  }
+#endif
 }
 
 uint32_t doom_video_last_convert_us(void) { return s_convert_us; }

@@ -144,6 +144,13 @@ static void fb_rom3_dispatch(uint16_t sample) {
 
 void fb_pump_rom3(void) { commemul_poll(fb_rom3_dispatch); }
 
+static uint32_t s_dbg_wait_max_us;
+uint32_t fb_debug_wait_max_us(void) {
+  const uint32_t v = s_dbg_wait_max_us;
+  s_dbg_wait_max_us = 0;
+  return v;
+}
+
 void fb_wait_blit_ack(void) {
   /* Block until the m68k has finished blitting the previous frame (its
    * VBLSYNC ack) so the cart FB is free to overwrite. Drain the ROM3
@@ -157,6 +164,8 @@ void fb_wait_blit_ack(void) {
     }
   }
   s_vbl_published = s_vbl_seen;
+  const uint32_t waited = time_us_32() - t_wait;
+  if (waited > s_dbg_wait_max_us) s_dbg_wait_max_us = waited;
 }
 
 void fb_frame_done(void) {
