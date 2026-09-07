@@ -17,6 +17,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "config.h"
@@ -187,9 +188,30 @@ void doomgame_start(void) {
     program_pack("E1M1");
   }
 
+  /* The dither and palette chosen last time (keypad * and /). */
+  {
+    SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DITHER);
+    int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
+    if (v >= 0 && v < (int)DOOM_VIDEO_DITHER_COUNT) doom_video_set_dither((doom_video_dither_t)v);
+    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_PALETTE);
+    v = e ? atoi(e->value) : (int)DOOM_VIDEO_PAL_SUBSET;
+    if (v >= 0 && v < (int)DOOM_VIDEO_PAL_COUNT) doom_video_set_palette_mode((doom_video_palette_t)v);
+  }
+
   DPRINTF("D_DoomMain\n");
   I_Init();
   D_DoomMain(); /* never returns */
+}
+
+/* Remember the dither and palette across sessions. Writes the app's
+ * settings sector, so Core 1 is held in RAM for the flash access. */
+void I_MD_SaveVideoSettings(void) {
+  SettingsContext *ctx = aconfig_getContext();
+  settings_put_integer(ctx, ACONFIG_PARAM_DITHER, (int)doom_video_get_dither());
+  settings_put_integer(ctx, ACONFIG_PARAM_PALETTE, (int)doom_video_get_palette_mode());
+  fb_core1_park();
+  settings_save(ctx, true);
+  fb_core1_unpark();
 }
 
 /* Save games: none yet (the upstream slots live at the top of flash,

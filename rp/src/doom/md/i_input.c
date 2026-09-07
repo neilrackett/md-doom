@@ -30,6 +30,8 @@
 #define SCAN_KP_MULTIPLY 0x66
 #define SCAN_KP_DIVIDE 0x65
 
+extern void I_MD_SaveVideoSettings(void);
+
 static void cycle_video_mode(uint8_t scancode) {
   if (scancode == SCAN_KP_MULTIPLY) {
     doom_video_set_dither((doom_video_get_dither() + 1) % DOOM_VIDEO_DITHER_COUNT);
@@ -38,6 +40,7 @@ static void cycle_video_mode(uint8_t scancode) {
     doom_video_set_palette_mode((doom_video_get_palette_mode() + 1) % DOOM_VIDEO_PAL_COUNT);
     players[consoleplayer].message = doom_video_palette_name(doom_video_get_palette_mode());
   }
+  I_MD_SaveVideoSettings(); /* survives the next power-up */
 }
 
 static bool s_shift_down;
