@@ -30,6 +30,20 @@ md-framebuffer-template as carried in MD/Lynx.
   wipe, music or saves yet.
 - Loading and missing-pack screens on a 1-bit backdrop (`desc/bg-mono.png`).
 
+## v0.2.2 (2026-09-07)
+
+- Changing the palette or dither mid-frame no longer freezes: the settings
+  write is deferred to the end of the frame, when Core 1 is idle and can
+  be parked.
+- Core 1's park is acknowledged before flash is touched; previously an
+  erase could start while Core 1 was still finishing an audio refill.
+- Debug line reports the audio mode and fill length.
+- The loud 1-2 s burst of noise every few minutes on STE DMA sound: the
+  DMA loop's start/end registers were rewritten from the VBL loop and a
+  frame end landing mid-update played 32 KB of screen memory as audio.
+  They are now set from a Timer-A frame-end interrupt, a full frame
+  away from the next latch.
+
 ## v0.2.0 (2026-09-07)
 
 - Loading screen drawn in plain black and white, whatever tint the game was

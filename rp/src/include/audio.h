@@ -68,6 +68,7 @@ void audio_set_mode(audio_mode_t mode);
 
 /* Current back-end, for the fill callback to pick its output format. */
 audio_mode_t audio_get_mode(void);
+uint32_t audio_get_fill_bytes(void); /* bytes per VBL currently asked of the fill */
 
 /* Set the per-VBL refill size. Only meaningful for STE DMA sound, where
  * the m68k measures what the chip actually consumes per frame and sends

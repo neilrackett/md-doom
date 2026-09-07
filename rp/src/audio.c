@@ -69,6 +69,7 @@ void audio_set_mode(audio_mode_t mode) {
 }
 
 audio_mode_t audio_get_mode(void) { return s_audio_mode; }
+uint32_t audio_get_fill_bytes(void) { return s_fill_bytes; }
 
 /* Sound-capability report window (SNDCAP_WINDOW_BASE in userfw.s): the
  * m68k reads $FB8600 + has_dma once per VBL, having probed the _SND

@@ -563,10 +563,10 @@ void doom_video_publish(void) {
     extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
     char prof[96];
     md_prof_report(prof, sizeof(prof));
-    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | audio core %d: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
+    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | audio core %d mode %d len %lu: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
             doom_video_dither_name(s_dither), (unsigned long)s_convert_us,
             (unsigned long)(s_frame_max_us / 1000u), (unsigned long)fb_debug_wait_max_us(),
-            audio_vbl_timer_core(), (unsigned long)cbs,
+            audio_vbl_timer_core(), (int)audio_get_mode(), (unsigned long)audio_get_fill_bytes(), (unsigned long)cbs,
             (unsigned long)fills, (unsigned long)fill_max, (unsigned long)cb_max,
             (unsigned long)md_sound_dbg_starts, (unsigned long)md_sound_dbg_max_playing, prof);
     md_sound_dbg_starts = md_sound_dbg_max_playing = 0;
