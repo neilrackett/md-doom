@@ -1,0 +1,20 @@
+{
+  "uuid": "<APP_UUID>",
+  "name": "MD/DOOM",
+  "description": "The SidecarTridge Multi-device is brilliant, but can it play DOOM? To download level packs, head over to <a href=\"neilrackett.com/atarist\">neilrackett.com/atarist</a> and select MD/DOOM.",
+  "image": "https://dowloads.neilrackett.com/md-doom.webp",
+  "tags": [
+    "Game",
+    "Doom",
+    "FPS"
+  ],
+  "devices": [
+    "ST",
+    "STE",
+    "MegaST",
+    "MegaSTE"
+  ],
+  "binary": "https://dowloads.neilrackett.com/md-doom/<APP_UUID>.uf2",
+  "md5": "<BINARY_MD5_HASH>",
+  "version": "<APP_VERSION>"
+}
