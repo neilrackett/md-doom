@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.3 (2026-09-08)
+
+- The melt no longer rewrites rows that cannot have changed (the old
+  picture before a column starts moving, the new one once it has been
+  revealed). A step measured 3.9 ms on hardware when every row was
+  rewritten, past the m68k's post-blit slack, so a melt frame could tear.
+
 ## v0.3.1 (2026-09-08)
 
 - The screen melt is back: level to intermission, intermission to level,

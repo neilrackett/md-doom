@@ -333,7 +333,9 @@ holds the one beneath. Each step moves Doom's 160 two-pixel columns by
 bits through the normal LUT + c2p and old bits from `delta` rows up in the
 same column; cores split left/right. No second buffer, 640 B of column
 state in `CART_APP_FREE`. Checked on the host word for word against a
-pen-domain reference for both the LUT and blue-noise paths.
+pen-domain reference for both the LUT and blue-noise paths. A step
+measures 1.1 ms at worst on hardware (v0.3.3), inside the m68k's slack;
+the first cut that rewrote every row measured 3.9 ms.
 Distances use the redmean approximation; the reference colours are snapped
 to what the STE actually displays (`(v >> 4) * 17`, not the nibble ×17 — the
 STE's nibble bit order is not the value's). All of this is the DOOM

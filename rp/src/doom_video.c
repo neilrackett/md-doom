@@ -686,6 +686,12 @@ uint32_t doom_video_last_convert_us(void) { return s_convert_us; }
 /* ------------------------------------------------------------------ */
 /* Melt wipe                                                           */
 
+/* Size, not speed: at the file's -O3 the compose below unrolled to 8 KB
+ * of RAM-resident code and the debug build fell out of flash. A step
+ * only touches the band of rows that are moving, so -Os is plenty. */
+#pragma GCC push_options
+#pragma GCC optimize("Os")
+
 /* Doom's screen melt, done in place on the cart FB. There is no second
  * frame buffer to hold the picture being melted away, but the m68k only
  * ever reads the cart FB, so the last published frame is still sitting
@@ -697,11 +703,15 @@ uint32_t doom_video_last_convert_us(void) { return s_convert_us; }
  * column that has scrolled past a row shows the new frame there, through
  * the usual LUT + c2p; otherwise its bits come from the same column
  * `delta` rows up in the cart FB, which bottom-up order guarantees still
- * hold the previous step's picture. The old pixels keep the dither they
+ * hold the previous step's picture. Columns that moved by the same
+ * amount are shifted together in one tight pass, so a step is a few
+ * passes of two loads and two stores per row rather than a per-row sort. The old pixels keep the dither they
  * were given at their original rows, as a moving picture should. The two
  * cores take the left and right halves of the screen, so neither reads
- * a word the other writes. Row-groups no column has moved in are left
- * alone, which is most of the screen early in the melt. */
+ * a word the other writes. Rows nothing has moved in are left alone:
+ * the untouched old picture early in the melt, and the fully revealed
+ * new one late in it, so a step's work is the band in between (~1 ms;
+ * rewriting everything measured 3.9 ms, past the m68k's slack). */
 
 #define WIPE_COLS 160 /* two-pixel columns, as in the original */
 
@@ -731,62 +741,120 @@ static inline uint32_t wipe_cart_off(unsigned y, unsigned g) {
   return (CART_FB_CHUNK_COUNT - 1u - k) * CART_FB_CHUNK_BYTES + r;
 }
 
+/* A cart-FB cursor on one group that walks up a row at a time: a row is
+ * 160 bytes = 3 chunks + 16, and the chunks run backwards in the cart FB,
+ * so the row above is 3 chunks later minus 16 bytes, with a chunk
+ * borrow. Rows 0..198 only: the last 32 bytes of row 199 are the m68k's
+ * unreversed tail, which wipe_cart_off handles. */
+typedef struct {
+  uint32_t co; /* cart offset      */
+  int r;       /* offset in chunk  */
+} wipe_ptr_t;
+
+static inline void wipe_ptr_init(wipe_ptr_t *p, unsigned y, unsigned g) {
+  uint32_t k = (y * 10u * 0xAAABu) >> 17;
+  uint32_t r = y * 160u - k * 48u + g * 8u;
+  const uint32_t add = (r >= 48u) + (r >= 96u) + (r >= 144u);
+  k += add;
+  r -= add * 48u;
+  p->co = (CART_FB_CHUNK_COUNT - 1u - k) * CART_FB_CHUNK_BYTES + r;
+  p->r = (int)r;
+}
+
+static inline void wipe_ptr_up(wipe_ptr_t *p) {
+  p->co += 3u * CART_FB_CHUNK_BYTES - 16u;
+  p->r -= 16;
+  if (p->r < 0) {
+    p->r += CART_FB_CHUNK_BYTES;
+    p->co += 2u * CART_FB_CHUNK_BYTES;
+  }
+}
+
+static inline void wipe_rmw(uint32_t *dst, const uint32_t *src, uint32_t m) {
+  dst[0] = (dst[0] & ~m) | (src[0] & m);
+  dst[1] = (dst[1] & ~m) | (src[1] & m);
+}
+
 static void __not_in_flash_func(wipe_compose_groups)(unsigned g0, unsigned g1) {
+  uint8_t *const fb = s_cart_fb;
   for (unsigned g = g0; g < g1; g++) {
-    int16_t on[8], dl[8]; /* per column: offset now, and how far it moved */
+    /* Per column: offset now, and how far it moved this step. Columns
+     * that moved by the same amount form a class: one source row, one
+     * mask, one pass. */
+    int16_t on[8];
+    int ymin_static = FB_CHUNKED_H; /* rows above were all-new last step too */
+    int ymax = 0;
+    unsigned nd = 0;
+    int16_t dd[8], dlo[8];
+    uint32_t dm[8];
     for (unsigned c = 0; c < 8u; c++) {
       int v = s_wipe_y[g * 8u + c];
       if (v < 0) v = 0;
       if (v > FB_CHUNKED_H) v = FB_CHUNKED_H;
       on[c] = (int16_t)v;
-      dl[c] = (int16_t)(v - s_wipe_off[g * 8u + c]);
-    }
-    for (int y = FB_CHUNKED_H - 1; y >= 0; y--) {
-      /* Sort the eight columns into "shows the new frame at this row"
-       * and, for the rest, by how far they moved (usually one value). */
-      uint32_t mnew = 0;
-      unsigned nd = 0;
-      int16_t dd[8];
-      uint32_t dm[8];
-      for (unsigned c = 0; c < 8u; c++) {
-        const uint32_t m = 3u << (14u - 2u * c);
-        const uint32_t mm = m | (m << 16);
-        if (on[c] > y) {
-          mnew |= mm;
-        } else {
-          unsigned j;
-          for (j = 0; j < nd; j++) {
-            if (dd[j] == dl[c]) {
-              dm[j] |= mm;
-              break;
-            }
-          }
-          if (j == nd) {
-            dd[nd] = dl[c];
-            dm[nd] = mm;
-            nd++;
-          }
+      if (v > ymax) ymax = v;
+      const int prev = s_wipe_off[g * 8u + c];
+      if (prev < ymin_static) ymin_static = prev;
+      const int16_t d = (int16_t)(v - prev);
+      if (!d) continue; /* still, or already gone: nothing to move */
+      const uint32_t m = 3u << (14u - 2u * c);
+      unsigned j;
+      for (j = 0; j < nd; j++) {
+        if (dd[j] == d) {
+          dm[j] |= m;
+          if (v < dlo[j]) dlo[j] = (int16_t)v;
+          break;
         }
       }
-      if (!mnew && nd == 1u && dd[0] == 0) continue; /* nothing moved here */
+      if (j == nd) {
+        dd[nd] = d;
+        dm[nd] = m;
+        dlo[nd] = (int16_t)v;
+        nd++;
+      }
+    }
+    if (!nd) continue; /* nothing in this group changed */
 
-      uint32_t p01 = 0, p23 = 0;
-      if (mnew) {
-        uint32_t t[2];
-        const unsigned pix = (unsigned)y * FB_CHUNKED_W + g * 16u;
-        doom_c2p_block_any(t, fb_chunked_buffer + pix, pix);
-        p01 = t[0] & mnew;
-        p23 = t[1] & mnew;
+    /* The old picture: each class shifts down by its delta, bottom-up,
+     * from row 199 to the top of its highest column. Rows above a
+     * column's own offset get stale bits here; the new pass below
+     * overwrites them. */
+    for (unsigned j = 0; j < nd; j++) {
+      const uint32_t m = dm[j] * 0x10001u;
+      const int d = dd[j];
+      int y = FB_CHUNKED_H - 1;
+      if (dlo[j] > y) continue;
+      wipe_rmw((uint32_t *)(fb + wipe_cart_off((unsigned)y, g)),
+               (const uint32_t *)(fb + wipe_cart_off((unsigned)(y - d), g)), m);
+      if (--y < dlo[j]) continue;
+      wipe_ptr_t pd, ps;
+      wipe_ptr_init(&pd, (unsigned)y, g);
+      wipe_ptr_init(&ps, (unsigned)(y - d), g);
+      for (;;) {
+        wipe_rmw((uint32_t *)(fb + pd.co), (const uint32_t *)(fb + ps.co), m);
+        if (--y < dlo[j]) break;
+        wipe_ptr_up(&pd);
+        wipe_ptr_up(&ps);
       }
-      for (unsigned j = 0; j < nd; j++) {
-        const uint32_t *src =
-            (const uint32_t *)(s_cart_fb + wipe_cart_off((unsigned)(y - dd[j]), g));
-        p01 |= src[0] & dm[j];
-        p23 |= src[1] & dm[j];
+    }
+
+    /* The new picture: rows some column has revealed, down to the ones
+     * that were fully revealed last step and need no repaint. */
+    for (int y = ymax - 1; y >= ymin_static; y--) {
+      uint32_t mnew = 0;
+      for (unsigned c = 0; c < 8u; c++) {
+        if (on[c] > y) mnew |= (3u << (14u - 2u * c)) * 0x10001u;
       }
-      uint32_t *dst = (uint32_t *)(s_cart_fb + wipe_cart_off((unsigned)y, g));
-      dst[0] = p01;
-      dst[1] = p23;
+      uint32_t t[2];
+      const unsigned pix = (unsigned)y * FB_CHUNKED_W + g * 16u;
+      doom_c2p_block_any(t, fb_chunked_buffer + pix, pix);
+      uint32_t *dst = (uint32_t *)(fb + wipe_cart_off((unsigned)y, g));
+      if (mnew == 0xFFFFFFFFu) {
+        dst[0] = t[0];
+        dst[1] = t[1];
+      } else {
+        wipe_rmw(dst, t, mnew);
+      }
     }
     for (unsigned c = 0; c < 8u; c++) s_wipe_off[g * 8u + c] = on[c];
   }
@@ -842,3 +910,5 @@ bool doom_video_wipe_step(int tics) {
   if (done) DPRINTF("melt done, step max %lu us\n", (unsigned long)s_wipe_max_us);
   return done;
 }
+
+#pragma GCC pop_options
