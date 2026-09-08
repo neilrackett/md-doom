@@ -17,6 +17,8 @@
  * and are re-derived from whichever PLAYPAL page Doom asks for, so the
  * damage, bonus and radiation-suit tints still work: the same 16 slots
  * are picked out of the tinted page and the LUT is rebuilt against them.
+ * The fixed retro palettes match by hue and shade by brightness instead
+ * of by plain distance, or Doom's dark colours would all come out black.
  *
  * This is the same reduction the DOOM Accelerator microfirmware for
  * STDOOM does, carried over here; the default 16-colour subset is the

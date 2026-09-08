@@ -8,18 +8,24 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
+It can now.
+
 MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
 
 A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
 ## Installation
 
+You can install MD/DOOM from the official SidecarTridge Multi-device store using the Booster web app, or manually if you prefer. Either way you'll need to download the level packs from the [releases page](https://github.com/neilrackett/md-doom/releases).
+
+See below if you'd prefer to build the level packs yourself.
+
+### Manual installation
+
 1. Download the latest `.uf2`, `.json` and level packs from the [releases page](https://github.com/neilrackett/md-doom/releases).
 2. Copy both the `.uf2` and `.json` into the `/apps` folder of your SidecarT's microSD card, and extract all of the E1M\*.whx files into a `/doom` folder.
 3. On the Booster screen, press ESC for the app list and select MD/DOOM.
 4. To return to Booster, power on your ST while holding the SELECT button on your SidecarT.
-
-See below if you'd prefer to build the level packs yourself.
 
 ## Controls
 
@@ -41,7 +47,7 @@ Controls match the original PC Doom:
 | - and +         | Screen size                                                                         |
 | Keypad \* and / | Cycle through dither and the palette options (see below); your choice is remembered |
 
-A joystick in port 1 moves, turns and fires. A gamepad through an [Xpad](https://github.com/neilrackett/atarist-xpad) provider does the rest: South fires, East uses, West strafes, North runs, Start opens the menu and Select the map.
+A joystick in port 1 moves, turns and fires.
 
 Quit from the menu (or pressing F10) returns you to GEM.
 
@@ -50,11 +56,9 @@ Colour palettes: STDOOM (default), generated, greyscale, EGA, CGA, C64, ZX Spect
 
 ### Level packs
 
-You need the shareware `DOOM1.WAD`, which id Software lets anyone distribute.
+Your SidecarT has only got 1,152KB available for both code and data, and the smallest we can compress the shareware WAD to is 1,758KB, so MD/DOOM loads level packs one at a time (maximum ~768KB each), which contain just the map, sprites, textures, flats and sounds needed. We also had to drop the help and credits screens, have monsters that always face you, and sound effects at 5 kHz.
 
-Your SidecarT only got 1,152KB available for both code and data, and the smallest we can compress the shareware WAD to is 1,758KB, so MD/DOOM loads level pack at a time (maximim 780KB each), which contains just the map, sprites, textures, flats and sounds needed. We also had to drop the help and credits screens, have monsters that always face you, and sound effects are 5 kHz; `levelpack.py` reports every pack's size against the budget.
-
-If you'd like to build the level packs yourself:
+If you'd like to build the level packs yourself, you'll need [the `DOOM1.WAD` from the Shareware version of Doom](https://ia800601.us.archive.org/view_archive.php?archive=/26/items/doom-wads/Doom%20%28v1.9%29%20%28Demo%29.zip).
 
 ```bash
 git clone --depth 1 https://github.com/kilograham/rp2040-doom /tmp/rp2040-doom
@@ -63,6 +67,8 @@ cmake --build build/whd_gen
 python3 tools/levelpack.py DOOM1.WAD packs --doom-src rp/src/doom/doom \
     --whd-gen build/whd_gen/whd_gen --no-ui --no-rotations --sfx-rate 5000
 ```
+
+`levelpack.py` will report every pack's size against the budget.
 
 ## Hardware requirements
 

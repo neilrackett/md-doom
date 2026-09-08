@@ -30,6 +30,20 @@ md-framebuffer-template as carried in MD/Lynx.
   wipe, music or saves yet.
 - Loading and missing-pack screens on a 1-bit backdrop (`desc/bg-mono.png`).
 
+## v0.2.4 (2026-09-08)
+
+- Retro palettes: the brightness stretch eased from a gamma of 0.5 to
+  0.75. At 0.5 the walls came out as white dither; this keeps the colour
+  and puts the shading back.
+
+## v0.2.3 (2026-09-08)
+
+- The fixed retro palettes (EGA, CGA, C64, ZX Spectrum, PICO-8) no longer
+  render the game as black with a few highlights. Doom's dark browns and
+  greys were all nearest black by distance; they now pick a pen by hue,
+  stretch their brightness, and dither along a ladder of black plus the
+  pens of that hue, so walls and floors come out in colour.
+
 ## v0.2.2 (2026-09-07)
 
 - Changing the palette or dither mid-frame no longer freezes: the settings

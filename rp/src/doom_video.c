@@ -14,7 +14,9 @@
  *     pen every PLAYPAL index maps to. A dithered index is drawn as its
  *     nearest reference on some cells and its second-nearest on the
  *     rest, the split decided by where the colour falls on the line
- *     between the two (t in 0..16) against the cell's threshold.
+ *     between the two (t in 0..16) against the cell's threshold. The
+ *     fixed retro palettes use a different pairing (see "vivid" below):
+ *     a pen chosen by hue alone, shaded against black by brightness.
  *
  *  2. Per frame: doom_video_publish() walks fb_chunked_buffer 16 pixels
  *     at a time, maps each pixel through the LUT for its cell, and packs
@@ -52,6 +54,7 @@ static doom_video_dither_t s_dither = DOOM_VIDEO_DITHER_BAYER4;
 
 static uint8_t s_ref_rgb[16][3];  /* the 16 colours as the ST shows them */
 static int s_ref_count = 16;      /* fewer for the 4-colour CGA palette   */
+static bool s_vivid;              /* fixed palette: hue-first matching   */
 static uint16_t s_st_colors[16];  /* the same, as ST palette words       */
 static uint8_t s_nearest[256];    /* PLAYPAL index -> nearest pen        */
 
@@ -151,6 +154,101 @@ static void two_nearest_ref(const uint8_t *c, uint8_t *out_a,
   }
   *out_a = a;
   *out_b = b;
+}
+
+/* ------------------------------------------------------------------ */
+/* "Vivid" matching for the fixed palettes                             */
+
+/* Doom's PLAYPAL is mostly dark, desaturated browns and greys, and the
+ * light-diminishing colormaps push the visible pixels darker still.
+ * Matched by plain distance against a set of saturated primaries,
+ * nearly everything lands on black with a sprinkle of colour, which is
+ * not what anyone picking the ZX Spectrum palette wanted. So the fixed
+ * palettes match differently:
+ *
+ *  - the pen is chosen by hue alone (the colour and each pen scaled to
+ *    full brightness before comparing), so a dark brown wall is still a
+ *    brown/yellow wall;
+ *  - the colour's brightness is stretched (gamma 0.75; 0.5 turned the
+ *    walls into white dither) so Doom's mid-tones reach further up a
+ *    pen instead of sitting at a quarter of one;
+ *  - the dither then runs along a brightness ladder: black, plus every
+ *    pen of the chosen hue (EGA's dark/bright pairs, C64's greys), and
+ *    the colour dithers between the two rungs bracketing its brightness.
+ *
+ * All of it happens in the LUT rebuild; the per-pixel path is unchanged. */
+
+static int luma(const uint8_t *c) {
+  return (c[0] * 77 + c[1] * 151 + c[2] * 28) >> 8;
+}
+
+/* Scale a colour so its brightest channel is 255. Black has no hue;
+ * treat it as neutral so it pairs with the greys. */
+static void chroma_of(const uint8_t *c, int *out) {
+  int m = c[0];
+  if (c[1] > m) m = c[1];
+  if (c[2] > m) m = c[2];
+  for (int k = 0; k < 3; k++) out[k] = m ? (c[k] * 255) / m : 255;
+}
+
+static int chroma_dist(const int *p, const int *q) {
+  int dr = p[0] - q[0], dg = p[1] - q[1], db = p[2] - q[2];
+  return dr * dr + dg * dg + db * db;
+}
+
+static int isqrt16(int n) {
+  int r = 0;
+  for (int bit = 1 << 8; bit; bit >>= 1) {
+    if ((r + bit) * (r + bit) <= n) r += bit;
+  }
+  return r;
+}
+
+#define VIVID_BLACK_LUMA 24     /* pens darker than this are "black"    */
+#define VIVID_LADDER_TOL 16000  /* chroma distance to share a ladder    */
+
+/* Pick the two pens and the mix level for colour `c`. */
+static void vivid_pair(const uint8_t *c, uint8_t *out_a, uint8_t *out_b,
+                       int *out_t16) {
+  int ref_y[16], ref_ch[16][3], ch[3];
+  for (int k = 0; k < s_ref_count; k++) {
+    ref_y[k] = luma(s_ref_rgb[k]);
+    chroma_of(s_ref_rgb[k], ref_ch[k]);
+  }
+  chroma_of(c, ch);
+
+  /* The hue pen: nearest chroma among the pens that are not black. */
+  int h = -1, best = 0x7FFFFFFF;
+  for (int k = 0; k < s_ref_count; k++) {
+    if (ref_y[k] < VIVID_BLACK_LUMA) continue;
+    int d = chroma_dist(ch, ref_ch[k]);
+    if (d < best) {
+      best = d;
+      h = k;
+    }
+  }
+  if (h < 0) h = 0;
+
+  /* Stretched brightness, y = 255 * (Y/255)^0.75 as two square roots,
+   * then the ladder rungs bracketing it. */
+  int y = isqrt16(luma(c) * 255);
+  y = (y * isqrt16(y * 255)) / 255;
+  int a = -1, b = -1;
+  for (int k = 0; k < s_ref_count; k++) {
+    if (ref_y[k] >= VIVID_BLACK_LUMA &&
+        chroma_dist(ref_ch[k], ref_ch[h]) > VIVID_LADDER_TOL)
+      continue;
+    if (ref_y[k] <= y) {
+      if (a < 0 || ref_y[k] > ref_y[a]) a = k;
+    } else {
+      if (b < 0 || ref_y[k] < ref_y[b]) b = k;
+    }
+  }
+  if (a < 0) a = b;
+  if (b < 0) b = a;
+  *out_a = (uint8_t)a;
+  *out_b = (uint8_t)b;
+  *out_t16 = (a == b) ? 0 : ((y - ref_y[a]) * 16) / (ref_y[b] - ref_y[a]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -296,6 +394,7 @@ static void set_refs_from_rgb(const uint8_t (*src)[3], int count) {
 
 static void build_refs(void) {
   uint8_t pal[16][3];
+  s_vivid = false;
   switch (s_pal_mode) {
     case DOOM_VIDEO_PAL_GENERATED:
       median_cut(pal);
@@ -304,11 +403,11 @@ static void build_refs(void) {
     case DOOM_VIDEO_PAL_GREY:
       for (int k = 0; k < 16; k++) pal[k][0] = pal[k][1] = pal[k][2] = (uint8_t)(k * 17);
       break;
-    case DOOM_VIDEO_PAL_EGA: set_refs_from_rgb(s_pal_ega, 16); return;
-    case DOOM_VIDEO_PAL_CGA: set_refs_from_rgb(s_pal_cga, 4); return;
-    case DOOM_VIDEO_PAL_C64: set_refs_from_rgb(s_pal_c64, 16); return;
-    case DOOM_VIDEO_PAL_ZX: set_refs_from_rgb(s_pal_zx, 16); return;
-    case DOOM_VIDEO_PAL_PICO8: set_refs_from_rgb(s_pal_pico8, 16); return;
+    case DOOM_VIDEO_PAL_EGA: set_refs_from_rgb(s_pal_ega, 16); s_vivid = true; return;
+    case DOOM_VIDEO_PAL_CGA: set_refs_from_rgb(s_pal_cga, 4); s_vivid = true; return;
+    case DOOM_VIDEO_PAL_C64: set_refs_from_rgb(s_pal_c64, 16); s_vivid = true; return;
+    case DOOM_VIDEO_PAL_ZX: set_refs_from_rgb(s_pal_zx, 16); s_vivid = true; return;
+    case DOOM_VIDEO_PAL_PICO8: set_refs_from_rgb(s_pal_pico8, 16); s_vivid = true; return;
     default:
       for (int k = 0; k < 16; k++) {
         const uint8_t *c = &s_playpal[(uint32_t)s_subset[k] * 3u];
@@ -327,32 +426,39 @@ static void rebuild(void) {
 
   for (uint32_t i = 0; i < 256u; i++) {
     const uint8_t *c = &s_playpal[i * 3u];
-    uint8_t a, b;
-    two_nearest_ref(c, &a, &b);
-    s_nearest[i] = a;
+    uint8_t a, b, nearest;
+    int t16;
+    if (s_vivid) {
+      vivid_pair(c, &a, &b, &t16);
+      nearest = (t16 >= 8) ? b : a;
+    } else {
+      two_nearest_ref(c, &a, &b);
+      nearest = a;
+
+      /* Project the colour onto the a->b line: t in 0..16. */
+      int dr = (int)s_ref_rgb[b][0] - (int)s_ref_rgb[a][0];
+      int dg = (int)s_ref_rgb[b][1] - (int)s_ref_rgb[a][1];
+      int db = (int)s_ref_rgb[b][2] - (int)s_ref_rgb[a][2];
+      int denom = dr * dr + dg * dg + db * db;
+      int dot = ((int)c[0] - (int)s_ref_rgb[a][0]) * dr +
+                ((int)c[1] - (int)s_ref_rgb[a][1]) * dg +
+                ((int)c[2] - (int)s_ref_rgb[a][2]) * db;
+      if (denom <= 0 || dot <= 0) {
+        t16 = 0;
+      } else if (dot >= denom) {
+        t16 = 16;
+      } else {
+        t16 = (dot * 16) / denom;
+      }
+    }
+    s_nearest[i] = nearest;
 
     if (s_dither == DOOM_VIDEO_DITHER_NEAREST) {
-      for (uint8_t cell = 0; cell < 16u; cell++) s_lut[cell][i] = a;
-      s_pair[i] = (uint16_t)(a | (a << 4));
+      for (uint8_t cell = 0; cell < 16u; cell++) s_lut[cell][i] = nearest;
+      s_pair[i] = (uint16_t)(nearest | (nearest << 4));
       continue;
     }
 
-    /* Project the colour onto the a->b line: t in 0..16. */
-    int dr = (int)s_ref_rgb[b][0] - (int)s_ref_rgb[a][0];
-    int dg = (int)s_ref_rgb[b][1] - (int)s_ref_rgb[a][1];
-    int db = (int)s_ref_rgb[b][2] - (int)s_ref_rgb[a][2];
-    int denom = dr * dr + dg * dg + db * db;
-    int dot = ((int)c[0] - (int)s_ref_rgb[a][0]) * dr +
-              ((int)c[1] - (int)s_ref_rgb[a][1]) * dg +
-              ((int)c[2] - (int)s_ref_rgb[a][2]) * db;
-    int t16;
-    if (denom <= 0 || dot <= 0) {
-      t16 = 0;
-    } else if (dot >= denom) {
-      t16 = 16;
-    } else {
-      t16 = (dot * 16) / denom;
-    }
     for (uint8_t cell = 0; cell < 16u; cell++) {
       s_lut[cell][i] = (t16 > (int)dither_threshold(s_dither, cell)) ? b : a;
     }
