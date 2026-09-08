@@ -210,8 +210,9 @@ if the code ends up a different size, and keep `tools/levelpack.py --budget`
 (default = `PACK_FLASH` length) in step.
 
 **RAM is the binding constraint.** With the engine in, the build leaves a
-**~48 KB heap window** (`__bss_end__` .. `__StackLimit`, 48,428 B in the
-v0.2.2 debug build), of which newlib's boot-time allocations (the settings
+**~45-49 KB heap window** (`__bss_end__` .. `__StackLimit`, 44,884 B in
+the v0.3.1 debug build, 48,808 B in release: debug's larger `.data`
+is the difference), of which newlib's boot-time allocations (the settings
 library and friends) and `ZONE_HEAP_MARGIN` (4 KB, for FatFs while a pack
 loads) come off the top: **Doom's zone is 32,768 B on hardware**
 (`0x20028000..0x20030000` in the boot log), less than the ~38 KB estimated
@@ -324,6 +325,15 @@ in the app config (`DITHER` / `PALETTE`, `aconfig.c`) and restored at boot.
 A colour is drawn as its nearest
 reference on some cells and its second-nearest on the others, split by where
 it falls on the line between them (`t` in 0..16 against the cell threshold).
+**The melt wipe** (`doom_video_wipe_begin` / `doom_video_wipe_step`) runs
+in place on the cart FB: the last published frame is already there in
+planar form, so it is the picture that melts, and `fb_chunked_buffer`
+holds the one beneath. Each step moves Doom's 160 two-pixel columns by
+`wipe_doMelt`'s rules and rewrites the plane words bottom-up, new-frame
+bits through the normal LUT + c2p and old bits from `delta` rows up in the
+same column; cores split left/right. No second buffer, 640 B of column
+state in `CART_APP_FREE`. Checked on the host word for word against a
+pen-domain reference for both the LUT and blue-noise paths.
 Distances use the redmean approximation; the reference colours are snapped
 to what the STE actually displays (`(v >> 4) * 17`, not the nibble ×17 — the
 STE's nibble bit order is not the value's). All of this is the DOOM
@@ -385,7 +395,12 @@ from.
   (`doom_video_set_playpal`; pages 1–13 are derived from page 0 the way
   upstream's scan-out does) and calls `doom_video_publish()`. Full-screen
   pages are repainted every frame (`maybe_draw_single_screen`) because
-  overlays land in the same buffer. No melt wipe (`wipe_start` forced 0).
+  overlays land in the same buffer. The melt wipe is the platform's:
+  `pd_end_frame` passes upstream's `wipe_start` to `I_MD_RequestWipe`
+  (its own scan-out wipe stays off, it needs the second buffer) and
+  `I_MD_PresentFrame` then runs `doom_video_wipe_begin` / `_step` at
+  Doom's tic rate until the melt is done, blocking as the original's
+  `D_Display` does.
 - `md/i_input.c` — `I_GetEvent` = `ikbd_clear_command` + `fb_pump_rom3` +
   `ikbd_pump`, keys through `doom_input_translate`, the joystick/pad as
   edge-triggered key events (stick = cursors + Ctrl; pad South/East/West/North
@@ -477,7 +492,9 @@ revisited in order of visible payoff.
 - **A freeze on picking up a clip in E1M2** was seen once on v0.1.x and
   has not recurred since the park handshake and the deferred settings
   write were fixed (v0.2.2); not confirmed fixed.
-- **Melt wipe** is off; it needs a second frame buffer.
+- **Melt wipe at a level start** runs from the loading screen, not the
+  intermission, because the pack is programmed (and its screen shown)
+  before the level's first frame exists. A title pack would fix it too.
 - **ST high resolution** (640×400 mono, low priority). Today the m68k bails
   to GEM in high-res. It would need a 1-bit reduction (the 4x4 dither
   already produces thresholds; the two-nearest step collapses to

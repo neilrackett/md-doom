@@ -39,6 +39,7 @@
 #include "doomtype.h"
 #include "i_input.h"
 #include "i_system.h"
+#include "i_timer.h"
 #include "i_video.h"
 #include "picodoom.h"
 #include "v_video.h"
@@ -77,8 +78,11 @@ uint8_t display_frame_index;
 uint8_t display_overlay_index;
 uint8_t display_video_type;
 
-/* The melt wipe never runs here (pd_end_frame is called with wipe off),
- * but the renderer still references its state. */
+/* Upstream's scan-out wipe never runs here (pd_end_frame is called with
+ * wipe off), but the renderer still references its state. The melt is
+ * doom_video's, run from I_MD_PresentFrame when pd_end_frame asks. */
+static bool wipe_pending;
+void I_MD_RequestWipe(void) { wipe_pending = true; }
 uint8_t *wipe_yoffsets;
 int16_t *wipe_yoffsets_raw;
 uint32_t *wipe_linelookup;
@@ -175,7 +179,26 @@ void I_MD_PresentFrame(void) {
     next_pal = -1;
   }
 
-  doom_video_publish();
+  if (wipe_pending) {
+    /* The last published frame melts into this one. Blocks for the
+     * 1.2 s or so the melt takes, at Doom's tic rate, as the original
+     * does in D_Display; the audio keeps going from Core 1's interrupt
+     * and the m68k's acks drain the ROM3 ring, so nothing is lost. */
+    wipe_pending = false;
+    doom_video_wipe_begin();
+    int last = I_GetTime();
+    for (;;) {
+      int now, tics;
+      do {
+        now = I_GetTime();
+        tics = now - last;
+      } while (tics <= 0);
+      last = now;
+      if (doom_video_wipe_step(tics)) break;
+    }
+  } else {
+    doom_video_publish();
+  }
   sem_release(&display_frame_freed);
 
   /* Core 1 is idle from here until the next pd_begin_frame, so this is

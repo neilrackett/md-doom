@@ -78,6 +78,16 @@ doom_video_dither_t doom_video_get_dither(void);
 const char *doom_video_palette_name(doom_video_palette_t mode);
 const char *doom_video_dither_name(doom_video_dither_t mode);
 
+/* Doom's screen melt. doom_video_wipe_begin() takes the last published
+ * frame as the picture that melts away and fb_chunked_buffer as the one
+ * beneath it (nothing may draw into the buffer until the wipe is done);
+ * each doom_video_wipe_step(tics) advances the columns by Doom's rules
+ * for `tics` game tics and publishes, and returns true once every
+ * column has fallen off the bottom. The melt runs in place on the cart
+ * FB, so it needs no second buffer. */
+void doom_video_wipe_begin(void);
+bool doom_video_wipe_step(int tics);
+
 /* Convert fb_chunked_buffer (320x200 PLAYPAL indices) to ST planar via
  * the LUT and hand it to the m68k, VBL-synced and tear-free. Blocks on
  * the ST's VBL like fb_publish(), so one call per frame paces the app

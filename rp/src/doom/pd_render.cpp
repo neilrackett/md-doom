@@ -95,6 +95,7 @@ void I_UpdateSound(void);
 #include "fb_chunked.h"
 #include "md_prof.h"
 void I_MD_PresentFrame(void);
+void I_MD_RequestWipe(void);
 }
 void pd_core1_loop();
 static void pd_core1_job(void *arg) { (void)arg; pd_core1_loop(); }
@@ -2594,7 +2595,10 @@ static void uh_oh_discard_columns(int render_col_limit) {
     }
 }
 void pd_end_frame(int wipe_start) {
-    wipe_start = 0; /* MD/DOOM: no melt wipe (it needs the second buffer) */
+    /* MD/DOOM: upstream's scan-out wipe needs its second buffer; the
+     * platform melts the last published frame into this one instead. */
+    if (wipe_start) I_MD_RequestWipe();
+    wipe_start = 0;
     md_prof_end(MD_PROF_RENDER);
     md_prof_begin(MD_PROF_PRE);
     DEBUG_PINS_SET(start_end, 2);

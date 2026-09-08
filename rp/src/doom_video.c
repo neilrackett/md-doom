@@ -682,3 +682,163 @@ void doom_video_publish(void) {
 }
 
 uint32_t doom_video_last_convert_us(void) { return s_convert_us; }
+
+/* ------------------------------------------------------------------ */
+/* Melt wipe                                                           */
+
+/* Doom's screen melt, done in place on the cart FB. There is no second
+ * frame buffer to hold the picture being melted away, but the m68k only
+ * ever reads the cart FB, so the last published frame is still sitting
+ * there in planar form: that is the old picture. The new one is the
+ * frame in fb_chunked_buffer, which nothing touches while the melt runs.
+ *
+ * Each step advances the 160 two-pixel columns by Doom's rules
+ * (f_wipe.c's wipe_doMelt) and rewrites every plane word bottom-up. A
+ * column that has scrolled past a row shows the new frame there, through
+ * the usual LUT + c2p; otherwise its bits come from the same column
+ * `delta` rows up in the cart FB, which bottom-up order guarantees still
+ * hold the previous step's picture. The old pixels keep the dither they
+ * were given at their original rows, as a moving picture should. The two
+ * cores take the left and right halves of the screen, so neither reads
+ * a word the other writes. Row-groups no column has moved in are left
+ * alone, which is most of the screen early in the melt. */
+
+#define WIPE_COLS 160 /* two-pixel columns, as in the original */
+
+static int16_t s_wipe_y[WIPE_COLS] __cart_app_free("wipe");   /* Doom's y[]: < 0 waiting, 200 done */
+static int16_t s_wipe_off[WIPE_COLS] __cart_app_free("wipe"); /* offset drawn by the last step  */
+static uint32_t s_wipe_rand;
+static uint32_t s_wipe_max_us;
+
+static uint32_t wipe_random(void) {
+  s_wipe_rand ^= s_wipe_rand << 13;
+  s_wipe_rand ^= s_wipe_rand >> 17;
+  s_wipe_rand ^= s_wipe_rand << 5;
+  return s_wipe_rand;
+}
+
+/* fb_cart_offset(y * 160 + g * 8) for row y, 16-pixel group g, without
+ * the divide: (y*160)/48 is (y*10)/3, and the group's 8 bytes never
+ * straddle a chunk. */
+static inline uint32_t wipe_cart_off(unsigned y, unsigned g) {
+  const uint32_t o = y * 160u + g * 8u;
+  if (o >= (uint32_t)CART_FB_CHUNK_COVERED) return o;
+  uint32_t k = (y * 10u * 0xAAABu) >> 17;
+  uint32_t r = y * 160u - k * 48u + g * 8u; /* 0..184 */
+  const uint32_t add = (r >= 48u) + (r >= 96u) + (r >= 144u);
+  k += add;
+  r -= add * 48u;
+  return (CART_FB_CHUNK_COUNT - 1u - k) * CART_FB_CHUNK_BYTES + r;
+}
+
+static void __not_in_flash_func(wipe_compose_groups)(unsigned g0, unsigned g1) {
+  for (unsigned g = g0; g < g1; g++) {
+    int16_t on[8], dl[8]; /* per column: offset now, and how far it moved */
+    for (unsigned c = 0; c < 8u; c++) {
+      int v = s_wipe_y[g * 8u + c];
+      if (v < 0) v = 0;
+      if (v > FB_CHUNKED_H) v = FB_CHUNKED_H;
+      on[c] = (int16_t)v;
+      dl[c] = (int16_t)(v - s_wipe_off[g * 8u + c]);
+    }
+    for (int y = FB_CHUNKED_H - 1; y >= 0; y--) {
+      /* Sort the eight columns into "shows the new frame at this row"
+       * and, for the rest, by how far they moved (usually one value). */
+      uint32_t mnew = 0;
+      unsigned nd = 0;
+      int16_t dd[8];
+      uint32_t dm[8];
+      for (unsigned c = 0; c < 8u; c++) {
+        const uint32_t m = 3u << (14u - 2u * c);
+        const uint32_t mm = m | (m << 16);
+        if (on[c] > y) {
+          mnew |= mm;
+        } else {
+          unsigned j;
+          for (j = 0; j < nd; j++) {
+            if (dd[j] == dl[c]) {
+              dm[j] |= mm;
+              break;
+            }
+          }
+          if (j == nd) {
+            dd[nd] = dl[c];
+            dm[nd] = mm;
+            nd++;
+          }
+        }
+      }
+      if (!mnew && nd == 1u && dd[0] == 0) continue; /* nothing moved here */
+
+      uint32_t p01 = 0, p23 = 0;
+      if (mnew) {
+        uint32_t t[2];
+        const unsigned pix = (unsigned)y * FB_CHUNKED_W + g * 16u;
+        doom_c2p_block_any(t, fb_chunked_buffer + pix, pix);
+        p01 = t[0] & mnew;
+        p23 = t[1] & mnew;
+      }
+      for (unsigned j = 0; j < nd; j++) {
+        const uint32_t *src =
+            (const uint32_t *)(s_cart_fb + wipe_cart_off((unsigned)(y - dd[j]), g));
+        p01 |= src[0] & dm[j];
+        p23 |= src[1] & dm[j];
+      }
+      uint32_t *dst = (uint32_t *)(s_cart_fb + wipe_cart_off((unsigned)y, g));
+      dst[0] = p01;
+      dst[1] = p23;
+    }
+    for (unsigned c = 0; c < 8u; c++) s_wipe_off[g * 8u + c] = on[c];
+  }
+}
+
+static void __not_in_flash_func(wipe_right_job)(void *arg) {
+  (void)arg;
+  wipe_compose_groups(10u, 20u);
+}
+
+void doom_video_wipe_begin(void) {
+  s_wipe_rand = time_us_32() | 1u;
+  s_wipe_y[0] = -(int16_t)(wipe_random() % 16u);
+  for (unsigned i = 1; i < WIPE_COLS; i++) {
+    int v = s_wipe_y[i - 1] + (int)(wipe_random() % 3u) - 1;
+    if (v > 0) v = 0;
+    else if (v == -16) v = -15;
+    s_wipe_y[i] = (int16_t)v;
+  }
+  memset(s_wipe_off, 0, sizeof(s_wipe_off));
+  s_wipe_max_us = 0;
+}
+
+bool doom_video_wipe_step(int tics) {
+  bool done = true;
+  while (tics-- > 0) {
+    for (unsigned i = 0; i < WIPE_COLS; i++) {
+      int y = s_wipe_y[i];
+      if (y < 0) {
+        y++;
+        done = false;
+      } else if (y < FB_CHUNKED_H) {
+        int dy = (y < 16) ? y + 1 : 8;
+        if (y + dy >= FB_CHUNKED_H) dy = FB_CHUNKED_H - y;
+        y += dy;
+        done = false;
+      }
+      s_wipe_y[i] = (int16_t)y;
+    }
+  }
+
+  s_cart_fb = (uint8_t *)fb_screen.framebuffer;
+  s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
+  fb_wait_blit_ack();
+  const uint32_t t0 = time_us_32();
+  fb_core1_dispatch(wipe_right_job, NULL);
+  wipe_compose_groups(0u, 10u);
+  fb_core1_wait();
+  const uint32_t us = time_us_32() - t0;
+  if (us > s_wipe_max_us) s_wipe_max_us = us;
+  fb_frame_done();
+
+  if (done) DPRINTF("melt done, step max %lu us\n", (unsigned long)s_wipe_max_us);
+  return done;
+}

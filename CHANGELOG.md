@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.1 (2026-09-08)
+
+- The screen melt is back: level to intermission, intermission to level,
+  title to game. It runs in place on the cart framebuffer, which still
+  holds the last frame, so it needs no second buffer. At a level start
+  it melts from the loading screen rather than the intermission.
+
 ## v0.2.4 (2026-09-08)
 
 - Retro palettes: the brightness stretch eased from a gamma of 0.5 to
