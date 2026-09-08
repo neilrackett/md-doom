@@ -27,13 +27,14 @@ jobs:
     steps:
     - name: Checkout the code
       uses: actions/checkout@v4
-      with:
-        # The m68k build includes xpad/src/xpad.inc, and it runs before
-        # rp/build.sh (which inits submodules itself), so checkout has to
-        # bring xpad in. Top level only, deliberately: that is enough for
-        # xpad, which has no submodules of its own, and it leaves the
-        # pico-sdk tree to rp/build.sh's recursive init exactly as before.
-        submodules: true
+
+    - name: Fetch the xpad submodule
+      # The m68k build includes xpad/src/xpad.inc, and it runs before
+      # rp/build.sh (which inits submodules itself), so xpad has to be
+      # brought in here. Only xpad, deliberately: checkout's own
+      # `submodules: true` clones every submodule at depth 1, and a
+      # shallow pico-sdk has no tags for rp/build.sh to pin to.
+      run: git submodule update --init lib/xpad
 
     - name: Host tests
       # rp/test builds against xpad/src/xpad.h from the submodule rather
