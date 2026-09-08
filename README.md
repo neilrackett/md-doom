@@ -8,15 +8,13 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
-It can now.
-
 MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
 
 A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
 ## Installation
 
-You can install MD/DOOM from the official SidecarTridge Multi-device store using the Booster web app, or manually if you prefer. Either way you'll need to download the level packs from the [releases page](https://github.com/neilrackett/md-doom/releases).
+You can install MD/DOOM from the official [SidecarTridge Multi-device store](https://md-store.sidecartridge.com/#atari-st) using the Booster web app, or manually if you prefer. Either way you'll need to download the level packs from the [releases page](https://github.com/neilrackett/md-doom/releases).
 
 See below if you'd prefer to build the level packs yourself.
 
@@ -31,21 +29,21 @@ See below if you'd prefer to build the level packs yourself.
 
 Controls match the original PC Doom:
 
-| Key             | Action                                                                              |
-| --------------- | ----------------------------------------------------------------------------------- |
-| ↑ ↓ ← →         | Move and turn (the keypad works too)                                                |
-| Control         | Fire                                                                                |
-| Space           | Use (doors, switches)                                                               |
-| Alternate       | Strafe                                                                              |
-| Shift           | Run                                                                                 |
-| 1 to 7          | Weapons                                                                             |
-| Esc             | Menu                                                                                |
-| Tab             | Automap                                                                             |
-| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit  |
-| Help            | Gamma (F11 on a PC)                                                                 |
-| Undo            | Pause                                                                               |
-| - and +         | Screen size                                                                         |
-| Keypad \* and / | Cycle through dither and the palette options (see below); your choice is remembered |
+| Key             | Action                                                                             |
+| --------------- | ---------------------------------------------------------------------------------- |
+| ↑ ↓ ← →         | Move and turn (the keypad works too)                                               |
+| Control         | Fire                                                                               |
+| Space           | Use (doors, switches)                                                              |
+| Alternate       | Strafe                                                                             |
+| Shift           | Run                                                                                |
+| 1 to 7          | Weapons                                                                            |
+| Esc             | Menu                                                                               |
+| Tab             | Automap                                                                            |
+| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
+| Help            | Gamma (F11 on a PC)                                                                |
+| Undo            | Pause                                                                              |
+| - and +         | Screen size                                                                        |
+| Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
 A joystick in port 1 moves, turns and fires.
 
