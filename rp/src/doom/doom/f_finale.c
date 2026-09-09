@@ -221,6 +221,14 @@ void F_Ticker (void)
     if (finalestage == F_STAGE_TEXT
     && finalecount > strlen(finaletext) * TEXTSPEED + TEXTWAIT) {
         finalecount = 0;
+        /* MD/DOOM: the level packs carry no HELP2 / CREDIT / VICTORY2 /
+         * ENDPIC, so when the art screen is missing go back to the title
+         * rather than bomb out on the lump lookup. */
+        const char *art = F_ArtScreenLumpName();
+        if (art && W_CheckNumForName(art) < 0) {
+            D_StartTitle();
+            return;
+        }
         finalestage = F_STAGE_ARTSCREEN;
         wipegamestate = -1;        // force a wipe
         if (gameepisode == 3)

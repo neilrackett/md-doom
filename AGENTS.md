@@ -465,9 +465,11 @@ revisited in order of visible payoff.
   both this and the rotations budget.
 - **Help and credits screens** are left out of level packs (the title and
   intermission screens are in every pack, which is why the title works), so
-  the menu's Read This! item is hidden and F1 does nothing. A separate
-  title pack that occupies the window while no level is loaded would bring
-  them back, along with the demo loop.
+  the menu's Read This! item is hidden and F1 does nothing, and the
+  finale skips its art screen (HELP2 after E1M8) and returns to the
+  title (`F_Ticker`). A separate title pack that occupies the window
+  while no level is loaded would bring them back, along with the demo
+  loop.
 - **Palette quality.** The reducer dithers between the two nearest of 16
   colours. STDOOM's software path mixes up to four with weights searched
   offline (`palette-opt`, `mix_weights_lorez` in `atari_c2p.c`); porting

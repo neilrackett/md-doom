@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.4 (2026-09-09)
+
+- Finishing E1M8 no longer drops to GEM after the closing text. The
+  finale's art screen (the shareware order screen, HELP2) is not in the
+  packs, so the game now returns to the title instead of failing the
+  lump lookup.
+
 ## v0.3.3 (2026-09-08)
 
 - The melt no longer rewrites rows that cannot have changed (the old
