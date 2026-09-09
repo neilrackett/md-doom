@@ -84,16 +84,13 @@
 #define CART_PALETTE_ENTRIES             16
 #define CART_PALETTE_SIZE                (CART_PALETTE_ENTRIES * 2)  /* 32 B */
 
-/* Audio sample buffer. Dual-channel YM2149 PCM: each sample is a
- * (vA, vB) pair of YM volume nibbles, 2 bytes per sample, giving ~6
- * effective bits from the YM's log volume curve. The m68k Timer-B
- * IRQ handler fires at ~5,585 Hz (TIMERB_COUNT=110 in userfw.s) and
- * reads one pair per fire -- ~112 samples (~224 B) per PAL VBL. The
- * read cursor (A0) does NOT wrap here: userfw_vbl resets it to the
- * buffer base every vsync, and the RP-side audio.c rewrites the
- * whole 1024 B each VBL, so the buffer is overfilled by ~800 B as
- * drift headroom. audio.c's AUDIO_BYTES_PER_VBL must match the
- * Timer-B rate (= 2 x fires-per-VBL) or the source pointer drifts. */
+/* Audio sample buffer, refilled by the RP once per VBL in the format
+ * the detected back-end wants (audio.c): on STE DMA sound ~500 bytes
+ * of signed 8-bit PCM at 25,033 Hz, the exact count steered by the
+ * m68k each frame; on the YM2149 fallback 224 bytes of (vA, vB)
+ * volume pairs, one per Timer-B fire at ~5,585 Hz (TIMERB_COUNT=110
+ * in userfw.s), the read cursor A0 reset to the buffer base every
+ * vsync. */
 #define CART_AUDIO_BUFFER_OFFSET                                              \
   (CART_SHARED_VARIABLES_OFFSET + (CART_SHARED_VARIABLES_SLOTS * 4))
 #define CART_AUDIO_BUFFER_SIZE           1024
@@ -151,22 +148,11 @@
  * NATURAL (non-reversed) order at cart-FB[31968..31999].
  *
  * Chunks DO NOT align with scanlines (LCM(48, 160) = 480), so this
- * is not a simple row reversal -- each m68k chunk covers exactly
- * scanline (112 pixels at 4 bpp) and may span row boundaries. The
- * RP-side c2p (rp/src/fb_chunked_asm.S + fb_chunked.c) is responsible
- * for emitting the reversed layout. The simplest implementation is
- * to keep c2p's natural row-major output going to a 32 KB scratch
- * buffer in RP RAM, then do a chunk-reversed memcpy from scratch to
- * the cart FB once both cores finish (~120 us / frame, well under
- * fb_render_frame's main-loop budget). Per-byte address arithmetic
- * inside the c2p hot path is also possible but more invasive.
- *
- * Cost / benefit:
- *   - m68k saves ~4 cyc/iter * 571 iters = ~2284 cyc / VBL (~285 us)
- *   - m68k boot adds one `lea (FB_CHUNK_COVERED)(a5), a5` per VBL (~12 cyc)
- *   - RP adds ~120 us / frame for the scratch->cart-FB reverse memcpy
- *   - Net: ~285 us VBL slack reclaimed on the m68k side
- */
+ * is not a simple row reversal: a 48-byte chunk is 96 pixels and may
+ * span a row boundary. The RP-side c2p (fb_chunked.c for the
+ * framework path, doom_video.c for the game) converts one chunk at a
+ * time straight into the cart FB at its reversed position, with no
+ * scratch buffer in between; fb_cart_offset() is the mapping. */
 #define CART_FB_CHUNK_BYTES           48   /* size of one m68k MOVEM-burst group (12 longwords; A0 and A7 omitted -- A0 is the dedicated Timer-B audio pointer, A7 is the SP) */
 #define CART_FB_BLIT_LINES            200  /* must match FB_COPY_LINES in target/atarist/src/userfw.s */
 #define CART_FB_BLIT_BYTES            (CART_FB_BLIT_LINES * 160)  /* total bytes the m68k blits per VBL (160 = ST 4bpp scanline) */

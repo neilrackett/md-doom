@@ -42,7 +42,7 @@
 /* MD/DOOM: output rate follows the detected back-end. */
 static uint32_t s_out_rate = DOOM_SOUND_RATE_DMA;
 static spin_lock_t *s_mix_lock; /* channel state: game core vs. the mixer's interrupt */
-extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing; /* debug counters, defined below */
+volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing; /* debug counters */
 static audio_mode_t s_mode_for_steps = AUDIO_MODE_SILENT;
 #define PICO_SOUND_SAMPLE_FREQ s_out_rate
 #define ADPCM_SAMPLES_PER_BLOCK_SIZE 249
@@ -312,9 +312,7 @@ static int I_Pico_StartSound(should_be_const sfxinfo_t *sfxinfo, int channel, in
 
 static void I_Pico_StopSound(int channel)
 {
-    if (check_and_init_channel(channel)) {
-
-    }
+    (void)channel; /* as upstream: a channel plays out or is restarted */
 }
 
 static boolean I_Pico_SoundIsPlaying(int channel)
@@ -330,8 +328,7 @@ static void I_Pico_UpdateSound(void)
 }
 
 /* Per-VBL fill: mix every playing channel onto `bytes` of output in the
- * detected back-end's format. Runs on Core 1 (see fb_core1_loop). */
-volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
+ * detected back-end's format. Runs from Core 1's timer interrupt. */
 
 static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes);
 

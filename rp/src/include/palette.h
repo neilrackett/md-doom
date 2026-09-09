@@ -17,18 +17,10 @@
  * (low) bit in positions 3 / 7 / 11; the ST-only macro keeps
  * those bits zero so palettes are forward-compatible.
  *
- * The default palette (palette_init) follows the framebuffer
- * scaffolding's existing conventions:
- *
- *   - idx 0  = white   -- matches `font_set_color(0)` -> readable
- *                         text against any background. Also drives
- *                         the shifter border colour (no separate
- *                         border register on plain ST).
- *   - idx 15 = black   -- matches `clear-to-0xFF = background`
- *                         used by fb_init() / fb_render_frame().
- *   - idx 1..14        -- a mid palette of blue / warm / green /
- *                         earth shades intended to cover the
- *                         three demos with a single shared set.
+ * The default palette (palette_init) only lives for the boot splash:
+ * idx 0 is white (font_set_color(0), and the shifter border), idx 15
+ * black (the splash background). doom_video replaces the lot with the
+ * 16 colours it derives from PLAYPAL.
  */
 
 #ifndef PALETTE_H_INCLUDED

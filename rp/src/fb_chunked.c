@@ -50,8 +50,9 @@ extern void fb_c2p_half(uint16_t *dst,
                         const uint8_t *src_end);
 
 /* Generic Core 1 worker loop (dual-core). Pops a job function
- * pointer + arg off the FIFO, runs it, signals completion. Both the c2p
- * bottom half and the demos' band rendering dispatch through this. The
+ * pointer + arg off the FIFO, runs it, signals completion. The c2p
+ * bottom half, the renderer's Core 1 half, the melt and the flash park
+ * job all dispatch through this. The
  * fn/arg travel through the FIFO (not shared memory), so the FIFO's
  * push/pop barriers fully order the handoff. Placed in RAM so the loop
  * doesn't pay XIP cost on every dispatch. */

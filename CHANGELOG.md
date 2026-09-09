@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.4.0 (2026-09-09)
+
+The release build.
+
+- Tidy-up before release. Unused code is gone: the audio module's loop
+  player, YMS file streamer and polled refill, the framework's sprite
+  blit module, the IKBD ring's drop counter, the reducer's nearest-pen
+  table and the exit-handler list. Keypad `-`, which cycles the audio
+  interrupt between cores for A/B tests and can stall the renderer,
+  now exists only in debug builds. The SELECT button was configured
+  twice and the pack folder looked up twice; once each now. Comments
+  left over from the framework template and earlier designs (a planar
+  scratch buffer, YM-only audio, demo apps) brought up to date.
+
 ## v0.3.4 (2026-09-09)
 
 - Finishing E1M8 no longer drops to GEM after the closing text. The

@@ -1,6 +1,6 @@
 #include "include/aconfig.h"
 
-// We don't have any variables because this is the placeholder app
+// Per-app settings: the pack folder and the saved video options.
 static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_FOLDER, SETTINGS_TYPE_STRING, "/doom"},
     {ACONFIG_PARAM_MODE, SETTINGS_TYPE_INT, "255"},  // 255: Menu mode

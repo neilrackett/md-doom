@@ -5,23 +5,18 @@
  * File: ikbd.c
  * Description: IKBD keyboard + joystick ingest + demux.
  *
- * Raw byte ring filled by ikbd_consume_rom3_sample (called directly
- * from `commemul_poll(ikbd_consume_rom3_sample)` in the emul.c main
- * loop on each commemul ROM3 sample) and drained by ikbd_pump on
- * the same loop. Single-thread access
- * everywhere outside the IRQ-free ingest path -- `volatile` is for
- * compiler hygiene only.
+ * Raw byte ring filled by ikbd_consume_rom3_sample (from the ROM3
+ * dispatcher in fb.c, on each captured cart-bus read) and drained by
+ * ikbd_pump on the same thread. Single-thread access throughout --
+ * `volatile` is for compiler hygiene only.
  *
- * Demux is a stateless byte classifier: each byte processed
- * independently in IDLE-equivalent context. No multi-byte collect
- * state -- mouse and joystick are disabled at boot ($12 / $1A), so
- * packet headers ($F2-$FF) shouldn't arrive in steady state. If
- * any leak through (boot self-test window, etc.), they're discarded
- * as single bytes; their follow bytes may emit one-shot spurious
- * key events but the demux never sticks. Avoiding the state
- * machine eliminates the "stuck in D_COLLECT after losing the last
- * follow byte" failure mode that broke keyboard input in an
- * earlier attempt.
+ * The demux classifies bytes one at a time: key make/break codes go to
+ * the key ring, and the one or two state bytes that follow a joystick
+ * packet header ($FE / $FF / $FD; the mouse is off at boot) are framed
+ * into the per-port joystick state. The only state carried between
+ * bytes is which joystick bytes are still expected, and a stray byte
+ * swallowed there is masked to the direction and fire bits, so the
+ * demux can never stick.
  */
 
 #include "ikbd.h"
@@ -50,7 +45,6 @@
 static volatile uint8_t  s_ring[IKBD_RING_CAPACITY];
 static volatile uint8_t  s_head = 0;
 static volatile uint8_t  s_tail = 0;
-static volatile uint32_t s_dropped = 0;
 
 /* Decoded key event ring. 16 entries; main-loop producer/consumer
  * (no IRQ-safety needed). */
@@ -78,8 +72,6 @@ void __not_in_flash_func(ikbd_consume_rom3_sample)(uint16_t addr_lsb) {
     if (next_head != s_tail) {
       s_ring[s_head] = byte;
       s_head = next_head;
-    } else {
-      s_dropped++;
     }
   }
 }
@@ -87,7 +79,6 @@ void __not_in_flash_func(ikbd_consume_rom3_sample)(uint16_t addr_lsb) {
 void ikbd_init(void) {
   s_head = 0;
   s_tail = 0;
-  s_dropped = 0;
   s_key_head = 0;
   s_key_tail = 0;
   s_esc_press_us = 0;
@@ -120,14 +111,6 @@ void ikbd_clear_command(void) {
                           CART_CMD_SENTINEL_OFFSET)) =
       cart_asM68kLong(CART_CMD_NOP);
 }
-
-size_t ikbd_ring_count(void) {
-  uint8_t h = s_head;
-  uint8_t t = s_tail;
-  return (size_t)((h - t) & IKBD_RING_MASK);
-}
-
-uint32_t ikbd_ring_dropped(void) { return s_dropped; }
 
 /* Pop one byte from the raw ring. Returns false if empty. Internal
  * helper for ikbd_pump. */

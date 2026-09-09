@@ -7,12 +7,12 @@
 # void-and-cluster method) and emit it as rp/src/include/bluenoise.h
 # for MD/DOOM's blue-noise dither mode.
 #
-# The matrix is quantized to 16 levels (0..15) so it drops straight
-# into the same 16-entry pre-shifted dither LUTs the 4x4 Bayer path
-# uses -- the ONLY thing that changes between Bayer and blue noise is
-# which threshold level each screen cell gets, so it's an honest A/B
-# of the dither *pattern* (regular crosshatch vs isotropic grain) at
-# identical cost. Being `const`, the matrix lives in flash: no RAM.
+# The matrix is quantized to 16 levels (0..15), the same threshold
+# scale the Bayer cells use, so the two dithers differ only in the
+# pattern (regular crosshatch vs isotropic grain). A 32x32 tile cannot
+# be a per-cell LUT, so doom_video.c gives it a per-pixel path
+# (doom_c2p_block_bn), which costs more per frame than Bayer. Being
+# `const`, the matrix lives in flash: no RAM.
 #
 # Deterministic (fixed seed) so rebuilds are reproducible. Run:
 #   python3 tools/gen_bluenoise.py

@@ -7,7 +7,8 @@
  *              main loop: init, key events in, one frame out per VBL,
  *              audio fill.
  *
- * Until the Doom engine is vendored this is a pipeline test card: it
+ * Built with MDDOOM_TEST_CARD=1 in place of the game, a pipeline test
+ * card: it
  * pushes a 256-colour test image through the palette reduction, dither
  * and chunky-to-planar path every frame, shows which Doom key the ST
  * keyboard produced, reports the joystick / gamepad and the detected

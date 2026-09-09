@@ -31,7 +31,7 @@
  * commemul ring captures it with low-16 = 0x84xx. fb_pump_rom3
  * routes ROM3 samples to both the IKBD demux and this detector;
  * fb_publish() blocks until s_vbl_seen advances before overwriting
- * the cart FB. The ~33 ms timeout keeps the RP from hanging if the
+ * the cart FB. The timeout below keeps the RP from hanging if the
  * m68k isn't emitting acks (e.g. before it boots). */
 #define FB_VBLSYNC_HIBYTE   0x8400u
 /* Every ROM3 window is a 256-byte page, so the high byte is the
@@ -51,7 +51,8 @@ static uint32_t s_vbl_published;
 static void fb_render_frame(void);
 
 /* Frames published so far; also the value written to the cart-side
- * dirty-frame counter the m68k VBL loop compares against. */
+ * dirty-frame counter the m68k VBL loop compares against
+ * (fb_frame_done). */
 static uint32_t fb_frame_tick = 0;
 
 const struct FB_MODE fb_mode_320x200 = {320, 200, 4};
@@ -60,8 +61,8 @@ struct FB_SCREEN fb_screen;
 
 /* RP-incremented dirty-frame counter at $FA400C. The m68k userfw reads
  * this each VBL and only blits cart->ST screen when the value differs
- * from what it saw last iteration. Set in fb_init, bumped at the end of
- * fb_render_frame after all FB writes commit. */
+ * from what it saw last iteration. Zeroed in fb_init, bumped by
+ * fb_frame_done after all FB writes commit. */
 static volatile uint32_t *fb_frame_counter;
 
 int fb_init(const struct FB_MODE *mode) {

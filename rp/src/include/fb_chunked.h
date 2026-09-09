@@ -40,7 +40,7 @@ extern "C" {
  * The framework's own transpose (fb_publish) only looks at the low nibble
  * of each byte; the Doom path (doom_video_publish) instead reads the full
  * PLAYPAL index and maps it through the 16-colour dither LUT on the way
- * into the planar scratch, so the same 64 KB serves both. */
+ * into the cart framebuffer, so the same 64 KB serves both. */
 extern uint8_t fb_chunked_buffer[FB_CHUNKED_SIZE];
 
 /* Launch Core 1 with the chunky-to-planar worker loop. Must be called
@@ -56,8 +56,9 @@ void fb_chunked_init(void);
  * inter-core FIFO, whose push/pop carry the cross-core memory barriers,
  * so data prepared before dispatch is visible to the job and the job's
  * writes are visible after wait. Each dispatch MUST be paired with one
- * wait before the next dispatch (the c2p in fb_chunky_to_planar uses this too,
- * so demos must join their own job before fb_publish). */
+ * wait before the next dispatch (the c2p in fb_chunky_to_planar and
+ * doom_video_publish use this too, so a caller's own job must be joined
+ * before it publishes). */
 typedef void (*fb_core1_job_t)(void *arg);
 void __not_in_flash_func(fb_core1_dispatch)(fb_core1_job_t job, void *arg);
 void __not_in_flash_func(fb_core1_wait)(void);

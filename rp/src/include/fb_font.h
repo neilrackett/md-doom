@@ -6,8 +6,7 @@
  * Public state (extern globals declared below) and inline setters are
  * kept verbatim from upstream so font assets ported alongside this
  * module (e.g. font6x8.h) drop in without modification. The renderer
- * writes directly into `fb_screen.framebuffer` (single-FB design)
- * — there is no back buffer here.
+ * writes into fb_chunked_buffer, one byte per pixel.
  */
 
 #ifndef FB_FONT_H
@@ -68,12 +67,12 @@ static inline void __not_in_flash_func(font_align)(
   font_alignment = alignment;
 }
 
-/* Print a pre-formatted string. printf-family helpers (font_printf /
- * font_print_int / font_print_uint / font_print_float) were stripped
- * to keep newlib's vsnprintf / snprintf out of the binary. See
- * fb_font.c for the rationale and doomapp.c's `fmt_uint` /
- * `str_append` for the recommended pattern. */
+/* Print a pre-formatted string; there are no printf-family helpers
+ * here, callers format with snprintf first. */
 void __not_in_flash_func(font_print)(const char *text);
+
+/* The built-in 8x8 font (font8x8.h, instantiated in fb.c). */
+extern const struct FB_FONT font8x8;
 
 #ifdef __cplusplus
 }

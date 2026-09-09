@@ -19,9 +19,8 @@
 #include "cart_shared.h"
 #include "memfunc.h"
 
-/* Default 16-colour palette for the template. Designed to cover
- * the three demos (parallax / 3D / multisprites) from a single
- * shared palette:
+/* Default 16-colour palette, inherited from the framework template and
+ * only shown on the boot splash:
  *
  *   idx 0  = white      -- text foreground (font_set_color(0))
  *                          + shifter border colour.

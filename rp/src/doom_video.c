@@ -56,7 +56,6 @@ static uint8_t s_ref_rgb[16][3];  /* the 16 colours as the ST shows them */
 static int s_ref_count = 16;      /* fewer for the 4-colour CGA palette   */
 static bool s_vivid;              /* fixed palette: hue-first matching   */
 static uint16_t s_st_colors[16];  /* the same, as ST palette words       */
-static uint8_t s_nearest[256];    /* PLAYPAL index -> nearest pen        */
 
 /* [cell][index] -> pen, cell = ((y & 3) << 2) | (x & 3). 4 KB. */
 static uint8_t s_lut[16][256] __attribute__((aligned(4)));
@@ -451,8 +450,6 @@ static void rebuild(void) {
         t16 = (dot * 16) / denom;
       }
     }
-    s_nearest[i] = nearest;
-
     if (s_dither == DOOM_VIDEO_DITHER_NEAREST) {
       for (uint8_t cell = 0; cell < 16u; cell++) s_lut[cell][i] = nearest;
       s_pair[i] = (uint16_t)(nearest | (nearest << 4));
@@ -476,8 +473,6 @@ void doom_video_init(void) {
   s_pal_mode = DOOM_VIDEO_PAL_SUBSET;
   s_dither = DOOM_VIDEO_DITHER_BAYER4;
   s_convert_us = 0;
-  memset(s_lut, 0, sizeof(s_lut));
-  memset(s_nearest, 0, sizeof(s_nearest));
 }
 
 void doom_video_set_playpal(const uint8_t *rgb768) {
@@ -527,8 +522,6 @@ const char *doom_video_dither_name(doom_video_dither_t mode) {
 }
 
 const uint16_t *doom_video_st_palette(void) { return s_st_colors; }
-
-uint8_t doom_video_nearest_pen(uint8_t idx) { return s_nearest[idx]; }
 
 /* ------------------------------------------------------------------ */
 /* Fused LUT + chunky-to-planar                                        */
@@ -727,20 +720,6 @@ static uint32_t wipe_random(void) {
   return s_wipe_rand;
 }
 
-/* fb_cart_offset(y * 160 + g * 8) for row y, 16-pixel group g, without
- * the divide: (y*160)/48 is (y*10)/3, and the group's 8 bytes never
- * straddle a chunk. */
-static inline uint32_t wipe_cart_off(unsigned y, unsigned g) {
-  const uint32_t o = y * 160u + g * 8u;
-  if (o >= (uint32_t)CART_FB_CHUNK_COVERED) return o;
-  uint32_t k = (y * 10u * 0xAAABu) >> 17;
-  uint32_t r = y * 160u - k * 48u + g * 8u; /* 0..184 */
-  const uint32_t add = (r >= 48u) + (r >= 96u) + (r >= 144u);
-  k += add;
-  r -= add * 48u;
-  return (CART_FB_CHUNK_COUNT - 1u - k) * CART_FB_CHUNK_BYTES + r;
-}
-
 /* A cart-FB cursor on one group that walks up a row at a time: a row is
  * 160 bytes = 3 chunks + 16, and the chunks run backwards in the cart FB,
  * so the row above is 3 chunks later minus 16 bytes, with a chunk
@@ -751,14 +730,24 @@ typedef struct {
   int r;       /* offset in chunk  */
 } wipe_ptr_t;
 
+/* fb_cart_offset(y * 160 + g * 8) without the divide: (y*160)/48 is
+ * (y*10)/3, and a group's 8 bytes never straddle a chunk. */
 static inline void wipe_ptr_init(wipe_ptr_t *p, unsigned y, unsigned g) {
   uint32_t k = (y * 10u * 0xAAABu) >> 17;
-  uint32_t r = y * 160u - k * 48u + g * 8u;
+  uint32_t r = y * 160u - k * 48u + g * 8u; /* 0..184 */
   const uint32_t add = (r >= 48u) + (r >= 96u) + (r >= 144u);
   k += add;
   r -= add * 48u;
   p->co = (CART_FB_CHUNK_COUNT - 1u - k) * CART_FB_CHUNK_BYTES + r;
   p->r = (int)r;
+}
+
+static inline uint32_t wipe_cart_off(unsigned y, unsigned g) {
+  const uint32_t o = y * 160u + g * 8u;
+  if (o >= (uint32_t)CART_FB_CHUNK_COVERED) return o;
+  wipe_ptr_t p;
+  wipe_ptr_init(&p, y, g);
+  return p.co;
 }
 
 static inline void wipe_ptr_up(wipe_ptr_t *p) {

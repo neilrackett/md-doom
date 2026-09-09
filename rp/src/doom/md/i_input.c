@@ -30,7 +30,10 @@
  * means anything to Doom. */
 #define SCAN_KP_MULTIPLY 0x66
 #define SCAN_KP_DIVIDE 0x65
-#define SCAN_KP_MINUS 0x4A /* debug: toggle the audio refill interrupt */
+/* Debug builds only: keypad - cycles the audio refill interrupt off /
+ * Core 0 / Core 1 for A/B tests. Core 0 stalls the renderer, so a
+ * release build must not offer it one key away from * and /. */
+#define SCAN_KP_MINUS 0x4A
 
 extern void I_MD_SaveVideoSettings(void);
 
@@ -119,6 +122,7 @@ void I_GetEvent(void) {
       if (k.is_press) cycle_video_mode(k.scancode);
       continue;
     }
+#if defined(_DEBUG) && (_DEBUG != 0)
     if (k.scancode == SCAN_KP_MINUS) {
       if (k.is_press) {
         const int c = audio_vbl_timer_core();
@@ -129,6 +133,7 @@ void I_GetEvent(void) {
       }
       continue;
     }
+#endif
     const int key = doom_input_translate(k.scancode);
     if (key == KEY_RSHIFT) s_shift_down = k.is_press;
     post_key(key, k.is_press);

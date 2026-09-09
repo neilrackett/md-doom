@@ -45,13 +45,12 @@ extern void I_Init(void);
 extern void I_MD_PackChanged(void);
 extern void I_MD_SoundStopAll(void);
 extern void V_ResetSharedPalettes(void);
-extern const struct FB_FONT font8x8;
 
 static uint8_t s_boot_pal[768];
 
 /* The map the pack in flash was built for, e.g. "E1M1"; empty if unknown. */
 static char s_pack_map[8];
-static char s_folder[64] = "/doom";
+static const char *s_folder = "/doom"; /* the app config's FOLDER, from emul.c */
 
 /* whd_gen names the WHX after its source WAD, so a pack built by
  * tools/levelpack.py announces its map in the header. */
@@ -164,13 +163,8 @@ void I_MD_LoadLevelPack(int ep, int mp) {
   I_MD_PackChanged();
 }
 
-void doomgame_start(void) {
-  SettingsConfigEntry *fe =
-      settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_FOLDER);
-  if (fe && fe->value[0]) {
-    strncpy(s_folder, fe->value, sizeof(s_folder) - 1);
-    s_folder[sizeof(s_folder) - 1] = '\0';
-  }
+void doomgame_start(const char *folder) {
+  if (folder && folder[0]) s_folder = folder;
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
    * makes the firmware's screens legible: 0 black, 1..15 white, then

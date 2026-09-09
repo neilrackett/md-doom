@@ -81,6 +81,7 @@ int doom_input_translate(uint8_t scancode) {
   return (scancode < 128u) ? s_scan_to_doom[scancode] : 0;
 }
 
+#if MDDOOM_TEST_CARD
 const char *doom_input_key_name(int k) {
   static const struct {
     int key;
@@ -118,6 +119,7 @@ const char *doom_input_key_name(int k) {
   }
   return k ? "?" : "";
 }
+#endif
 
 void doom_input_poll_joystick(doom_joy_state_t *out) {
   out->x = 0;

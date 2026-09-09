@@ -36,7 +36,6 @@ vendored engine rather than a copy of it). whd_gen is built from
 rp2040-doom's src/whd_gen -- see tools/whd_gen/README.md.
 """
 import argparse
-import collections
 import os
 import re
 import struct

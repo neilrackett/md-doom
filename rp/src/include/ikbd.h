@@ -5,35 +5,27 @@
  * File: ikbd.h
  * Description: IKBD keyboard + joystick ingest + demux.
  *
- * The m68k Timer-B IKBD handler (target/atarist/src/userfw.s) reads
- * the keyboard ACIA at $FFFFFC00/02 and forwards every received byte
- * to the RP via a single cart-bus read at IKBD_WINDOW_BASE + byte in
- * the ROM3 region ($FB8200..$FB82FF, md-devops single-byte ABI).
+ * The m68k's ACIA interrupt handler (userfw_acia_irq in
+ * target/atarist/src/userfw.s) reads the keyboard ACIA at $FFFFFC00/02
+ * and forwards every received byte to the RP with one cart-bus read at
+ * IKBD_WINDOW_BASE + byte ($FB8200..$FB82FF).
  *
- * `ikbd_consume_rom3_sample(addr_lsb)` is passed directly as the
- * callback to `commemul_poll` in the emul.c main loop, filters for
- * the 256 B IKBD window, and pushes the low byte into a 64-entry
- * raw-byte ring.
+ * `ikbd_consume_rom3_sample(addr_lsb)` is called from the ROM3
+ * dispatcher in fb.c for every captured cart-bus read; it keeps the
+ * bytes in the IKBD window and pushes them onto a raw-byte ring.
  *
- * `ikbd_pump()` drains the raw-byte ring on the main loop and
- * classifies each byte statelessly:
- *   $00..$7F → key press scancode (scancode 0 suppressed)
- *   $80..$F1 → key release scancode (byte & $7F)
- *   $F2..$FF → packet headers for mouse / joystick / status / TOD.
- *              Mouse and joystick are disabled at IKBD boot ($12
- *              and $1A), so these shouldn't arrive in steady state.
- *              Discarded as single bytes; any leaked follow bytes
- *              may emit one-shot spurious key events.
+ * `ikbd_pump()` drains the ring and classifies each byte:
+ *   $00..$7F -> key press scancode (scancode 0 suppressed)
+ *   $80..$F1 -> key release scancode (byte & $7F)
+ *   $FE / $FF / $FD -> joystick packet headers; the state byte(s) that
+ *              follow are framed into the per-port joystick state
+ *              (userfw.s puts the IKBD into joystick event reporting
+ *              at boot, with the mouse off). Other headers are dropped.
  *
- * Apps drain decoded key events via `ikbd_pop_key`. ESC (scancode
- * $01) press+release within 200 ms triggers CMD_BOOT_GEM via the
- * cart command sentinel to exit userfw cleanly.
- *
- * Mouse and joystick decoding were both attempted but
- * proved unreliable (same byte-loss / demux-desync class of bug)
- * and are deferred.
- * Apps that want them can drop the $12 / $1A IKBD commands in
- * userfw.s and add their own packet-emit branches in this demux.
+ * Apps drain decoded key events via `ikbd_pop_key` and read the port-1
+ * stick with `ikbd_get_joystick`. ESC (scancode $01) press+release
+ * within 200 ms posts CMD_BOOT_GEM to the cart command sentinel unless
+ * the app has taken ESC for itself (ikbd_set_esc_auto_exit).
  */
 
 #ifndef IKBD_H_INCLUDED
@@ -72,13 +64,6 @@ void ikbd_pump(void);
  * m68k side is emitting joystick event packets (userfw.s puts the
  * IKBD into joystick event-reporting mode at boot). */
 uint8_t ikbd_get_joystick(void);
-
-/* Approximate number of raw bytes currently in the ring. */
-size_t ikbd_ring_count(void);
-
-/* Cumulative count of raw bytes the producer couldn't push because
- * the ring was full. Should stay 0 in steady state. */
-uint32_t ikbd_ring_dropped(void);
 
 /* Key press / release event. `scancode` is the IKBD scancode with
  * bit 7 stripped (0..127). `is_press` is true for make, false for

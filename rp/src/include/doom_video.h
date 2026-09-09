@@ -9,8 +9,8 @@
  * The ST can show 16 colours, so each frame goes through a 256 -> 16
  * lookup with a 4x4 ordered dither and is converted to ST planar in the
  * same pass: doom_video_publish() reads the 8 bpp buffer, maps every
- * pixel through the LUT for its dither cell, packs the result into the
- * planar scratch, and hands the frame to the m68k. The 16 hardware
+ * pixel through the LUT for its dither cell, packs the result straight
+ * into the cart framebuffer, and hands the frame to the m68k. The 16 hardware
  * colours travel with it through the cart palette slot.
  *
  * The 16 colours come from one of a few sources (doom_video_palette_t)
@@ -103,11 +103,6 @@ uint32_t doom_video_last_convert_us(void);
  * draw in a known pen: entry `i` of this table is the hardware colour a
  * PLAYPAL index that maps to pen `i` will show as. */
 const uint16_t *doom_video_st_palette(void);
-
-/* Which of the 16 pens PLAYPAL index `idx` maps to with no dithering
- * (its nearest colour). Handy for drawing UI in a Doom index and knowing
- * what it will look like. */
-uint8_t doom_video_nearest_pen(uint8_t idx);
 
 #ifdef __cplusplus
 }

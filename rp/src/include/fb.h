@@ -7,10 +7,9 @@
  * the shared region (`$FA8300`, 32 KB, 320x200x4bpp). Double-buffering
  * happens on the ST side; the RP just writes into this one buffer.
  *
- * This header is introduced alongside fb_font.* and
- * fb_draw.* so the ported font/draw modules have a stable target
- * type. fb.c defines `fb_screen` and provides
- * the init / clear / address-accessor entry points.
+ * fb.c defines `fb_screen`, brings the cart framebuffer up with a boot
+ * splash, and owns the m68k blit handshake (fb_wait_blit_ack /
+ * fb_frame_done) that every publish is bracketed by.
  */
 
 #ifndef FB_H
@@ -46,9 +45,8 @@ extern struct FB_SCREEN fb_screen;
 extern const struct FB_MODE fb_mode_320x200;
 
 /**
- * @brief Populate `fb_screen` from a mode descriptor, build the pixel
- *        mask LUT used by the text/draw primitives, and zero the
- *        framebuffer.
+ * @brief Populate `fb_screen` from a mode descriptor, launch Core 1's
+ *        worker loop and publish the boot splash.
  *
  * @return 0 on success, -1 if `mode` is NULL.
  */

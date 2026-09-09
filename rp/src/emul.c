@@ -3,12 +3,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * File: emul.c
- * Description: Boot path + main loop for MD/DOOM. Brings up the
- *              cartridge bus emulator, the 320x200 framebuffer, the
- *              ROM3 cart-bus capture ring, the SD card and the audio
- *              buffer, then hands off to the app (doomapp.c): drain
- *              IKBD -> feed keys -> render one frame per VBL -> refill
- *              the audio buffer.
+ * Description: Boot path for MD/DOOM. Brings up the cartridge bus
+ *              emulator, the 320x200 framebuffer, the ROM3 cart-bus
+ *              capture ring, the audio refill interrupt and the SD
+ *              card, then hands off to the game (md/md_main.c), or
+ *              to the test card's own loop with MDDOOM_TEST_CARD=1.
  */
 
 #include "emul.h"
@@ -32,7 +31,6 @@
 #include "pico/stdlib.h"
 #include "romemul.h"
 #include "sdcard.h"
-#include "select.h"
 #include "settings/settings.h"
 #include "target_firmware.h"
 #include "xpadin.h"
@@ -131,14 +129,11 @@ void emul_start() {
   }
   cart_check("post-sd");
 
-  // Cartridge SELECT button -- apps can poll select_isPressed().
-  select_configure();
-
 #if !MDDOOM_TEST_CARD
   // Hand over to Doom. D_DoomMain never returns; the engine's I_GetEvent
   // and I_MD_PresentFrame do what the loop below does for the test card.
-  extern void doomgame_start(void);
-  doomgame_start();
+  extern void doomgame_start(const char *folder);
+  doomgame_start(folderName);
 #else
   // The pipeline test card (MDDOOM_TEST_CARD=1). ESC keeps its default
   // meaning of "exit to GEM" (ikbd's ESC auto-exit).

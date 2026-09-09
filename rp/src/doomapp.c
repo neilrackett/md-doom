@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * File: doomapp.c
- * Description: MD/DOOM front-end. For now, the pipeline test card
- *              described in doomapp.h.
+ * Description: The pipeline test card described in doomapp.h, built
+ *              in place of the game with MDDOOM_TEST_CARD=1.
  *
  * Keys on the test card:
  *   F1        next dither mode        F2   next palette source
@@ -34,7 +34,6 @@
 #include "pico/stdlib.h"
 #include "pico/time.h"
 
-extern const struct FB_FONT font8x8; /* defined in fb.c */
 
 /* Pens used for the overlay text. The test palette below puts a
  * 16-step grey ramp at indices 0..15, so these are what they say. */

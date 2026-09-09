@@ -44,20 +44,11 @@
 
 extern void I_InputInit(void);
 
-typedef struct atexit_listentry_s atexit_listentry_t;
-struct atexit_listentry_s {
-  atexit_func_t func;
-  boolean run_on_error;
-  atexit_listentry_t *next;
-};
-static atexit_listentry_t *exit_funcs = NULL;
-
+/* Nothing runs at exit: I_Quit hands the machine back to GEM and the
+ * cartridge idles, so there is no list to keep. */
 void I_AtExit(atexit_func_t func, boolean run_on_error) {
-  atexit_listentry_t *entry = malloc(sizeof(*entry));
-  entry->func = func;
-  entry->run_on_error = run_on_error;
-  entry->next = exit_funcs;
-  exit_funcs = entry;
+  (void)func;
+  (void)run_on_error;
 }
 
 void I_Tactile(int on, int off, int total) {
