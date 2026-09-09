@@ -61,8 +61,8 @@ jobs:
       # served mismatched index files and failed `apt update` outright.
       # Nothing here needs it.
       run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
-          sudo DEBIAN_FRONTEND=noninteractive apt update
+          sudo grep -l dl.google.com /etc/apt/sources.list.d/* | xargs -r sudo rm -f
+          sudo DEBIAN_FRONTEND=noninteractive apt update || true
           sudo DEBIAN_FRONTEND=noninteractive apt install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential libstdc++-arm-none-eabi-newlib
 
     - name: Install AtariST Toolkit Docker image
