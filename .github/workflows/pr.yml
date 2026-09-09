@@ -51,7 +51,11 @@ jobs:
         python-version: "3.x"
 
     - name: Install the Pico Toolchain
+      # The runner image ships Google's Chrome apt source, which has
+      # served mismatched index files and failed `apt update` outright.
+      # Nothing here needs it.
       run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
           sudo DEBIAN_FRONTEND=noninteractive apt update
           sudo DEBIAN_FRONTEND=noninteractive apt install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential libstdc++-arm-none-eabi-newlib
 
