@@ -39,7 +39,7 @@ Controls match the original PC Doom:
 | 1 to 7          | Weapons                                                                            |
 | Esc             | Menu                                                                               |
 | Tab             | Automap                                                                            |
-| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
+| F1 to F10       | Help (not supported), save (not supported), load (not supported), volume, detail (not supported), quick-save (not supported), end game, messages, quick-load (not supported), quit |
 | Help            | Gamma (F11 on a PC)                                                                |
 | Undo            | Pause                                                                              |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |

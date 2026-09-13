@@ -22,6 +22,9 @@
   input poll the renderer runs part-way through a frame, on the
   renderer's own deep stack. The keypress now only records the choice
   and the rebuild happens between frames, with Core 1 idle.
+- The README marks the F-keys that do nothing in this build: help and
+  detail, which this renderer has no screens or modes for, and save,
+  load, quick-save and quick-load, which wait on save games.
 - The `-` and `+` screen size keys now say "Screen size cannot be
   changed" instead of doing nothing at all, so they do not look broken.
   This renderer has no windowed view, and the menu item for it is
