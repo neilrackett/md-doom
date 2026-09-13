@@ -18,13 +18,13 @@
  *   $00..$7F -> key press scancode (scancode 0 suppressed)
  *   $80..$F1 -> key release scancode (byte & $7F)
  *   $FE / $FF / $FD -> joystick packet headers; the state byte(s) that
- *              follow are framed into the per-port joystick state
- *              (userfw.s puts the IKBD into joystick event reporting
- *              at boot). Other headers are dropped.
+ *              follow are framed into the per-port joystick state.
+ *              Other headers are dropped.
  *   $F8..$FB -> relative mouse packet header, carrying the two button
  *              bits; the two signed deltas that follow are accumulated
- *              into the mouse state (userfw.s puts the mouse in port 0
- *              into relative reporting at boot).
+ *              into the mouse state. Note the ST wires joystick 1's
+ *              fire to the right mouse button: that bit and the
+ *              joystick's bit 7 are one signal.
  *
  * Apps drain decoded key events via `ikbd_pop_key`, read the port-1
  * stick with `ikbd_get_joystick` and the mouse with `ikbd_get_mouse`.
@@ -65,9 +65,9 @@ void ikbd_consume_rom3_sample(uint16_t addr_lsb);
 void ikbd_pump(void);
 
 /* Latest Atari ST joystick state decoded by ikbd_pump: bit0 up,
- * bit1 down, bit2 left, bit3 right, bit7 fire. Returns 0 unless the
- * m68k side is emitting joystick event packets (userfw.s puts the
- * IKBD into joystick event-reporting mode at boot). */
+ * bit1 down, bit2 left, bit3 right, bit7 fire. Port 1 only; the IKBD
+ * reports joystick events by default and userfw.s leaves it that way.
+ * Bit 7 is the same signal as the right mouse button. */
 uint8_t ikbd_get_joystick(void);
 
 /* Mouse button bits as reported by ikbd_get_mouse. */
@@ -79,8 +79,7 @@ uint8_t ikbd_get_joystick(void);
  * nothing between calls is lost); the buttons are the last state the
  * IKBD reported and persist across reads. Positive dx is right and
  * positive dy is towards the user (the IKBD's default "Y=0 at top"
- * sense, which the reset userfw.s issues at boot restores). Any
- * argument may be NULL. */
+ * sense, which userfw.s leaves alone). Any argument may be NULL. */
 void ikbd_get_mouse(int16_t *dx, int16_t *dy, uint8_t *buttons);
 
 /* Key press / release event. `scancode` is the IKBD scancode with

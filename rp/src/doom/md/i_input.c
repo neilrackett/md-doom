@@ -139,14 +139,20 @@ static void poll_joystick(void) {
   s_joy_mask = m;
 }
 
-/* The ST mouse as Doom sees it: left button = fire (mousebfire is 0),
- * right = strafe-on (mousebstrafe is 1), X turns and Y walks, which is
- * what the original did with a two-button mouse. Posted once per tic
- * from I_StartTic rather than from I_GetEvent: G_Responder overwrites
- * mousex/mousey with each event it sees, so a second event in the same
- * tic (the renderer polls input again from NetUpdate) would throw the
- * first one's movement away. The deltas accumulate in ikbd.c until
- * this reads them, so nothing is lost either way. */
+/* The ST mouse as Doom sees it: X turns, Y walks and the left button
+ * fires (mousebfire is 0). Only the left button is reported. The ST
+ * wires joystick 1's fire to the right mouse button -- one line, the
+ * two cannot be told apart -- so giving the right button Doom's
+ * mouse-button 2 (strafe-on, mousebstrafe is 1) would make every shot
+ * from the joystick strafe as well. It is not lost: the same line
+ * arrives as joystick fire, so a right-click shoots too.
+ *
+ * Posted once per tic from I_StartTic rather than from I_GetEvent:
+ * G_Responder overwrites mousex/mousey with each event it sees, so a
+ * second event in the same tic (the renderer polls input again from
+ * NetUpdate) would throw the first one's movement away. The deltas
+ * accumulate in ikbd.c until this reads them, so nothing is lost
+ * either way. */
 void I_MD_PostMouseEvent(void) {
   int16_t dx, dy;
   uint8_t buttons;
@@ -158,7 +164,7 @@ void I_MD_PostMouseEvent(void) {
 
   event_t ev;
   ev.type = ev_mouse;
-  ev.data1 = buttons; /* bit 0 = left, bit 1 = right -- Doom's own order */
+  ev.data1 = buttons & IKBD_MOUSE_BTN_LEFT; /* bit 0 = fire; see above */
   ev.data2 = dx;
   ev.data3 = -dy; /* IKBD +Y is towards the user; Doom's +Y is forward */
   ev.data4 = ev.data5 = 0;

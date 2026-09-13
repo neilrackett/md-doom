@@ -135,9 +135,9 @@ the two IRQs the app actually needs:
 
 1. **m68k boot stubs 4 IRQ vectors** — HBL (`$68`), Timer-A (`$134`), Timer-C (`$114`) and Timer-D (`$110`) all point at a 1-instruction `userfw_dummy_irq` (just `rte`). MFP Timer A/C/D are disabled+masked at IERA/IERB so they never fire; HBL is masked by SR=$2300. Timer-B (`$120`) is owned by the YM audio path; it is left idle when STE DMA sound is in use. On a DMA-sound machine Timer-A is then claimed by `userfw_snd_irq` (event-count mode, one event per DMA frame end; see the audio pipeline).
 2. **The ACIA vector (`$118`) gets a real handler**, `userfw_acia_irq`, enabled at IERB/IMRB bit 6. It reads each IKBD byte the instant it arrives and forwards it to the RP with a cart-bus read at `IKBD_WINDOW_BASE + byte` (`$FB8200..$FB82FF`). Interrupt-driven rather than polled: the MC6850 has a one-byte receive buffer, and polling drops bytes, which desynchronises the multi-byte joystick packets. The MIDI ACIA shares the same MFP interrupt, so the handler drains it too. MFP is in auto-EOI mode, so the handler needs no in-service acknowledge; it saves only D0/A1, which makes it safe to fire in the middle of `FBDRV_INLINE`.
-3. **m68k boot configures the IKBD** — `$80 $01` (reset) → `$08` (relative mouse reporting) → `$14` (joystick event reporting). The 6301 treats the two auto-report modes as one setting and `$14` would otherwise switch the mouse off; commands sent inside the ~63 ms the IKBD takes to come back from a reset are the exception, and the only way to have both (the sequence Barbarian and other two-input games use). The reset also restores the default `Y=0 at top` sense, so positive `dy` is towards the user. The byte stream is then keyboard scancodes plus `$FE`/`$FF`/`$FD` joystick packets and `$F8`..`$FB` three-byte mouse packets, and one `$F1` self-test reply about 63 ms in that decodes as a harmless key release.
+3. **m68k boot sends the IKBD nothing at all** — and must not: its default state, which TOS leaves alone, already reports relative mouse packets (`$F8`..`$FB` + signed dx, dy) *and* joystick 1 events (`$FE`/`$FF`) alongside the keyboard scancodes. The 6301 treats the two auto-report modes as one setting, so selecting joystick event reporting (`$14`) switches the mouse off, and `$12` — what this used to send, before the demux could frame mouse packets — switches it off outright. Y is at its default `Y=0 at top`, so positive `dy` is towards the user. md-sidepad's `sidepong` example drives two paddles from a mouse and a joystick the same way.
 4. **RP captures via commemul** — the 1 KB ROM3 DMA ring (`commemul.{c,pio}`) records every read in `$FB0000`–`$FBFFFF`. The main loop drains it with `fb_pump_rom3()`, whose callback routes each sample to the IKBD demux, the Xpad receiver, the VBL frame-sync detector and the sound-capability decoder.
-5. **RP demux** (`ikbd_pump()`) classifies each raw byte: `$00..$7F` = key press, `$80..$F1` = key release (scancode = `byte & $7F`), `$FD/$FE/$FF` = joystick packet headers whose following state byte(s) are framed into `s_joy_state[]`, `$F8..$FB` = mouse packet headers (bit 1 = left button, bit 0 = right) whose two signed deltas accumulate into the mouse state. Only port 1 is reported by `ikbd_get_joystick()` (bit0 up, 1 down, 2 left, 3 right, 7 fire). `ikbd_get_mouse()` returns the movement since the last call (cleared by the read, clamped to ±512 so a stall cannot come back as one huge jump) and the current buttons. Apps drain key events via `ikbd_pop_key()`; scancode `$00` is suppressed.
+5. **RP demux** (`ikbd_pump()`) classifies each raw byte: `$00..$7F` = key press, `$80..$F1` = key release (scancode = `byte & $7F`), `$FD/$FE/$FF` = joystick packet headers whose following state byte(s) are framed into `s_joy_state[]`, `$F8..$FB` = mouse packet headers (bit 1 = left button, bit 0 = right) whose two signed deltas accumulate into the mouse state. Only port 1 is reported by `ikbd_get_joystick()` (bit0 up, 1 down, 2 left, 3 right, 7 fire). `ikbd_get_mouse()` returns the movement since the last call (cleared by the read, clamped to ±512 so a stall cannot come back as one huge jump) and the current buttons. **The ST wires joystick 1's fire to the right mouse button** — one line, indistinguishable — so the right button and joystick bit 7 always arrive together. Apps drain key events via `ikbd_pop_key()`; scancode `$00` is suppressed.
 6. **ESC** — `ikbd.c` posts `CART_CMD_BOOT_GEM` to the sentinel slot on an ESC press+release within 200 ms unless the app calls `ikbd_set_esc_auto_exit(false)`. The test card leaves it on (ESC = back to GEM); the game will turn it off (ESC = Doom's menu) and exit through `ikbd_request_boot_gem()` from a menu item. `ikbd_clear_command()` at the top of the main loop re-arms the slot to `CMD_NOP` so the exit is a one-shot and does not re-trigger after an ST reset.
 
 ### Audio pipeline (STE DMA sound, YM2149 fallback)
@@ -353,11 +353,14 @@ Xpad pad (`xpadin.c`) into `doom_joy_state_t` (x/y in -1..1 plus a button
 mask: fire, use, strafe, run, weapon prev/next, menu, map, strafe l/r).
 `md/i_input.c` posts the keys as `ev_keydown`/`ev_keyup` and turns the
 stick and pad into key presses on their edges. The mouse is a real
-`ev_mouse` (X turns, Y walks, left button fires, right strafes), posted
-once per tic from `I_StartTic` — `G_Responder` overwrites `mousex`/
-`mousey` with each event, so a second one in the same tic (the renderer
-polls input again from `NetUpdate`) would drop the first one's
-movement.
+`ev_mouse` (X turns, Y walks, left button fires), posted once per tic
+from `I_StartTic` — `G_Responder` overwrites `mousex`/`mousey` with
+each event, so a second one in the same tic (the renderer polls input
+again from `NetUpdate`) would drop the first one's movement. Only the
+left button is reported: the right one shares its line with joystick 1's
+fire, so giving it Doom's mouse button 2 (strafe-on) would make every
+shot from the joystick strafe as well. A right-click still fires,
+through the joystick path.
 
 ### Sound (`doom_sound.c`, `md/i_mdsound.c`)
 The game's mixer is `md/i_mdsound.c` (upstream's channel model and ADPCM

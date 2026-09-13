@@ -172,14 +172,15 @@ static void push_key(uint8_t scancode, bool is_press) {
  * arrive intact and this demux frames them into s_joy_state[].
  *
  * The two ports are kept separate and only port 1 is reported. Port 0
- * is the mouse port: before relative mouse reporting was turned on it
- * reported as joystick 0, and a stationary mouse held its quadrature
- * lines in a fixed pattern -- a steady non-zero direction byte that,
- * being change-triggered, latched forever. Folding both ports into one
- * state let that phantom overwrite the real stick in port 1 (games
- * waiting for the stick to centre would never start). A joystick
- * plugged into port 0 now reads as mouse movement instead, which is
- * the same trade TOS makes. */
+ * is the mouse port, and while mouse reporting was switched off it
+ * reported as joystick 0 instead: a stationary mouse held its
+ * quadrature lines in a fixed pattern -- a steady non-zero direction
+ * byte that, being change-triggered, latched forever. Folding both
+ * ports into one state let that phantom overwrite the real stick in
+ * port 1 (games waiting for the stick to centre would never start).
+ * With the mouse reporting again, port 0 arrives as mouse packets and
+ * a joystick plugged in there reads as mouse movement, which is the
+ * same trade TOS makes. */
 
 /* Latest joystick state per port (bit0 up, bit1 down, bit2 left,
  * bit3 right, bit7 fire). [0] = port 0 (mouse), [1] = port 1. */
@@ -191,12 +192,13 @@ static uint8_t s_joy_pending = 0;
 
 uint8_t ikbd_get_joystick(void) { return s_joy_state[1]; }
 
-/* Mouse support. userfw.s puts the IKBD into relative mouse reporting
- * ($08) alongside joystick event reporting: port 0 then emits a
- * three-byte packet -- header %111110xy (x = left button, y = right
- * button), signed dx, signed dy -- whenever the mouse moves or a button
- * changes. Having both at once takes the reset trick described there;
- * $14 on its own would switch the mouse off.
+/* Mouse support. The IKBD reports relative mouse packets by default
+ * and userfw.s leaves it that way (it must: selecting joystick event
+ * reporting would switch the mouse off): port 0 emits a three-byte
+ * packet -- header %111110xy (x = left button, y = right button),
+ * signed dx, signed dy -- whenever the mouse moves or a button
+ * changes. Note the ST wires joystick 1's fire to the right mouse
+ * button, so that bit and joystick bit 7 are one signal.
  *
  * Deltas accumulate here until ikbd_get_mouse() takes them, so nothing
  * is lost between the once-a-tic reads; the total is clamped so a long

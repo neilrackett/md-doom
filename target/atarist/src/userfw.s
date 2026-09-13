@@ -784,41 +784,18 @@ userfw:
     ; Interrupts back on (caller's level, typically $2300).
     move.w  (sp)+, sr
 
-    ; --- Configure the IKBD for mouse + joystick play.
-    ; $08 puts the mouse (port 0) in relative reporting: a three-byte
-    ; %111110xy packet (x = left button, y = right button) followed by
-    ; signed dx and dy, generated whenever the mouse moves or a button
-    ; changes. $14 puts port 1 in joystick event-reporting mode, so it
-    ; emits $FE/$FF packets the RP demux frames into a direction+fire
-    ; byte. Keyboard scancodes continue alongside both.
-    ;
-    ; $14 on its own would turn the mouse back off -- the 6301 treats
-    ; the two auto-report modes as one setting. The exception, and the
-    ; only way to have both, is to send them inside the ~63 ms the IKBD
-    ; takes to come back from a reset ($80 $01): a mouse mode set in
-    ; that window survives the joystick command. This is the sequence
-    ; Barbarian and other two-input games use. The reset also restores
-    ; the Y sense to its "Y=0 at top" default, so positive dy means the
-    ; mouse moved towards the user; the RP negates it for Doom's
-    ; forward axis. Four bytes at 7812.5 baud is about 6 ms, well
-    ; inside the window; the IKBD's $F1 "self-test passed" reply lands
-    ; after it and decodes as a harmless key release.
-.ikbd_tx_rst1:
-    btst    #1, ACIA_KBD_STATUS.w        ; MC6850 TDRE = TX data register empty
-    beq.s   .ikbd_tx_rst1
-    move.b  #$80, ACIA_KBD_DATA.w        ; IKBD: reset, byte 1 of 2
-.ikbd_tx_rst2:
-    btst    #1, ACIA_KBD_STATUS.w
-    beq.s   .ikbd_tx_rst2
-    move.b  #$01, ACIA_KBD_DATA.w        ; IKBD: reset, byte 2 of 2
-.ikbd_tx_mouse:
-    btst    #1, ACIA_KBD_STATUS.w
-    beq.s   .ikbd_tx_mouse
-    move.b  #$08, ACIA_KBD_DATA.w        ; IKBD: relative mouse reporting
-.ikbd_tx_joy:
-    btst    #1, ACIA_KBD_STATUS.w
-    beq.s   .ikbd_tx_joy
-    move.b  #$14, ACIA_KBD_DATA.w        ; IKBD: set joystick event reporting
+    ; --- The IKBD is left exactly as it is. Do not add mode commands
+    ; here. Its default state, which TOS leaves alone, already reports
+    ; relative mouse packets ($F8..$FB + signed dx, dy) AND joystick 1
+    ; events ($FE/$FF) alongside the keyboard scancodes, which is
+    ; everything the game needs. Selecting joystick event reporting
+    ; ($14) would switch the mouse back off -- the 6301 treats the two
+    ; auto-report modes as one setting -- and $12 (what this used to
+    ; send, before the RP demux could frame mouse packets) switches the
+    ; mouse off outright. Y is at its "Y=0 at top" default, so positive
+    ; dy means the mouse moved towards the user; the RP negates it for
+    ; Doom's forward axis. See md-sidepad's sidepong example, which
+    ; drives two paddles from a mouse and a joystick the same way.
 
     ; Initialise the hidden-page pointer. UFW_SCREEN_PAGE holds the
     ; page currently being drawn into; .after_copy toggles it between

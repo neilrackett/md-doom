@@ -45,7 +45,8 @@ Controls match the original PC Doom:
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
 A joystick in port 1 moves, turns and fires. The mouse turns and walks,
-with the left button to fire and the right button held to strafe.
+with either button to fire (the ST wires the right mouse button to the
+joystick's fire button, so the two cannot do different things).
 
 Quit from the menu (or pressing F10) returns you to GEM.
 
