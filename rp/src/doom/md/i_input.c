@@ -139,13 +139,15 @@ static void poll_joystick(void) {
   s_joy_mask = m;
 }
 
-/* The ST mouse as Doom sees it: X turns, Y walks and the left button
- * fires (mousebfire is 0). Only the left button is reported. The ST
- * wires joystick 1's fire to the right mouse button -- one line, the
- * two cannot be told apart -- so giving the right button Doom's
- * mouse-button 2 (strafe-on, mousebstrafe is 1) would make every shot
- * from the joystick strafe as well. It is not lost: the same line
- * arrives as joystick fire, so a right-click shoots too.
+/* The ST mouse as Doom sees it: X turns, Y walks, the right button
+ * fires and the left button held strafes -- the opposite way round to
+ * a PC, because the ST wires joystick 1's fire to the right mouse
+ * button. They are one line and cannot be told apart, so the right
+ * button is a fire button whether we like it or not (it arrives as
+ * joystick fire and needs nothing from us here), and strafe has to go
+ * to the left button. Hence the only thing posted from the mouse
+ * packet is the left button, as Doom's mouse button 2, which is
+ * mousebstrafe.
  *
  * Posted once per tic from I_StartTic rather than from I_GetEvent:
  * G_Responder overwrites mousex/mousey with each event it sees, so a
@@ -164,7 +166,8 @@ void I_MD_PostMouseEvent(void) {
 
   event_t ev;
   ev.type = ev_mouse;
-  ev.data1 = buttons & IKBD_MOUSE_BTN_LEFT; /* bit 0 = fire; see above */
+  /* Bit 1 is Doom's mouse button 2 = mousebstrafe; see above. */
+  ev.data1 = (buttons & IKBD_MOUSE_BTN_LEFT) ? 0x02 : 0x00;
   ev.data2 = dx;
   ev.data3 = -dy; /* IKBD +Y is towards the user; Doom's +Y is forward */
   ev.data4 = ev.data5 = 0;

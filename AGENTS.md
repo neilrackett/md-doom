@@ -353,14 +353,15 @@ Xpad pad (`xpadin.c`) into `doom_joy_state_t` (x/y in -1..1 plus a button
 mask: fire, use, strafe, run, weapon prev/next, menu, map, strafe l/r).
 `md/i_input.c` posts the keys as `ev_keydown`/`ev_keyup` and turns the
 stick and pad into key presses on their edges. The mouse is a real
-`ev_mouse` (X turns, Y walks, left button fires), posted once per tic
-from `I_StartTic` — `G_Responder` overwrites `mousex`/`mousey` with
-each event, so a second one in the same tic (the renderer polls input
-again from `NetUpdate`) would drop the first one's movement. Only the
-left button is reported: the right one shares its line with joystick 1's
-fire, so giving it Doom's mouse button 2 (strafe-on) would make every
-shot from the joystick strafe as well. A right-click still fires,
-through the joystick path.
+`ev_mouse` (X turns, Y walks), posted once per tic from `I_StartTic` —
+`G_Responder` overwrites `mousex`/`mousey` with each event, so a second
+one in the same tic (the renderer polls input again from `NetUpdate`)
+would drop the first one's movement. The buttons are the other way
+round to a PC: the right button shares its line with joystick 1's fire,
+so it is a fire button whether or not we want it to be, and it needs
+nothing from this code (it arrives through the joystick path). The only
+thing the mouse packet contributes is the left button, posted as Doom's
+mouse button 2, which is `mousebstrafe`.
 
 ### Sound (`doom_sound.c`, `md/i_mdsound.c`)
 The game's mixer is `md/i_mdsound.c` (upstream's channel model and ADPCM

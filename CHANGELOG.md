@@ -1,17 +1,19 @@
 # Changelog
 
-## v0.4.4 (2026-09-13)
+## v0.4.5 (2026-09-13)
 
-- The ST mouse now plays the game: X turns, Y walks and either button
-  fires. The IKBD is left in its default state rather than being told
-  anything, which is what reports mouse packets and joystick events
-  together; the old boot-time "disable mouse" command is what had been
-  switching the mouse off. The demux frames the three-byte packets and
-  the movement is posted as a real Doom mouse event once per tic. Only
-  the mouse's left button is reported: the ST wires joystick 1's fire
-  to the right mouse button, so making that one strafe would have made
-  every shot from the joystick strafe too. A side effect of all this is
-  that the desktop mouse works again after quitting to GEM.
+- The ST mouse now plays the game: X turns, Y walks, the right button
+  fires and the left button held strafes. The IKBD is left in its
+  default state rather than being told anything, which is what reports
+  mouse packets and joystick events together; the old boot-time
+  "disable mouse" command is what had been switching the mouse off. The
+  demux frames the three-byte packets and the movement is posted as a
+  real Doom mouse event once per tic. The buttons are the other way
+  round to a PC because the ST wires joystick 1's fire to the right
+  mouse button: they are one line, so the right button is a fire button
+  whether we want it or not, and strafe goes to the left. A side effect
+  of all this is that the desktop mouse works again after quitting to
+  GEM.
 - Gamma correction (the Help key) does something at last. The level was
   tracked and its message printed, but the table was never applied to
   the palette; it now is, after the pain and pickup tints, and a change
