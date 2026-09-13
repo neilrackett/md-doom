@@ -2096,6 +2096,19 @@ boolean M_Responder (event_t* ev)
 	    return true;
 	}
         else
+#else
+        /* MD/DOOM: this renderer has no windowed view, so the screen
+         * size keys have nothing to do. Say so, rather than looking
+         * broken. The automap zooms with the same two keys, so they
+         * still have to fall through while it is up. */
+        if (key == key_menu_decscreen || key == key_menu_incscreen)
+        {
+            if (automapactive)
+                return false;
+            players[consoleplayer].message = "Screen size cannot be changed";
+            return true;
+        }
+        else
 #endif
         if (key == key_menu_help && !MDDOOM)     // Help key (MD/DOOM: no HELP screens)
         {

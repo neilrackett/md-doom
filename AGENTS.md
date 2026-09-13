@@ -520,7 +520,10 @@ revisited in order of visible payoff.
   parameterised in `R_ExecuteSetViewSize` — but it crops rather than
   scales, so it is not what the original's thermometer does, and the
   band left over still needs something drawn in it. The menu item is
-  already compiled out; the README no longer lists the keys.
+  already compiled out, the README no longer lists the keys, and
+  `m_menu.c`'s F-key block answers them with a "cannot be changed"
+  message -- except while the automap is up, where the same two keys
+  zoom and have to fall through to `AM_Responder`.
 - **ST high resolution** (640×400 mono, low priority). Today the m68k bails
   to GEM in high-res. It would need a 1-bit reduction (the 4x4 dither
   already produces thresholds; the two-nearest step collapses to

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.4.2 (2026-09-13)
+## v0.4.3 (2026-09-13)
 
 - The ST mouse now plays the game: X turns, Y walks, the left button
   fires and the right button held strafes, which is what the original
@@ -22,9 +22,11 @@
   input poll the renderer runs part-way through a frame, on the
   renderer's own deep stack. The keypress now only records the choice
   and the rebuild happens between frames, with Core 1 idle.
-- The `-` and `+` screen size keys are gone from the README. They never
-  did anything: the renderer has no windowed view, and the menu item
-  for it is already compiled out. See the backlog in `AGENTS.md`.
+- The `-` and `+` screen size keys now say "Screen size cannot be
+  changed" instead of doing nothing at all, so they do not look broken.
+  This renderer has no windowed view, and the menu item for it is
+  already compiled out; see the backlog in `AGENTS.md` for what
+  restoring it would take. The keys still zoom the automap.
 
 ## v0.4.0 (2026-09-09)
 
