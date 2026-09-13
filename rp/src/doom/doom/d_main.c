@@ -201,15 +201,17 @@ boolean D_Display (void)
     boolean			redrawsbar;
 
     redrawsbar = false;
+#endif
 
     // change the view size if needed
     if (setsizeneeded)
     {
 	R_ExecuteSetViewSize ();
+#if !DOOM_TINY
 	oldgamestate = -1;                      // force background redraw
 	borderdrawcount = 3;
-    }
 #endif
+    }
 
     // save the current screen if about to wipe
     if (gamestate != wipegamestate)

@@ -708,8 +708,11 @@ uint32_t doom_video_last_convert_us(void) { return s_convert_us; }
 
 #define WIPE_COLS 160 /* two-pixel columns, as in the original */
 
-static int16_t s_wipe_y[WIPE_COLS] __cart_app_free("wipe");   /* Doom's y[]: < 0 waiting, 200 done */
-static int16_t s_wipe_off[WIPE_COLS] __cart_app_free("wipe"); /* offset drawn by the last step  */
+/* Plain RAM, not the cart hole: the full-screen size grew the
+ * renderer's visplane bitmap by 1,280 bytes and the hole had 832 left,
+ * so these 640 moved out to make room. */
+static int16_t s_wipe_y[WIPE_COLS];   /* Doom's y[]: < 0 waiting, 200 done */
+static int16_t s_wipe_off[WIPE_COLS]; /* offset drawn by the last step  */
 static uint32_t s_wipe_rand;
 static uint32_t s_wipe_max_us;
 

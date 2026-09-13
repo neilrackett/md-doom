@@ -791,7 +791,7 @@ void pd_begin_frame() {
     memset(visplane_bit, 0, sizeof(visplane_bit)); // todo could do this with dma
     for(uint i=0;i<count_of(not_fully_covered_cols);i++) not_fully_covered_cols[i] = 0; // only 3 of these so loop
     not_fully_covered_yl = 0;
-    not_fully_covered_yh = MAIN_VIEWHEIGHT - 1;
+    not_fully_covered_yh = viewheight - 1; /* MD/DOOM: the size in use, not the maximum */
     render_col_count = 0;
     render_col_free = -1;
     pd_frame++;
@@ -2370,7 +2370,9 @@ static void draw_fuzz_columns() {
             assert(yl <= MAIN_VIEWHEIGHT);
             assert(yh <= MAIN_VIEWHEIGHT);
             if (yl == 0) yl = 1;
-            if (yh >= MAIN_VIEWHEIGHT - 1) yh = MAIN_VIEWHEIGHT - 2;
+            /* MD/DOOM: the size in use, so the fuzz never samples the
+             * row past the bottom of the view (it reads p[+-1]). */
+            if (yh >= viewheight - 1) yh = viewheight - 2;
 
             if (yl <= yh) {
                 uint8_t *p = screen_col + yl * SCREENWIDTH;
@@ -2483,7 +2485,7 @@ void draw_stbar_on_framebuffer(int frame, boolean refresh) {
 
 static void draw_framebuffer_patches_fullscreen() {
     V_RestoreBuffer();
-    vpatch_clip_bottom = MAIN_VIEWHEIGHT;
+    vpatch_clip_bottom = STATUS_BAR_TOP; /* MD/DOOM: band boundary, not view height */
     V_DrawPatchList(vpatchlists->framebuffer);
     I_VideoBuffer = frame_buffer[0] /* MD/DOOM: rows 168.. are real */;
     V_RestoreBuffer();
@@ -2496,10 +2498,10 @@ static void draw_framebuffer_patches_fullscreen() {
 
 void draw_fullscreen_background(int top, int bottom) {
     assert(top < bottom);
-    assert((top < MAIN_VIEWHEIGHT && bottom <= MAIN_VIEWHEIGHT) ||
-           (top >= MAIN_VIEWHEIGHT && bottom > MAIN_VIEWHEIGHT));
+    assert((top < STATUS_BAR_TOP && bottom <= STATUS_BAR_TOP) ||
+           (top >= STATUS_BAR_TOP && bottom > STATUS_BAR_TOP));
     int patch_num = 0;
-    byte *top_pixel = top < MAIN_VIEWHEIGHT ? render_frame_buffer + top * SCREENWIDTH :
+    byte *top_pixel = top < STATUS_BAR_TOP ? render_frame_buffer + top * SCREENWIDTH :
                         frame_buffer[0] + top * SCREENWIDTH /* MD/DOOM */;
     switch (gamestate) {
         case GS_INTERMISSION:
@@ -2557,7 +2559,7 @@ void draw_fullscreen_background(int top, int bottom) {
         // need to draw the initial text
         V_BeginPatchList(vpatchlists->framebuffer);
         WI_Drawer();
-        if (top >= MAIN_VIEWHEIGHT) {
+        if (top >= STATUS_BAR_TOP) {
             I_VideoBuffer = frame_buffer[0] /* MD/DOOM: rows 168.. are real */;
         }
         V_RestoreBuffer();
@@ -2651,13 +2653,13 @@ void pd_end_frame(int wipe_start) {
                         render_frame_index ^= 1;
                         render_frame_buffer = frame_buffer[render_frame_index];
                         I_VideoBuffer = render_frame_buffer;
-                        draw_fullscreen_background(0, MAIN_VIEWHEIGHT - 32);
+                        draw_fullscreen_background(0, STATUS_BAR_TOP - 32);
                     }
                     if (next_video_type == VIDEO_TYPE_DOUBLE) {
                         // coming from level already, so draw statusbar
                         draw_stbar_on_framebuffer(render_frame_index, false); // argh it is the wrong status bar
                     }
-                    clip_columns(0, MAIN_VIEWHEIGHT - 32 -
+                    clip_columns(0, STATUS_BAR_TOP - 32 -
                                     1); // note this is a noop in non GS_LEVEL so don't bother to add if
                     next_video_type = VIDEO_TYPE_WIPE;
                     // steal space for our wipe data structures
@@ -2682,11 +2684,11 @@ void pd_end_frame(int wipe_start) {
                     base = 0;
 #endif
                     for (int i = 0; i < SCREENHEIGHT; i++) {
-                        if (i < MAIN_VIEWHEIGHT)
-                            wipe_linelookup[i] = base + screen_front * SCREENWIDTH * MAIN_VIEWHEIGHT + i * SCREENWIDTH;
+                        if (i < STATUS_BAR_TOP)
+                            wipe_linelookup[i] = base + screen_front * SCREENWIDTH * STATUS_BAR_TOP + i * SCREENWIDTH;
                         else
                             wipe_linelookup[i] =
-                                    base + (screen_front ^ 1) * SCREENWIDTH * MAIN_VIEWHEIGHT + (i - 32) * SCREENWIDTH;
+                                    base + (screen_front ^ 1) * SCREENWIDTH * STATUS_BAR_TOP + (i - 32) * SCREENWIDTH;
                     }
                     wipestate = WIPESTATE_SKIP1;
                     wipe_min = 0;
@@ -2699,10 +2701,10 @@ void pd_end_frame(int wipe_start) {
             }
             case WIPESTATE_REDRAW1: {
                 // we need to render the bottom of the screen
-                clip_columns(MAIN_VIEWHEIGHT - 32,
-                             MAIN_VIEWHEIGHT - 1); // note this is a noop in non GS_LEVEL so don't bother to add if
+                clip_columns(STATUS_BAR_TOP - 32,
+                             STATUS_BAR_TOP - 1); // note this is a noop in non GS_LEVEL so don't bother to add if
                 if (gamestate != GS_LEVEL) {
-                    draw_fullscreen_background(MAIN_VIEWHEIGHT - 32, MAIN_VIEWHEIGHT);
+                    draw_fullscreen_background(STATUS_BAR_TOP - 32, STATUS_BAR_TOP);
                 }
                 wipestate = WIPESTATE_SKIP2;
                 break;
@@ -2715,7 +2717,7 @@ void pd_end_frame(int wipe_start) {
                 if (gamestate == GS_LEVEL) {
                     draw_stbar_on_framebuffer(render_frame_index ^ 1, true);
                 } else {
-                    draw_fullscreen_background(MAIN_VIEWHEIGHT, SCREENHEIGHT);
+                    draw_fullscreen_background(STATUS_BAR_TOP, SCREENHEIGHT);
                 }
                 wipestate = WIPESTATE_SKIP3;
                 break;
@@ -2828,7 +2830,7 @@ void pd_end_frame(int wipe_start) {
                     if (automapactive)
                         AM_Drawer();
                     // goes into overlay set above
-                    ST_Drawer(false, !pre_wipe_state);
+                    ST_Drawer(viewheight == SCREENHEIGHT, !pre_wipe_state); /* MD/DOOM: full screen hides the bar */
                     sub_gamestate = 0;
                     next_video_type = VIDEO_TYPE_DOUBLE;
                 }

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.7 (2026-09-13)
+
+- Full screen. `+` gives the game the whole 320x200 and takes the
+  status bar away, `-` brings it back; the choice is saved. This is the
+  original's largest screen size, and the only one this renderer can
+  add: the sizes in between need a narrower view, which means tables
+  and border art the build and the level packs leave out.
+- The two meanings of the 168-row constant had to be told apart first.
+  Upstream has one number for "how tall the view is" and "where the
+  status bar starts", because they were never different. They are now
+  `MAIN_VIEWHEIGHT` and `STATUS_BAR_TOP`, and the tiny build learned to
+  act on a size change at all, which it could not do before: the call
+  that applies one was compiled out.
+- Room for the taller view: the renderer's visplane bitmap grew by
+  1,280 bytes, which the cart hole could not hold, so the melt's 640
+  bytes of column state moved into ordinary RAM. That and the taller
+  slope table cost the zone heap about 900 bytes, leaving it near
+  31 KB. Watch the log for Z_Malloc errors on the later maps.
+
 ## v0.4.5 (2026-09-13)
 
 - The ST mouse now plays the game: X turns, Y walks, the right button

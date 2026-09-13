@@ -2097,15 +2097,24 @@ boolean M_Responder (event_t* ev)
 	}
         else
 #else
-        /* MD/DOOM: this renderer has no windowed view, so the screen
-         * size keys have nothing to do. Say so, rather than looking
-         * broken. The automap zooms with the same two keys, so they
+        /* MD/DOOM: two sizes, not the original's thermometer. This
+         * renderer cannot draw a narrower view, so + is the full 200
+         * rows with no status bar and - is the usual view with the bar
+         * below it. The automap zooms with the same two keys, so they
          * still have to fall through while it is up. */
         if (key == key_menu_decscreen || key == key_menu_incscreen)
         {
             if (automapactive)
                 return false;
-            players[consoleplayer].message = "Screen size cannot be changed";
+            extern void I_MD_SaveVideoSettings(void);
+            int want = (key == key_menu_incscreen) ? 11 : 10;
+            if (screenblocks != want)
+            {
+                screenblocks = want;
+                R_SetViewSize(screenblocks, detailLevel);
+                S_StartUnpositionedSound(sfx_stnmov);
+                I_MD_SaveVideoSettings();
+            }
             return true;
         }
         else

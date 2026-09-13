@@ -42,6 +42,7 @@ Controls match the original PC Doom:
 | F1 to F10       | Help (not supported), save (not supported), load (not supported), volume, detail (not supported), quick-save (not supported), end game, messages, quick-load (not supported), quit |
 | Help            | Gamma (F11 on a PC)                                                                |
 | Undo            | Pause                                                                              |
+| - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
 A joystick in port 1 moves, turns and fires. The mouse turns and walks,
@@ -55,6 +56,11 @@ apart, so the right button has to be fire, and strafe goes to the left
 button instead.
 
 Quit from the menu (or pressing F10) returns you to GEM.
+
+The full screen size gives you the whole 320×200 for the game at the
+cost of the status bar, exactly as the original did at its largest
+setting; your choice is remembered. The sizes in between are not
+available, because this renderer cannot draw a narrower view.
 
 Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
 Colour palettes: STDOOM (default), generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.

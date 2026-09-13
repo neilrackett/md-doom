@@ -223,12 +223,12 @@ single-buffered into `fb_chunked_buffer` (upstream double-buffers
 2 × 54 KB), the 32 KB planar scratch is gone (direct c2p),
 `RENDER_COL_MAX` is 3000 (upstream 3600; overflow degrades to black
 columns), the renderer's `visplane_bit`, patch decoder buffers and
-`column_heads` (12.6 KB) live in `CART_APP_FREE`, the vpatch lists live in
+`column_heads` (13.9 KB) live in `CART_APP_FREE`, the vpatch lists live in
 the unused USB DPRAM, the sfx mix buffer (1 KB) in scratch X below Core 1's
 2 KB stack. Left to pull if needed: `RENDER_COL_MAX` lower still, the 4 KB
 dither LUT into scratch X, freeing the settings contexts after boot.
 
-- **`CART_APP_FREE`** overlays the 15,104-byte hole between `CART_APP_FREE_OFFSET` (`$4500`) and `CART_FRAMEBUFFER_OFFSET` (`$8300`) inside the shared region — ordinary SRAM that neither the ST nor the framebuffer path reads. Buffers tagged `__cart_app_free("name")` live there (the commemul ring and 12.6 KB of renderer scratch; ~1.4 KB is free). It is `NOLOAD`, so only park things first touched after `emul_start()` has called `ERASE_FIRMWARE_IN_RAM()`. `emul_start()` re-checks the window against `cart_shared.h` at boot, and the linker script asserts the section starts on `ORIGIN`.
+- **`CART_APP_FREE`** overlays the 15,104-byte hole between `CART_APP_FREE_OFFSET` (`$4500`) and `CART_FRAMEBUFFER_OFFSET` (`$8300`) inside the shared region — ordinary SRAM that neither the ST nor the framebuffer path reads. Buffers tagged `__cart_app_free("name")` live there (the commemul ring and 13.9 KB of renderer scratch; **192 B is free** — the full-screen size grew `visplane_bit` to 8,000 B and pushed the melt's 640 B of column state out into ordinary RAM). It is `NOLOAD`, so only park things first touched after `emul_start()` has called `ERASE_FIRMWARE_IN_RAM()`. `emul_start()` re-checks the window against `cart_shared.h` at boot, and the linker script asserts the section starts on `ORIGIN`.
 - If you add a `static` array, check the link: `__bss_end__` .. `__StackLimit` in `rp/build-*/rp.elf.map` is the whole heap window. The boot-time settings library needs ~8.4 KB of it; "the app launches then lands straight back in Booster" is a heap failure, not a crash. `DPRINT_HEAP()` in `debug.h` reports the window at boot.
 
 The build assumes Core 0 owns flash writes (`PICO_FLASH_ASSUME_CORE0_SAFE=1`). **Core 1 is parked in `fb_core1_loop`** (`fb_chunked.c`), a generic job dispatcher; the c2p bottom half rides it, and so does the RAM-resident park job `pack.c` uses to hold Core 1 still while it programs flash. **Core 1 is otherwise free**: the cartridge bus is served by PIO + DMA with no CPU involvement (the original scoping assumption that one core is reserved for the cartridge interface does not hold), so upstream's Core 1 render split is kept via `fb_core1_dispatch`. The one other thing on Core 1 is the audio refill interrupt (see "Audio pipeline"), which is why it must never be moved to Core 0.
@@ -396,6 +396,19 @@ vendored file altered for the port carries `MD/DOOM:` comments at the
 change; the platform files under `md/` say which upstream file they derive
 from.
 
+- **Screen size.** `MAIN_VIEWHEIGHT` and `STATUS_BAR_TOP` (`i_video.h`)
+  were one constant upstream, where the view is always 168 rows and the
+  status bar always sits in the 32 below. They are now separate: the
+  first is the tallest the view can be (200, what the renderer's buffers
+  and clipping are sized for), the second is where the status bar
+  overlay starts (168, fixed). `viewheight` is the height actually in
+  use. `setblocks` is a variable again, limited to 10 or 11;
+  `R_ExecuteSetViewSize` already had the block-11 branch, and `D_Display`
+  now acts on `setsizeneeded` in tiny builds (upstream's call was inside
+  `#if !DOOM_TINY`, so the size could never change after boot).
+  `pd_render.cpp` passes `viewheight == SCREENHEIGHT` to `ST_Drawer`, and
+  `st_stuff.c` gates the bar's own patch on `st_statusbaron` the way the
+  widgets already were.
 - `md/i_video.c` — `I_VideoBuffer` is `fb_chunked_buffer`; both of
   upstream's `frame_buffer[2]` resolve to it (`pd_render.cpp`'s
   "other buffer minus 32 rows" tricks are patched to plain rows 168..199).
@@ -514,20 +527,16 @@ revisited in order of visible payoff.
 - **Melt wipe at a level start** runs from the loading screen, not the
   intermission, because the pack is programmed (and its screen shown)
   before the level's first frame exists. A title pack would fix it too.
-- **Screen size (`-` and `+`) does nothing.** The keys reach the engine
-  but the tiny renderer has no windowed view: `setblocks` is a constant
-  10 in `r_main.c`, `FIXED_SCREENWIDTH=1` removes the `_distscale[]`
-  table a narrower view needs, `NO_RDRAW=1` drops `R_InitBuffer` /
-  `R_FillBackScreen` / `R_DrawViewBorder`, and the border art
-  (`BRDR_*`, `FLOOR7_2`) is not in the level packs. A vertical-only
-  letterbox is the cheap version — `viewheight` alone is already
-  parameterised in `R_ExecuteSetViewSize` — but it crops rather than
-  scales, so it is not what the original's thermometer does, and the
-  band left over still needs something drawn in it. The menu item is
-  already compiled out, the README no longer lists the keys, and
-  `m_menu.c`'s F-key block answers them with a "cannot be changed"
-  message -- except while the automap is up, where the same two keys
-  zoom and have to fall through to `AM_Responder`.
+- **Screen size has two positions, not the original's nine.** `-` and
+  `+` pick view block 10 (the 168-row view with the status bar below
+  it) or 11 (the full 200 rows, no status bar), saved as `SCRNSIZE` in
+  the app config. The sizes in between are not renderable here:
+  `FIXED_SCREENWIDTH=1` removes the `_distscale[]` table a narrower
+  view needs, `NO_RDRAW=1` drops `R_InitBuffer` / `R_FillBackScreen` /
+  `R_DrawViewBorder`, and the border art (`BRDR_*`, `FLOOR7_2`) is not
+  in the level packs. Restoring them means all of that plus rebuilt
+  packs. Note the keys must keep falling through to `AM_Responder`
+  while the automap is up, where they zoom.
 - **ST high resolution** (640×400 mono, low priority). Today the m68k bails
   to GEM in high-res. It would need a 1-bit reduction (the 4x4 dither
   already produces thresholds; the two-nearest step collapses to
