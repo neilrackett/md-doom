@@ -20,10 +20,15 @@
  *   $FE / $FF / $FD -> joystick packet headers; the state byte(s) that
  *              follow are framed into the per-port joystick state
  *              (userfw.s puts the IKBD into joystick event reporting
- *              at boot, with the mouse off). Other headers are dropped.
+ *              at boot). Other headers are dropped.
+ *   $F8..$FB -> relative mouse packet header, carrying the two button
+ *              bits; the two signed deltas that follow are accumulated
+ *              into the mouse state (userfw.s puts the mouse in port 0
+ *              into relative reporting at boot).
  *
- * Apps drain decoded key events via `ikbd_pop_key` and read the port-1
- * stick with `ikbd_get_joystick`. ESC (scancode $01) press+release
+ * Apps drain decoded key events via `ikbd_pop_key`, read the port-1
+ * stick with `ikbd_get_joystick` and the mouse with `ikbd_get_mouse`.
+ * ESC (scancode $01) press+release
  * within 200 ms posts CMD_BOOT_GEM to the cart command sentinel unless
  * the app has taken ESC for itself (ikbd_set_esc_auto_exit).
  */
@@ -64,6 +69,19 @@ void ikbd_pump(void);
  * m68k side is emitting joystick event packets (userfw.s puts the
  * IKBD into joystick event-reporting mode at boot). */
 uint8_t ikbd_get_joystick(void);
+
+/* Mouse button bits as reported by ikbd_get_mouse. */
+#define IKBD_MOUSE_BTN_LEFT  0x01u
+#define IKBD_MOUSE_BTN_RIGHT 0x02u
+
+/* Mouse movement since the last call plus the current button state.
+ * The deltas are cleared by the read (so call it once per tic and
+ * nothing between calls is lost); the buttons are the last state the
+ * IKBD reported and persist across reads. Positive dx is right and
+ * positive dy is towards the user (the IKBD's default "Y=0 at top"
+ * sense, which the reset userfw.s issues at boot restores). Any
+ * argument may be NULL. */
+void ikbd_get_mouse(int16_t *dx, int16_t *dy, uint8_t *buttons);
 
 /* Key press / release event. `scancode` is the IKBD scancode with
  * bit 7 stripped (0..127). `is_press` is true for make, false for

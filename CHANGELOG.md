@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.4.2 (2026-09-13)
+
+- The ST mouse now plays the game: X turns, Y walks, the left button
+  fires and the right button held strafes, which is what the original
+  did with a two-button mouse. Getting the mouse and the joystick
+  reporting at the same time means resetting the IKBD at boot and
+  sending both commands inside the window the reset opens, since the
+  joystick command would otherwise switch the mouse off; the demux
+  frames the three-byte packets and the movement is posted as a real
+  Doom mouse event once per tic. A side effect is that the desktop
+  mouse works again after quitting to GEM, which it did not while mouse
+  reporting was switched off.
+- Gamma correction (the Help key) does something at last. The level was
+  tracked and its message printed, but the table was never applied to
+  the palette; it now is, after the pain and pickup tints, and a change
+  of level forces the palette to be rebuilt even when the page has not
+  changed.
+- Keypad `*` and `/` no longer risk a freeze. They were rebuilding the
+  4 KB dither lookup table where the key was seen, which is also the
+  input poll the renderer runs part-way through a frame, on the
+  renderer's own deep stack. The keypress now only records the choice
+  and the rebuild happens between frames, with Core 1 idle.
+- The `-` and `+` screen size keys are gone from the README. They never
+  did anything: the renderer has no windowed view, and the menu item
+  for it is already compiled out. See the backlog in `AGENTS.md`.
+
 ## v0.4.0 (2026-09-09)
 
 The release build.

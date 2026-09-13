@@ -42,10 +42,10 @@ Controls match the original PC Doom:
 | F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
 | Help            | Gamma (F11 on a PC)                                                                |
 | Undo            | Pause                                                                              |
-| - and +         | Screen size                                                                        |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
-A joystick in port 1 moves, turns and fires.
+A joystick in port 1 moves, turns and fires. The mouse turns and walks,
+with the left button to fire and the right button held to strafe.
 
 Quit from the menu (or pressing F10) returns you to GEM.
 

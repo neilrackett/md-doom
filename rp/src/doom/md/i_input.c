@@ -7,7 +7,9 @@
  *              drains the cart-bus capture ring, runs the IKBD demux and
  *              posts the decoded keys as Doom events; the port-1 joystick
  *              and an Xpad gamepad are turned into key presses on their
- *              edges so the vanilla key bindings cover them too.
+ *              edges so the vanilla key bindings cover them too. The ST
+ *              mouse is posted as a real ev_mouse once per tic, from
+ *              I_MD_PostMouseEvent.
  */
 
 #include <string.h>
@@ -37,13 +39,41 @@
 
 extern void I_MD_SaveVideoSettings(void);
 
+/* The next dither / palette to switch to, or -1 for "no change". The
+ * key is seen from the input poll, which the renderer also runs
+ * mid-frame from NetUpdate: rebuilding the 4 KB dither LUT there costs
+ * a millisecond of the frame's budget and does it on the renderer's
+ * own deep stack, so only the choice is recorded here and
+ * I_MD_ApplyVideoMode does the work from I_MD_PresentFrame, between
+ * frames, with Core 1 idle. */
+static int8_t s_pending_dither = -1;
+static int8_t s_pending_palette = -1;
+
 static void cycle_video_mode(uint8_t scancode) {
   if (scancode == SCAN_KP_MULTIPLY) {
-    doom_video_set_dither((doom_video_get_dither() + 1) % DOOM_VIDEO_DITHER_COUNT);
-    players[consoleplayer].message = doom_video_dither_name(doom_video_get_dither());
+    int cur = s_pending_dither >= 0 ? s_pending_dither : (int)doom_video_get_dither();
+    s_pending_dither = (int8_t)((cur + 1) % DOOM_VIDEO_DITHER_COUNT);
+    players[consoleplayer].message =
+        doom_video_dither_name((doom_video_dither_t)s_pending_dither);
   } else {
-    doom_video_set_palette_mode((doom_video_get_palette_mode() + 1) % DOOM_VIDEO_PAL_COUNT);
-    players[consoleplayer].message = doom_video_palette_name(doom_video_get_palette_mode());
+    int cur = s_pending_palette >= 0 ? s_pending_palette : (int)doom_video_get_palette_mode();
+    s_pending_palette = (int8_t)((cur + 1) % DOOM_VIDEO_PAL_COUNT);
+    players[consoleplayer].message =
+        doom_video_palette_name((doom_video_palette_t)s_pending_palette);
+  }
+}
+
+/* Apply a dither / palette change asked for since the last frame.
+ * Called from I_MD_PresentFrame. */
+void I_MD_ApplyVideoMode(void) {
+  if (s_pending_dither < 0 && s_pending_palette < 0) return;
+  if (s_pending_dither >= 0) {
+    doom_video_set_dither((doom_video_dither_t)s_pending_dither);
+    s_pending_dither = -1;
+  }
+  if (s_pending_palette >= 0) {
+    doom_video_set_palette_mode((doom_video_palette_t)s_pending_palette);
+    s_pending_palette = -1;
   }
   I_MD_SaveVideoSettings(); /* survives the next power-up (written at frame end) */
 }
@@ -107,6 +137,32 @@ static void poll_joystick(void) {
     if (changed & (1u << i)) post_key(s_joy_keys[i], (m >> i) & 1u);
   }
   s_joy_mask = m;
+}
+
+/* The ST mouse as Doom sees it: left button = fire (mousebfire is 0),
+ * right = strafe-on (mousebstrafe is 1), X turns and Y walks, which is
+ * what the original did with a two-button mouse. Posted once per tic
+ * from I_StartTic rather than from I_GetEvent: G_Responder overwrites
+ * mousex/mousey with each event it sees, so a second event in the same
+ * tic (the renderer polls input again from NetUpdate) would throw the
+ * first one's movement away. The deltas accumulate in ikbd.c until
+ * this reads them, so nothing is lost either way. */
+void I_MD_PostMouseEvent(void) {
+  int16_t dx, dy;
+  uint8_t buttons;
+  ikbd_get_mouse(&dx, &dy, &buttons);
+
+  static uint8_t s_last_buttons;
+  if (!dx && !dy && buttons == s_last_buttons) return;
+  s_last_buttons = buttons;
+
+  event_t ev;
+  ev.type = ev_mouse;
+  ev.data1 = buttons; /* bit 0 = left, bit 1 = right -- Doom's own order */
+  ev.data2 = dx;
+  ev.data3 = -dy; /* IKBD +Y is towards the user; Doom's +Y is forward */
+  ev.data4 = ev.data5 = 0;
+  D_PostEvent(&ev);
 }
 
 void I_GetEvent(void) {

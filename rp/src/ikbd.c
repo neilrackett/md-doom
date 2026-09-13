@@ -11,12 +11,13 @@
  * `volatile` is for compiler hygiene only.
  *
  * The demux classifies bytes one at a time: key make/break codes go to
- * the key ring, and the one or two state bytes that follow a joystick
- * packet header ($FE / $FF / $FD; the mouse is off at boot) are framed
- * into the per-port joystick state. The only state carried between
- * bytes is which joystick bytes are still expected, and a stray byte
- * swallowed there is masked to the direction and fire bits, so the
- * demux can never stick.
+ * the key ring, the one or two state bytes that follow a joystick
+ * packet header ($FE / $FF / $FD) are framed into the per-port joystick
+ * state, and the two signed deltas that follow a relative-mouse header
+ * ($F8..$FB) are accumulated into the mouse state. The only state
+ * carried between bytes is which packet bytes are still expected, and a
+ * stray byte swallowed there is masked (joystick) or clamped (mouse),
+ * so the demux can never stick.
  */
 
 #include "ikbd.h"
@@ -65,6 +66,13 @@ static uint32_t s_esc_press_us = 0;
  * through ikbd_pop_key, the auto-write is just gated off. */
 static bool s_esc_auto_exit = true;
 
+/* Mouse state (see "Mouse support" below). */
+static int16_t s_mouse_dx = 0;
+static int16_t s_mouse_dy = 0;
+static uint8_t s_mouse_buttons = 0;
+/* Remaining bytes of the current mouse packet: 2 = dx next, 1 = dy. */
+static uint8_t s_mouse_pending = 0;
+
 void __not_in_flash_func(ikbd_consume_rom3_sample)(uint16_t addr_lsb) {
   if ((addr_lsb & IKBD_WINDOW_MASK) == IKBD_WINDOW_LO16) {
     uint8_t byte = (uint8_t)(addr_lsb & 0xFFu);
@@ -83,6 +91,10 @@ void ikbd_init(void) {
   s_key_tail = 0;
   s_esc_press_us = 0;
   s_esc_auto_exit = true;
+  s_mouse_dx = 0;
+  s_mouse_dy = 0;
+  s_mouse_buttons = 0;
+  s_mouse_pending = 0;
 }
 
 void ikbd_set_esc_auto_exit(bool enabled) {
@@ -159,13 +171,15 @@ static void push_key(uint8_t scancode, bool is_press) {
  * every byte interrupt-driven, so the multi-byte joystick packets
  * arrive intact and this demux frames them into s_joy_state[].
  *
- * The two ports are kept separate and only port 1 is reported: with
- * joystick event reporting on ($14), the mouse in port 0 reports as
- * joystick 0, and a stationary mouse holds its quadrature lines in a
- * fixed pattern -- a steady non-zero direction byte that, being
- * change-triggered, latches forever. Folding both ports into one
+ * The two ports are kept separate and only port 1 is reported. Port 0
+ * is the mouse port: before relative mouse reporting was turned on it
+ * reported as joystick 0, and a stationary mouse held its quadrature
+ * lines in a fixed pattern -- a steady non-zero direction byte that,
+ * being change-triggered, latched forever. Folding both ports into one
  * state let that phantom overwrite the real stick in port 1 (games
- * waiting for the stick to centre would never start). */
+ * waiting for the stick to centre would never start). A joystick
+ * plugged into port 0 now reads as mouse movement instead, which is
+ * the same trade TOS makes. */
 
 /* Latest joystick state per port (bit0 up, bit1 down, bit2 left,
  * bit3 right, bit7 fire). [0] = port 0 (mouse), [1] = port 1. */
@@ -177,9 +191,50 @@ static uint8_t s_joy_pending = 0;
 
 uint8_t ikbd_get_joystick(void) { return s_joy_state[1]; }
 
+/* Mouse support. userfw.s puts the IKBD into relative mouse reporting
+ * ($08) alongside joystick event reporting: port 0 then emits a
+ * three-byte packet -- header %111110xy (x = left button, y = right
+ * button), signed dx, signed dy -- whenever the mouse moves or a button
+ * changes. Having both at once takes the reset trick described there;
+ * $14 on its own would switch the mouse off.
+ *
+ * Deltas accumulate here until ikbd_get_mouse() takes them, so nothing
+ * is lost between the once-a-tic reads; the total is clamped so a long
+ * stall (a pack load, a flash write) cannot come back as one enormous
+ * movement. Buttons are the latest reported state and persist across a
+ * read -- the IKBD only sends a packet when something changes. */
+#define IKBD_MOUSE_DELTA_CLAMP 512
+
+static void mouse_accumulate(int16_t *acc, int8_t delta) {
+  int v = *acc + delta;
+  if (v > IKBD_MOUSE_DELTA_CLAMP) v = IKBD_MOUSE_DELTA_CLAMP;
+  if (v < -IKBD_MOUSE_DELTA_CLAMP) v = -IKBD_MOUSE_DELTA_CLAMP;
+  *acc = (int16_t)v;
+}
+
+void ikbd_get_mouse(int16_t *dx, int16_t *dy, uint8_t *buttons) {
+  if (dx) *dx = s_mouse_dx;
+  if (dy) *dy = s_mouse_dy;
+  if (buttons) *buttons = s_mouse_buttons;
+  s_mouse_dx = 0;
+  s_mouse_dy = 0;
+}
+
 void ikbd_pump(void) {
   uint8_t b;
   while (raw_pop(&b)) {
+    /* Consume the two signed deltas that follow a mouse packet header
+     * (the buttons came with the header itself). */
+    if (s_mouse_pending) {
+      if (s_mouse_pending == 2u) {
+        mouse_accumulate(&s_mouse_dx, (int8_t)b);
+        s_mouse_pending = 1u;
+      } else {
+        mouse_accumulate(&s_mouse_dy, (int8_t)b);
+        s_mouse_pending = 0u;
+      }
+      continue;
+    }
     /* Consume the state byte(s) that follow a joystick packet header so
      * they are never misclassified as key scancodes. Mask to the
      * meaningful bits (directions + fire) so a stray byte swallowed
@@ -194,6 +249,13 @@ void ikbd_pump(void) {
       }
       continue;
     }
+    if (b >= 0xF8u && b <= 0xFBu) {
+      /* Relative mouse packet: bit 1 = left button, bit 0 = right. */
+      s_mouse_buttons = (uint8_t)(((b & 0x02u) ? IKBD_MOUSE_BTN_LEFT : 0u) |
+                                  ((b & 0x01u) ? IKBD_MOUSE_BTN_RIGHT : 0u));
+      s_mouse_pending = 2u;
+      continue;
+    }
     if (b == 0xFEu) { s_joy_pending = 1; continue; }  /* joystick 0 */
     if (b == 0xFFu) { s_joy_pending = 2; continue; }  /* joystick 1 */
     if (b == 0xFDu) { s_joy_pending = 3; continue; }  /* both, 0 then 1 */
@@ -204,8 +266,8 @@ void ikbd_pump(void) {
       push_key((uint8_t)(b & 0x7Fu), false);
     }
     /* $F2..$FF: mouse / joystick / status / TOD packet headers.
-     * Mouse is disabled at boot; joystick headers are handled above
-     * when the port is built. Any other header byte is discarded. */
+     * Mouse ($F8..$FB) and joystick ($FD..$FF) headers are handled
+     * above. Any other header byte is discarded. */
   }
 }
 
