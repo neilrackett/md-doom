@@ -61,10 +61,10 @@ game the way Quit does, but restarts your ST into the SidecarT Booster
 instead of returning you to the desktop, which saves powering off and
 holding the SELECT button.
 
-Options has a **Start level** setting, which is the map a new game
-begins on. Use it to go straight to a level you want to play or test.
-It counts 1 to 9 and back to 1, and it returns to 1 as soon as you
-start a game, so it never surprises you later.
+Options has a **Level** setting, which is the map a new game begins on.
+Use it to go straight to a level you want to play or test. It counts 1
+to 9 and back to 1, and it returns to 1 as soon as you start a game, so
+it never surprises you later.
 
 Quit from the menu (or pressing F10) returns you to GEM.
 

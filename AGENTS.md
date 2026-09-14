@@ -368,6 +368,16 @@ The deltas are scaled on the way through (`MD_MOUSE_TURN_SCALE` 8,
 counts an inch and Doom turns eight angle units per count, so unscaled
 a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
 at its default so those two are the only numbers to tune.
+- **Menu text for items MD/DOOM adds** (`I_MD_MenuText` in
+  `md/i_video.c`). The original's menu is artwork, one picture per item,
+  and the packs carry those and nothing else — there is no alphabet in
+  them, and `M_WriteText`'s little message font looks like a mistake
+  next to the menu's letters. So the new items queue their label during
+  `M_Drawer` and the platform draws it after `V_DrawPatchList`, in the
+  framework's 8x8 font at double size (about as tall as the original's
+  letters). The colour is whichever PLAYPAL index is the most saturated
+  red, found once rather than guessed. Keep labels short: 16 px a
+  character, so ~7 fit beside the other items.
 - **Main menu → Booster** (`m_menu.c`, `#if MDDOOM`) quits to the
   Booster instead of GEM. It reuses `M_QuitResponse` for the message,
   the sound and the deferred exit, and only sets `md_booster_quit`,

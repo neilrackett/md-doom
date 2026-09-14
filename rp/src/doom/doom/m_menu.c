@@ -216,6 +216,9 @@ static void M_ChooseSkill(int choice);
 #if MDDOOM
 static void M_StartLevel(int choice);
 static void M_QuitToBooster(int choice);
+/* MD/DOOM: menu-sized text for the items with no artwork of their own;
+ * drawn by the platform layer, see md/i_video.c. */
+extern void I_MD_MenuText(int x, int y, const char *s);
 #endif
 #if !NO_USE_LOAD
 static void M_LoadGame(int choice);
@@ -1120,8 +1123,8 @@ void M_DrawMainMenu(void)
 #if MDDOOM
     /* The Booster item has no menu graphic; it is always the last one,
      * wherever M_Init's shuffling leaves it. */
-    M_WriteText(MainDef.x, MainDef.y + LINEHEIGHT * (MainDef.numitems - 1),
-		"Booster");
+    I_MD_MenuText(MainDef.x, MainDef.y + LINEHEIGHT * (MainDef.numitems - 1),
+		  "BOOSTER");
 #endif
 }
 
@@ -1263,9 +1266,12 @@ void M_DrawOptions(void)
 
 #if MDDOOM
     {
-	char buf[24];
-	M_snprintf(buf, sizeof(buf), "Start level %d", md_start_map);
-	M_WriteText(OptionsDef.x, OptionsDef.y + LINEHEIGHT * startlevel, buf);
+	/* Doubled 8x8 glyphs, so it is the menu's size rather than the
+	 * message line's; "Start level" would not fit beside the other
+	 * items at that size, so the shorter word it is. */
+	char buf[16];
+	M_snprintf(buf, sizeof(buf), "LEVEL %d", md_start_map);
+	I_MD_MenuText(OptionsDef.x, OptionsDef.y + LINEHEIGHT * startlevel, buf);
     }
 #endif
 }

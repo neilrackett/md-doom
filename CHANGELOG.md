@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.5 (2026-09-14)
+
+- The two menu items MD/DOOM adds are drawn at the menu's own size
+  instead of in the little font the messages use. Doom's menu is
+  artwork, one picture per item, and the level packs carry those and no
+  alphabet, so there is nothing in them to set new words in: these are
+  drawn by the firmware in its own 8x8 font at double size, coloured
+  with whichever palette entry is the most saturated red. The Options
+  item is now "Level N", since "Start level" is too wide at that size.
+
 ## v0.5.4 (2026-09-14)
 
 - A **Booster** item below Quit Game on the main menu. It asks the same

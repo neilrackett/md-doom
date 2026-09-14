@@ -50,6 +50,7 @@
 
 #include "doom_video.h"
 #include "fb_chunked.h"
+#include "fb_font.h"
 
 /* Set while Core 1 has the SIO interpolators in use; nothing else uses
  * them here, so it is only ever read. */
@@ -161,6 +162,87 @@ static void apply_palette(int pal) {
   doom_video_set_playpal(page);
 }
 
+/* ------------------------------------------------------------------ */
+/* Big menu text                                                       */
+/*                                                                     */
+/* The original's menu is artwork, one picture per item, and the level
+ * packs carry those and nothing else -- there is no alphabet in them to
+ * set new words in. The only font Doom has is the little one the
+ * messages use, which next to the menu's letters looks like a mistake.
+ * So items MD/DOOM adds are drawn here instead, in the framework's own
+ * 8x8 font at double size, which comes out about as tall as the
+ * original's letters. They are queued by M_Drawer while the overlay
+ * list is being built and drawn below, after that list, so nothing can
+ * land on top of them. */
+
+#define MD_MENU_TEXT_MAX 2
+#define MD_MENU_TEXT_LEN 16
+
+static struct {
+  int16_t x, y;
+  char s[MD_MENU_TEXT_LEN];
+} s_menu_text[MD_MENU_TEXT_MAX];
+static uint8_t s_menu_text_count;
+
+void I_MD_MenuText(int x, int y, const char *s) {
+  if (s_menu_text_count >= MD_MENU_TEXT_MAX) return;
+  s_menu_text[s_menu_text_count].x = (int16_t)x;
+  s_menu_text[s_menu_text_count].y = (int16_t)y;
+  strncpy(s_menu_text[s_menu_text_count].s, s, MD_MENU_TEXT_LEN - 1);
+  s_menu_text[s_menu_text_count].s[MD_MENU_TEXT_LEN - 1] = 0;
+  s_menu_text_count++;
+}
+
+/* The menu's red, whichever PLAYPAL index holds it: the most saturated
+ * red in the page, found once. Picking an index by eye would be a guess
+ * about a palette the packs supply. */
+static uint8_t menu_text_color(void) {
+  static int16_t cached = -1;
+  if (cached >= 0) return (uint8_t)cached;
+  if (!s_playpal) return 4; /* white, until there is a palette to ask */
+  int best = 4, best_score = -0x7FFF;
+  for (int i = 0; i < 256; i++) {
+    const uint8_t *c = &s_playpal[i * 3];
+    int score = (int)c[0] - (int)c[1] - (int)c[2];
+    if (score > best_score) {
+      best_score = score;
+      best = i;
+    }
+  }
+  cached = (int16_t)best;
+  return (uint8_t)best;
+}
+
+static void draw_menu_text(void) {
+  if (!s_menu_text_count) return;
+  const struct FB_FONT *f = &font8x8;
+  const uint8_t color = menu_text_color();
+  for (int n = 0; n < s_menu_text_count; n++) {
+    int x = s_menu_text[n].x;
+    const int y = s_menu_text[n].y;
+    for (const char *s = s_menu_text[n].s; *s; s++, x += 2 * f->w) {
+      const unsigned char ch = (unsigned char)*s;
+      if (ch < f->first_char || ch >= f->first_char + f->num_chars) continue;
+      const uint8_t *rows = &f->data[(ch - f->first_char) * f->h];
+      for (int row = 0; row < f->h; row++) {
+        const uint8_t bits = rows[row];
+        if (!bits) continue;
+        const int py = y + row * 2;
+        if (py < 0 || py + 1 >= SCREENHEIGHT) continue;
+        uint8_t *l0 = fb_chunked_buffer + (size_t)py * SCREENWIDTH;
+        uint8_t *l1 = l0 + SCREENWIDTH;
+        for (int c = 0; c < f->w; c++) {
+          if (!(bits & (1u << c))) continue;
+          const int px = x + c * 2;
+          if (px < 0 || px + 1 >= SCREENWIDTH) continue;
+          l0[px] = l0[px + 1] = l1[px] = l1[px + 1] = color;
+        }
+      }
+    }
+  }
+  s_menu_text_count = 0;
+}
+
 /* Called at the end of pd_end_frame, once the renderer has released the
  * frame: composite the overlays, apply any palette change, publish. */
 void I_MD_PresentFrame(void) {
@@ -189,6 +271,7 @@ void I_MD_PresentFrame(void) {
     V_DrawPatchList(vpatchlists->overlays[display_overlay_index]);
     I_VideoBuffer = saved;
   }
+  draw_menu_text();
 
   if (next_pal != -1) {
     /* The gamma key asks for a re-apply by re-posting the page it is
