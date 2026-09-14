@@ -1847,14 +1847,13 @@ static void SaveDefaultCollection(default_collection_t *collection)
 
 static int ParseIntParameter(const char *strparm)
 {
-    int parm;
+    /* MD/DOOM: strtol, not sscanf -- the scanf family is 12 KB of flash
+     * and this is the only thing that wanted it. Base 0 reads 0x for
+     * hex and a leading 0 for octal, which is what %i did. */
+    if (strparm[0] == '0' && (strparm[1] == 'x' || strparm[1] == 'X'))
+        return (int)strtol(strparm + 2, NULL, 16);
 
-    if (strparm[0] == '0' && strparm[1] == 'x')
-        sscanf(strparm+2, "%x", &parm);
-    else
-        sscanf(strparm, "%i", &parm);
-
-    return parm;
+    return (int)strtol(strparm, NULL, 0);
 }
 
 static void SetVariable(default_t *def, const char *value)

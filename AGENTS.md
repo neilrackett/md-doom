@@ -540,7 +540,8 @@ from.
   `pd_render.cpp`, reported on the 64-frame debug line.
 - `pd_render.cpp` — Core 1's `pd_core1_loop` runs as a framework job
   dispatched in `pd_begin_frame` and joined after `core1_done`; the
-  per-frame scratch arrays are `__cart_app_free`; `RENDER_COL_MAX` 2400.
+  per-frame scratch arrays are `__cart_app_free`; the column buffer is
+  taken from the zone per level (see "Improvements backlog").
 - `w_file_memory.c` — the WHX is `pack_base()`, re-read at every open.
 - `d_main.c` — the demo loop only ever shows the title page (no DEMO or
   CREDIT lumps in the packs); `m_menu.c` hides Read This! and ignores F1;
@@ -585,24 +586,36 @@ revisited in order of visible payoff.
   m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
   ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
   A faster blue-noise path (a per-row LUT slice) would close it.
-- **`RENDER_COL_MAX` 1800** (upstream 3600; 3000, then 2400 here, both
-  of which left E1M6 short): very busy views drop columns to black and
-  the flat cache gets fewer slots. **The right fix is to stop splitting
-  this by hand.** `list_buffer` is a static array and the zone is
-  whatever is left of RAM, so the split is fixed at build time for the
-  smallest map and the biggest alike — E1M1 needs 10 KB of zone and
-  E1M6 more than 37 KB. Handing the renderer whatever the level did
-  *not* use (allocate the column buffer from the zone at the end of
-  `P_SetupLevel`, sized to `Z_FreeMemory()` less a play margin) would
-  give E1M1 a huge column budget and E1M6 a small one, which is the
-  shape the problem actually has. `RENDER_COL_MAX` then only sets the
-  ceiling. The work is that `list_buffer` and the arrays cast over it
-  are static and sized by that macro throughout `pd_render.cpp`.
-- **Zone heap ~46 KB.** If a map panics with "out of memory", the
-  message names what was wanted and what was free, and every level load
-  reports its headroom. `ZONE_HEAP_MARGIN` is 2 KB: once the zone
-  exists, `malloc`/`calloc`/`realloc` are wrapped into it and newlib
-  hands out almost nothing more.
+- **The renderer's work area is taken from the zone, not carved out at
+  build time** (`pd_alloc_work_area` in `pd_render.cpp`, called at the
+  end of `P_SetupLevel` and once from `pd_init` for the screens before
+  any level). It takes the largest free block less
+  `PD_ZONE_RESERVE` (10 KB for the mobjs play spawns and the 4 KB the
+  settings library borrows to save), capped at `RENDER_COL_MAX` 3600
+  columns and floored at 500. `render_col_max` is the figure in force;
+  `RENDER_COL_MAX` is only the ceiling. This is what makes both ends of
+  the episode work: a fixed split has to serve E1M1's 12 KB of level
+  data and E1M6's 37-plus, and every value tried was either too mean
+  for E1M1 (columns discarded, black holes over half the screen) or too
+  mean for E1M6 (zone exhausted, panic). Small maps now get the full
+  upstream budget; E1M6 gets what is left. The block is `PU_LEVEL`, so
+  the next level's `Z_FreeTags` returns it before that level is built.
+  Nothing may render between that free and the new allocation —
+  `P_SetupLevel` draws nothing, and the pack loader's progress screens
+  go through `doom_video`, not the renderer.
+- **Zone heap ~72 KB**, now that the 25-47 KB column buffer comes out of
+  it rather than sitting beside it. If a map panics with "out of
+  memory", the message names what was wanted and what was free, and
+  every level reports its columns and remaining zone as it loads.
+  `ZONE_HEAP_MARGIN` is 2 KB: once the zone exists,
+  `malloc`/`calloc`/`realloc` are wrapped into it and newlib hands out
+  almost nothing more.
+- **Debug flash is nearly full** (~180 B of the 372 K `FLASH` region;
+  release has ~36 K). Trimming got it this far: FatFs's unused features
+  are off in `ff/ffconf.h`, `I_Error` uses `vprintf` rather than
+  `vfprintf(stderr)` (which drags in newlib's float formatter), and
+  `ParseIntParameter` / `M_StrToInt` use `strtol` rather than `sscanf`
+  (the scanf family was 12 K). The next addition will not fit.
 - **A freeze on picking up a clip in E1M2** was seen once on v0.1.x and
   has not recurred since the park handshake and the deferred settings
   write were fixed (v0.2.2); not confirmed fixed.

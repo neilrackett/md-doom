@@ -29,7 +29,10 @@ extern "C" {
 #include "doom/f_finale.h"
 #include "v_video.h"
 #include "i_video.h"
+#include "z_zone.h"
 }
+
+#include "debug.h" /* MD/DOOM: work-area reporting */
 // todo compare with and without
 #define USE_XIPCPY 0
 #if PICO_ON_DEVICE
@@ -319,27 +322,45 @@ const char *type_name(pd_column column) {
 }
 
 #if !PICO_RP2350
-/* MD/DOOM: 3600 upstream. Every column costs 12 bytes of list_buffer,
- * which is the only large tunable static left, so this is also the
- * Doom zone's only real supply of memory: the zone is whatever is left
- * over. E1M6 is the biggest map in the episode and its level data
- * alone comes to about 31 KB (250 sectors, 1352 lines, a 1748-block
- * blockmap, 463 things), which would not fit a zone of the same size
- * -- it panicked with "out of memory" on hardware at 3000 columns
- * (zone 31 KB) and again at 2400 (zone 36.8 KB, and it filled every
- * byte). Every other map in the episode loads and plays. 1800 puts the
- * zone near 46 KB, which is the figure upstream rp2040-doom quotes for
- * its own busiest levels and so the best evidence there is for what
- * ought to be enough. The proper fix is to stop dividing this by hand:
- * see the backlog in AGENTS.md. */
-#define RENDER_COL_MAX 1800
+/* MD/DOOM: the renderer's work area is not a static array here; it is
+ * taken from the Doom zone once the level is in, and it is only ever
+ * whatever the level did not need.
+ *
+ * Upstream gives it 3600 columns of 12 bytes, plus one flat, and what
+ * remains of RAM becomes the zone. That split is fixed at build time,
+ * which is the wrong shape for this machine: 64 KB of its RAM is the
+ * cartridge the ST reads, so there is not enough left to satisfy both
+ * the biggest map and a full column budget at once. E1M1's level data
+ * is about 12 KB and E1M6's is over 37 KB, so any single split is
+ * either too mean for E1M1 (columns discarded, black holes in the
+ * picture) or too mean for E1M6 (the zone runs out and the game
+ * panics). Both were tried on hardware; both happened.
+ *
+ * So `pd_alloc_work_area` runs at the end of `P_SetupLevel`, when the
+ * level's own allocations are all in, and takes what is left bar a
+ * reserve for what play spawns. Small maps get the full upstream
+ * budget; the biggest map gets what it can. RENDER_COL_MAX is only the
+ * ceiling now, and `render_col_max` is the figure in force. */
+#define RENDER_COL_MAX 3600
 #else
 #define RENDER_COL_MAX 7200
 #endif
-static uint8_t __aligned(4) list_buffer[RENDER_COL_MAX * sizeof(pd_column) + 64*64]; // extra 64*64 is for one flat
-static uint8_t *last_list_buffer_limit = list_buffer + sizeof(list_buffer);
+/* One flat (64x64) has to fit above the columns whatever happens. */
+#define PD_WORK_AREA_MAX ((int)(RENDER_COL_MAX * sizeof(pd_column)) + 64*64)
+#define PD_WORK_AREA_MIN ((int)(500 * sizeof(pd_column)) + 64*64)
+/* Left in the zone for what play allocates on top of the level: the
+ * mobjs a firefight spawns, dropped items, the door and platform
+ * thinkers a level's specials start, and the 4 KB the settings library
+ * takes transiently when a setting is saved. */
+#define PD_ZONE_RESERVE (10 * 1024)
+
+static uint8_t *list_buffer;
+static int list_buffer_bytes;
+static int render_col_max;
+static uint8_t *last_list_buffer_limit;
+extern "C" void pd_alloc_work_area(void); /* called from P_SetupLevel */
 //static_assert(text_font_cpy > list_buffer, "");
-#define MAX_CACHED_FLATS (sizeof(list_buffer) / 4096)
+#define MAX_CACHED_FLATS (PD_WORK_AREA_MAX / 4096)
 static uint8_t cached_flat_picnum[MAX_CACHED_FLATS];
 static uint8_t cached_flat_slots;
 static uint8_t *cached_flat0;
@@ -350,7 +371,7 @@ static int16_t render_col_free;
 
 static int16_t alloc_pd_column(int x) {
     if (render_col_free < 0) {
-        if (render_col_count == RENDER_COL_MAX) {
+        if (render_col_count == render_col_max) {
             assert(x>=0 && x<SCREENWIDTH);
             not_fully_covered_cols[x/(4*32)] |= 1u << ((x/4)&31);
             return -1;
@@ -834,6 +855,9 @@ static void interp_init() {
 }
 
 void pd_init() {
+    /* MD/DOOM: something to render the title screen with, until the
+     * first level's P_SetupLevel works out what it can really spare. */
+    pd_alloc_work_area();
     sem_init(&core1_wake, 0, 1);
     sem_init(&core0_done, 0, 1);
     sem_init(&core1_done, 0, 1);
@@ -2648,7 +2672,7 @@ void pd_end_frame(int wipe_start) {
 
     DEBUG_PINS_SET(full_render, 1);
 
-    uint8_t *list_buffer_limit = list_buffer + count_of(list_buffer);
+    uint8_t *list_buffer_limit = list_buffer + list_buffer_bytes;
     if (!inhelpscreens) {
         if (was_in_help) {
 //            // todo graham, wtf this was a complete guess - why should this be necessary, and if so why
@@ -2765,7 +2789,7 @@ void pd_end_frame(int wipe_start) {
 //        printf("THIS IS A PROBLEM LIMIT TO %d cols\n", render_col_limit);
         new_cache_flat_slots = 1;
         uh_oh_discard_columns(render_col_limit);
-    } else if (render_col_count == RENDER_COL_MAX) {
+    } else if (render_col_count == render_col_max) {
         static int foo;
 //        printf("OOPS MAXXED OUT %d\n", foo++);
     }
@@ -3032,6 +3056,35 @@ void th_bit_overrun(th_bit_input *bi) {
 uint8_t *pd_get_work_area(uint32_t *size) {
     *size = last_list_buffer_limit - list_buffer;
     return list_buffer;
+}
+
+/* MD/DOOM: hand the renderer a new work area. Everything derived from
+ * the old one is dropped: the flat cache is addressed from the top of
+ * the buffer, and pd_end_frame reworks it from these two limits. */
+static void pd_set_work_area(uint8_t *buf, int bytes) {
+    list_buffer = buf;
+    list_buffer_bytes = bytes;
+    last_list_buffer_limit = buf + bytes;
+    render_col_max = (bytes - 64*64) / (int)sizeof(pd_column);
+    if (render_col_max > RENDER_COL_MAX) render_col_max = RENDER_COL_MAX;
+    cached_flat0 = NULL; /* forces the picnum cache to be thrown away */
+    cached_flat_slots = 0;
+    render_col_count = 0;
+    render_col_free = -1;
+}
+
+/* Take what the level left, bar the reserve, and never more than the
+ * ceiling or less than the floor. Called at the end of P_SetupLevel and
+ * once at startup for the screens that come before any level. The block
+ * is PU_LEVEL, so the next level's Z_FreeTags hands it back before that
+ * level is built and this runs again with the new figures. */
+extern "C" void pd_alloc_work_area(void) {
+    int avail = Z_LargestFreeBlock() - PD_ZONE_RESERVE;
+    if (avail > PD_WORK_AREA_MAX) avail = PD_WORK_AREA_MAX;
+    if (avail < PD_WORK_AREA_MIN) avail = PD_WORK_AREA_MIN;
+    uint8_t *buf = (uint8_t *)Z_Malloc(avail, PU_LEVEL, 0);
+    pd_set_work_area(buf, avail);
+    DPRINTF("render: %d cols, zone free %d\n", render_col_max, Z_FreeMemory());
 }
 
 #if !DEMO1_ONLY

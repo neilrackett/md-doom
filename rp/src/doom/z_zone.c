@@ -626,6 +626,29 @@ void Z_ChangeUser(void *ptr, void **user)
 //
 // Z_FreeMemory
 //
+/* MD/DOOM: the biggest single block that could be handed out, so the
+ * renderer can ask for what is left without risking the panic a failed
+ * Z_Malloc would raise. Free blocks are already maximal -- Z_Free
+ * merges with its neighbours -- so this is just the largest of them. */
+int Z_LargestFreeBlock (void)
+{
+    memblock_t*		block;
+    int			largest = 0;
+
+    for (block = memblock_next(&mainzone->blocklist) ;
+         block != &mainzone->blocklist;
+         block = memblock_next(block))
+    {
+        if (block->tag == PU_FREE)
+        {
+            int size = memblock_size(block) - (int)sizeof(memblock_t);
+            if (size > largest) largest = size;
+        }
+    }
+
+    return largest;
+}
+
 int Z_FreeMemory (void)
 {
     memblock_t*		block;

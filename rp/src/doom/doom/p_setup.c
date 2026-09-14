@@ -24,8 +24,6 @@
 
 #include "z_zone.h"
 
-#include "debug.h" /* MD/DOOM: zone reporting */
-
 #include "deh_main.h"
 #include "i_swap.h"
 #include "m_argv.h"
@@ -1124,10 +1122,10 @@ P_SetupLevel
     if (precache)
 	R_PrecacheLevel ();
 
-    /* MD/DOOM: the zone is the tightest thing in this build and the
-     * biggest maps come close to filling it, so say what is left. */
-    DPRINTF("level %d.%d loaded, zone free %d\n", gameepisode, gamemap,
-            Z_FreeMemory());
+    /* MD/DOOM: the level's own allocations are all in by now, so this
+     * is the moment to hand the renderer what is left of the zone. */
+    extern void pd_alloc_work_area(void);
+    pd_alloc_work_area();
 }
 
 

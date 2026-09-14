@@ -67,6 +67,7 @@ void    Z_CheckHeap (void);
 void    Z_ChangeTag2 (void *ptr, int tag, const char *file, int line);
 void    Z_ChangeUser(void *ptr, void **user);
 int     Z_FreeMemory (void);
+int     Z_LargestFreeBlock (void);
 unsigned int Z_ZoneSize(void);
 
 #if Z_MALOOC_EXTRA_DATA

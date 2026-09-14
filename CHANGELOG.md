@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.5.15 (2026-09-14)
+
+- The renderer and the level now share memory properly instead of
+  splitting it at build time. The column buffer is taken from the Doom
+  zone once the level is in, so it gets whatever that level did not
+  need: the small maps get the full 3600 columns the engine was written
+  for, and only the biggest map has to make do. Every fixed split tried
+  before this was either too mean for E1M1, which left black holes over
+  half the picture, or too mean for E1M6, which ran the zone out and
+  panicked.
+- Room for it came out of the debug build's flash: FatFs's formatting,
+  find, expand and string helpers are switched off, fatal errors print
+  through the compact printf rather than newlib's, and two config
+  parsers use `strtol` where they used `sscanf`, which was pulling in
+  12 KB of the scanf family.
+
 ## v0.5.9 (2026-09-14)
 
 - E1M6 gets the memory it needs. The previous build gave the zone about

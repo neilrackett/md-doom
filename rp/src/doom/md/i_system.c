@@ -196,8 +196,12 @@ void I_Error(const char *error, ...) {
   va_list argptr;
   va_start(argptr, error);
 #if defined(_DEBUG) && (_DEBUG != 0)
-  vfprintf(stderr, error, argptr);
-  fputc('\n', stderr);
+  /* MD/DOOM: vprintf, not vfprintf(stderr): the SDK substitutes its own
+   * compact printf for the former, while the latter drags in newlib's,
+   * and with it the floating-point formatter -- about 14 KB of flash
+   * for a line of text on a UART nobody is watching. */
+  vprintf(error, argptr);
+  putchar('\n');
 #endif
   va_end(argptr);
   /* Fatal: there is no console on the ST to show it on yet. Hand the
