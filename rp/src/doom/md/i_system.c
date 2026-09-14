@@ -64,11 +64,15 @@ void I_Tactile(int on, int off, int total) {
 /* Zone heap                                                           */
 
 /* The zone takes everything between the C heap's current break and the
- * top of RAM, minus a margin for what newlib still hands out afterwards
- * (FatFs opens a level pack with a ~2 KB transient buffer). Nothing
- * stops newlib growing past that margin, so keep boot-time allocations
- * before this point and the margin honest. */
-#define ZONE_HEAP_MARGIN 4096u
+ * top of RAM, minus a margin for what newlib still hands out afterwards.
+ * Once the zone exists almost nothing goes to newlib any more: malloc,
+ * calloc and realloc are wrapped into the zone, which is where FatFs's
+ * transient buffers come from too (the one at boot, before this runs,
+ * is already behind the break). What is left is realloc of a pointer
+ * older than the zone -- the settings library's, which does not grow in
+ * practice -- so 2 KB is the safety net rather than 4 KB. The zone is
+ * the tightest thing in the build; see the map costs in AGENTS.md. */
+#define ZONE_HEAP_MARGIN 2048u
 
 static uint8_t *s_zone_base;
 static uint8_t *s_zone_end;

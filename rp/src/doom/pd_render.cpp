@@ -325,10 +325,14 @@ const char *type_name(pd_column column) {
  * over. E1M6 is the biggest map in the episode and its level data
  * alone comes to about 31 KB (250 sectors, 1352 lines, a 1748-block
  * blockmap, 463 things), which would not fit a zone of the same size
- * -- it panicked with "out of memory" on hardware. 2400 puts the zone
- * near 38 KB, enough for E1M6 with room for the mobjs a firefight
- * spawns. Raising it again means finding the memory elsewhere. */
-#define RENDER_COL_MAX 2400
+ * -- it panicked with "out of memory" on hardware at 3000 columns
+ * (zone 31 KB) and again at 2400 (zone 36.8 KB, and it filled every
+ * byte). Every other map in the episode loads and plays. 1800 puts the
+ * zone near 46 KB, which is the figure upstream rp2040-doom quotes for
+ * its own busiest levels and so the best evidence there is for what
+ * ought to be enough. The proper fix is to stop dividing this by hand:
+ * see the backlog in AGENTS.md. */
+#define RENDER_COL_MAX 1800
 #else
 #define RENDER_COL_MAX 7200
 #endif

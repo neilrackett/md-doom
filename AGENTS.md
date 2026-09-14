@@ -233,11 +233,14 @@ player at the hardest skill:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | at load, KB | 10.3 | 21.6 | 23.6 | 16.8 | 18.4 | **31.4** | 22.3 | 13.9 | 16.3 |
 
-E1M6 is the only map that will not fit a 31 KB zone, which is exactly
-what panicked. Against ~38.5 KB it leaves ~7 KB for what play spawns
-(dropped items persist; puffs and blood do not). The per-level
-`DPRINTF` is the check on all of this: E1M1 should report about 28 KB
-free. Everything else the engine
+**The model ranks the maps correctly but reads low.** On hardware, every
+map except E1M6 loads and plays; E1M6 panicked with the zone at 31 KB
+and again at 36,864 B, where it filled *every byte* ("out of memory:
+wanted 36, 0 free"). So its real cost is at least 37 KB against a
+modelled 31.4 KB — treat these figures as a ranking, not a budget. The
+zone is now ~46 KB, which is what upstream rp2040-doom quotes for its
+own busiest levels. The per-level `DPRINTF` is the measurement that
+matters: it reports what was left after each load. Everything else the engine
 puts there is small: the lumps are memory-mapped from flash
 (`USE_ROWAD`, so even the blockmap and reject are pointers), and the
 status bar's backing screen is compiled out. Each level's `DPRINTF`
@@ -582,14 +585,24 @@ revisited in order of visible payoff.
   m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
   ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
   A faster blue-noise path (a per-row LUT slice) would close it.
-- **`RENDER_COL_MAX` 2400** (upstream 3600, and 3000 here until E1M6 ran
-  the zone out): very busy views drop columns to black, and the flat
-  cache gets fewer slots. Raise it only by finding the zone memory
-  somewhere else — the two come out of the same pool.
-- **Zone heap ~38 KB**, against E1M6's 31.3 KB of level data, so roughly
-  7 KB is left for the mobjs a firefight spawns. If a map panics with
-  "out of memory", the message names what was wanted and what was free,
-  and every level load reports its headroom.
+- **`RENDER_COL_MAX` 1800** (upstream 3600; 3000, then 2400 here, both
+  of which left E1M6 short): very busy views drop columns to black and
+  the flat cache gets fewer slots. **The right fix is to stop splitting
+  this by hand.** `list_buffer` is a static array and the zone is
+  whatever is left of RAM, so the split is fixed at build time for the
+  smallest map and the biggest alike — E1M1 needs 10 KB of zone and
+  E1M6 more than 37 KB. Handing the renderer whatever the level did
+  *not* use (allocate the column buffer from the zone at the end of
+  `P_SetupLevel`, sized to `Z_FreeMemory()` less a play margin) would
+  give E1M1 a huge column budget and E1M6 a small one, which is the
+  shape the problem actually has. `RENDER_COL_MAX` then only sets the
+  ceiling. The work is that `list_buffer` and the arrays cast over it
+  are static and sized by that macro throughout `pd_render.cpp`.
+- **Zone heap ~46 KB.** If a map panics with "out of memory", the
+  message names what was wanted and what was free, and every level load
+  reports its headroom. `ZONE_HEAP_MARGIN` is 2 KB: once the zone
+  exists, `malloc`/`calloc`/`realloc` are wrapped into it and newlib
+  hands out almost nothing more.
 - **A freeze on picking up a clip in E1M2** was seen once on v0.1.x and
   has not recurred since the park handshake and the deferred settings
   write were fixed (v0.2.2); not confirmed fixed.

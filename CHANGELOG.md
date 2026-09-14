@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.9 (2026-09-14)
+
+- E1M6 gets the memory it needs. The previous build gave the zone about
+  37 KB and E1M6 filled every byte of it before it was finished
+  building the level; every other map in the episode loads and plays.
+  The renderer's column budget goes from 2400 to 1800 and the heap
+  margin from 4 KB to 2 KB, which takes the zone to about 46 KB -- the
+  figure upstream quotes for its own busiest levels. Very busy views
+  may drop a few more columns to black in exchange.
+
 ## v0.5.8 (2026-09-14)
 
 - Starting on one of the bigger maps no longer dies. E1M6 was running
