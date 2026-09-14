@@ -61,5 +61,10 @@ void M_ClearMenus (void);
 extern uint8_t			inhelpscreens;
 extern isb_int8_t detailLevel;
 extern isb_int8_t screenblocks;
+#if MDDOOM
+/* Set when the main menu's Booster item is confirmed: I_Quit then hands
+ * the machine to the Booster instead of GEM. */
+extern boolean md_booster_quit;
+#endif
 
 #endif    

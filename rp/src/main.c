@@ -112,6 +112,14 @@ int main() {
     reset_jump_to_booster();
   }
 
+  // The same escape hatch from software: the game's "Booster" menu item
+  // reboots with this request set, so the jump is made from a clean
+  // machine rather than one with the cartridge emulation still running.
+  if (reset_booster_requested()) {
+    DPRINTF("Booster requested before this reboot. Jump to Booster\n");
+    reset_jump_to_booster();
+  }
+
   DPRINT_HEAP();  // Boot heap diagnosis -- see debug.h.
 
   // Load the global configuration parameters

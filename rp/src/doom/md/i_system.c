@@ -38,9 +38,14 @@
 #include "w_wad.h"
 #include "z_zone.h"
 
+#include "pico/multicore.h"
+
+#include "audio.h"
 #include "debug.h"
+#include "doom/m_menu.h"
 #include "fb.h"
 #include "ikbd.h"
+#include "reset.h"
 
 extern void I_InputInit(void);
 
@@ -141,10 +146,39 @@ void I_PrintStartupBanner(const char *gamedescription) {
 
 void I_Init(void) { I_InputInit(); }
 
+/* Leave for the Booster (the main menu's "Booster" item). The ST has to
+ * be out of the cartridge code before the RP stops serving it, so: ask
+ * the m68k to reset, give it far longer than the one VBL it needs to
+ * see the command and jump through the reset vector, then hand the RP
+ * over. The ST is in its cold-boot memory test by then and does not
+ * look at the cartridge again until well after the Booster has claimed
+ * it. The RP does not jump to the Booster from here: it reboots with
+ * the request set (reset_reboot_to_booster) so main() makes the jump
+ * from a clean machine, which is the only way the Booster has ever
+ * been entered. Core 1 is stopped first so it cannot run this app's
+ * code across the reset. */
+static void __attribute__((noreturn)) quit_to_booster(void) {
+  DPRINTF("I_Quit: over to the Booster\n");
+  for (int i = 0; i < 20; i++) { /* ~400 ms of asking */
+    ikbd_request_reset();
+    fb_pump_rom3();
+    sleep_ms(20);
+  }
+  audio_stop_vbl_timer();
+  multicore_reset_core1();
+  reset_reboot_to_booster(); /* does not return */
+  for (;;) {
+    tight_loop_contents();
+  }
+}
+
 /* Quit: tell the m68k to return to GEM and idle. Nothing on the RP side
  * needs tearing down -- the ST takes its screen back and the cartridge
  * keeps serving the (now static) framebuffer. */
 void __attribute__((noreturn)) I_Quit(void) {
+#if MDDOOM
+  if (md_booster_quit) quit_to_booster();
+#endif
   DPRINTF("I_Quit: back to GEM\n");
   for (;;) {
     ikbd_request_boot_gem();

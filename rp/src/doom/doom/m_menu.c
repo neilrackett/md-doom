@@ -215,6 +215,7 @@ static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
 #if MDDOOM
 static void M_StartLevel(int choice);
+static void M_QuitToBooster(int choice);
 #endif
 #if !NO_USE_LOAD
 static void M_LoadGame(int choice);
@@ -298,6 +299,9 @@ enum
 #endif
     readthis,
     quitdoom,
+#if MDDOOM
+    boosterexit, /* MD/DOOM: quit, but to the Booster */
+#endif
     main_end
 } main_e;
 
@@ -313,7 +317,12 @@ static menuitem_t MainMenu[]=
 #endif
     // Another hickup with Special edition.
     {1,VPATCH_NAME(M_RDTHIS), 'r', M_ReadThis},
-    {1,VPATCH_NAME(M_QUITG),'q',M_QuitDOOM}
+    {1,VPATCH_NAME(M_QUITG),'q',M_QuitDOOM},
+#if MDDOOM
+    /* MD/DOOM: no menu graphic for this one, so M_DrawMainMenu writes
+     * the text; an invalid patch name draws nothing. */
+    {1,VPATCH_NAME_INVALID,'b',M_QuitToBooster},
+#endif
 };
 
 menu_t  MainDef =
@@ -1108,6 +1117,12 @@ void M_DrawMainMenu(void)
 {
     V_DrawPatchDirect(94, 2,
                       VPATCH_HANDLE(VPATCH_NAME(M_DOOM)));
+#if MDDOOM
+    /* The Booster item has no menu graphic; it is always the last one,
+     * wherever M_Init's shuffling leaves it. */
+    M_WriteText(MainDef.x, MainDef.y + LINEHEIGHT * (MainDef.numitems - 1),
+		"Booster");
+#endif
 }
 
 
@@ -1592,6 +1607,29 @@ static const char *M_SelectEndMessage(void)
     return endmsg[gametic % NUM_QUITMESSAGES];
 }
 
+
+#if MDDOOM
+/* MD/DOOM: quit, but to the Booster rather than to GEM. Everything the
+ * quit does -- the message, the sound, deferring the exit to the main
+ * loop -- is the quit's; only where it lands differs, and I_Quit reads
+ * this flag to decide. */
+boolean md_booster_quit;
+
+static boolean M_BoosterResponse(int key)
+{
+    if (key != key_menu_confirm)
+	return false;
+    md_booster_quit = true;
+    return M_QuitResponse(key);
+}
+
+void M_QuitToBooster(int choice)
+{
+    choice = 0;
+    M_StartMessage2("Leave the game for the Booster?",
+		    M_BoosterResponse, true, "\n" DOSY);
+}
+#endif
 
 void M_QuitDOOM(int choice)
 {
@@ -2674,6 +2712,10 @@ void M_Init (void)
     if (gamemode == commercial || MDDOOM)
     {
         MainMenu[readthis] = MainMenu[quitdoom];
+#if MDDOOM
+        /* Keep Booster below Quit as the items shuffle up. */
+        MainMenu[quitdoom] = MainMenu[boosterexit];
+#endif
         MainDef.numitems--;
         MainDef.y += 8;
         NewDef.prevMenu = &MainDef;

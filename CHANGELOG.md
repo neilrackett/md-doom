@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.4 (2026-09-14)
+
+- A **Booster** item below Quit Game on the main menu. It asks the same
+  way Quit does and then restarts the ST into the SidecarT Booster,
+  which saves powering off and holding the SELECT button. The handover
+  is ordered so the ST is never reading a cartridge that is being
+  replaced: the m68k restores the machine and jumps through the reset
+  vector, and only once it is away in its memory test does the RP2040
+  reboot itself into the Booster.
+
 ## v0.5.2 (2026-09-14)
 
 - Mouse buttons work. The right button fires and the left button held

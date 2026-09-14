@@ -108,6 +108,14 @@ void ikbd_set_esc_auto_exit(bool enabled);
  * this to exit on their own trigger -- e.g. an "Exit" menu item. */
 void ikbd_request_boot_gem(void);
 
+/* Request a reset of the ST by writing CMD_RESET to the cart sentinel.
+ * userfw.s restores the machine as it does for CMD_BOOT_GEM and then
+ * jumps through the reset vector instead of returning to GEM. Use it
+ * when the RP is about to stop serving this app's cartridge image --
+ * the ST has to be somewhere else by then, and its cold-boot memory
+ * test is the cover. */
+void ikbd_request_reset(void);
+
 /* Re-arm the command sentinel to CMD_NOP. Call once per main-loop
  * iteration so a BOOT_GEM posted by ikbd_request_boot_gem() is a
  * one-shot: userfw consumes it during the exit frame's fb_publish, then

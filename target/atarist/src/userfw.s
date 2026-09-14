@@ -203,6 +203,7 @@ FB_FRAME_COUNTER      equ $00FA400C
 ; with main.s's CMD_MAGIC_SENTINEL_ADDR / CMD_BOOT_GEM equs.
 CMD_MAGIC_SENTINEL    equ $00FA4000
 CMD_BOOT_GEM          equ 2
+CMD_RESET             equ 1
 
 ; 16-entry ST palette slot. 32 bytes of palette words
 ; published by the RP; .vbl_loop applies them to PALETTE_BASE each
@@ -1048,14 +1049,22 @@ userfw:
     tst.b   VBLSYNC_ADDR
 
 .input_check:
-    ; ESC detection: the RP-side IKBD demux writes
-    ; CMD_BOOT_GEM into CMD_MAGIC_SENTINEL on ESC press. Any other
-    ; sentinel value (NOP, future commands) leaves the loop running.
+    ; The RP writes CMD_BOOT_GEM into CMD_MAGIC_SENTINEL to be handed
+    ; the machine back (ESC, or Quit from the game's menu), and
+    ; CMD_RESET to have the ST restarted -- which is how it leaves for
+    ; the Booster: the RP jumps to the Booster app while the ST is busy
+    ; rebooting, so the Booster's cartridge code is what the ST finds
+    ; when it looks. Any other value (NOP, future commands) leaves the
+    ; loop running. D0 carries the command through the restore below,
+    ; which uses no data registers.
     move.l  CMD_MAGIC_SENTINEL, d0
     cmp.l   #CMD_BOOT_GEM, d0
+    beq.s   .exit_requested
+    cmp.l   #CMD_RESET, d0
     bne     .vbl_loop
 
-    ; --- ESC pressed: restore IRQ state and return to TOS ---------
+.exit_requested:
+    ; --- Restore IRQ state and hand the machine back ---------------
     ;
     ; Mask interrupts before touching MFP / vectors.
     ori.w   #$0700, sr
@@ -1097,6 +1106,22 @@ userfw:
     ; From here on TOS handles HBL / Timer / ACIA again -- IKBD will
     ; re-pump GEMDOS's keyboard buffer, GEM mouse cursor revives, etc.
     move.w  #$2300, sr
+
+    ; CMD_RESET: restart the machine instead of returning to GEM. No
+    ; delay here, unlike main.s's .reset -- that one runs from the RAM
+    ; copy of the boot code, but this runs from the cartridge itself,
+    ; which the RP is about to replace with the Booster's. Get out of
+    ; it now and let the ST's memory test (the cleared $420 forces a
+    ; cold boot, which is the slow one) cover the RP's jump.
+    cmp.l   #CMD_RESET, d0
+    bne.s   .back_to_gem
+    clr.l   $420.w                    ; invalidate memvalid
+    clr.l   $43A.w                    ; and memval2
+    clr.l   $51A.w                    ; and memval3
+    move.l  $4.w, a0                  ; the reset vector
+    jmp     (a0)
+
+.back_to_gem:
 
     ; Restore screen base via XBIOS Setscreen.
     move.w  #-1, -(sp)                ; no rez change

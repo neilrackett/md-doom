@@ -110,6 +110,12 @@ void ikbd_request_boot_gem(void) {
       cart_asM68kLong(CART_CMD_BOOT_GEM);
 }
 
+void ikbd_request_reset(void) {
+  *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
+                          CART_CMD_SENTINEL_OFFSET)) =
+      cart_asM68kLong(CART_CMD_RESET);
+}
+
 void ikbd_clear_command(void) {
   /* Re-arm the command sentinel to NOP. ikbd_request_boot_gem() posts
    * BOOT_GEM here for userfw to consume, but the m68k can't write it

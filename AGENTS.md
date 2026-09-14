@@ -368,6 +368,21 @@ The deltas are scaled on the way through (`MD_MOUSE_TURN_SCALE` 8,
 counts an inch and Doom turns eight angle units per count, so unscaled
 a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
 at its default so those two are the only numbers to tune.
+- **Main menu → Booster** (`m_menu.c`, `#if MDDOOM`) quits to the
+  Booster instead of GEM. It reuses `M_QuitResponse` for the message,
+  the sound and the deferred exit, and only sets `md_booster_quit`,
+  which `I_Quit` reads. Getting there is a three-step handover, and the
+  order matters: the RP posts `CMD_RESET` to the sentinel, `userfw.s`
+  restores the machine as it does for `CMD_BOOT_GEM` and then jumps
+  through the ST's reset vector (no delay — unlike `main.s`'s `.reset`
+  it is running *from the cartridge*, which is about to be replaced,
+  and the cleared `$420` forces the slow cold boot that covers the
+  rest); the RP keeps asking for ~400 ms so the m68k cannot miss it,
+  then stops Core 1 and reboots itself with
+  `reset_reboot_to_booster()`, which leaves a magic value in watchdog
+  scratch 0 that `main.c` acts on. **Do not jump straight to the
+  Booster from a running app** — the only proven entry is `main()`'s,
+  before this app's PIO, DMA and second core exist.
 - **Options → Start level** (`m_menu.c`, `#if MDDOOM`) picks the map a
   new game begins on, for testing without playing through. It has no
   menu graphic, so `M_DrawOptions` writes the text and the item carries
