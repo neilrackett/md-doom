@@ -2,9 +2,9 @@ name: PR
 
 # Does it build? That is the whole job. This runs the same `make` as
 # release.yml, so a PR that would break the release fails here instead,
-# but it tags nothing, publishes nothing and keeps no artifacts. The
-# host tests come first because they need only a C compiler: a broken
-# block layout fails in seconds rather than after two toolchains.
+# but it tags nothing, publishes nothing and keeps no artifacts. There
+# is no host test suite in this repo -- verification is a build, a UF2
+# that boots and the serial log; see AGENTS.md.
 
 on:
   pull_request:
@@ -35,13 +35,6 @@ jobs:
       # `submodules: true` clones every submodule at depth 1, and a
       # shallow pico-sdk has no tags for rp/build.sh to pin to.
       run: git submodule update --init lib/xpad
-
-    - name: Host tests
-      # rp/test builds against xpad/src/xpad.h from the submodule rather
-      # than a copy, so a bump cannot leave the two disagreeing about the
-      # block layout. Needs nothing but the compiler already on the
-      # runner: stub/ stands in for the Pico SDK headers.
-      run: make -C rp/test test
 
     - name: Set up Python
       # target/atarist/build.sh runs a bare "python", which ubuntu-latest
