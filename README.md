@@ -39,15 +39,34 @@ Controls match the original PC Doom:
 | 1 to 7          | Weapons                                                                            |
 | Esc             | Menu                                                                               |
 | Tab             | Automap                                                                            |
-| F1 to F10       | Help, save, load, volume, detail, quick-save, end game, messages, quick-load, quit |
+| F1 to F10       | Help (not supported), save (not supported), load (not supported), volume, detail (not supported), quick-save (not supported), end game, messages, quick-load (not supported), quit |
 | Help            | Gamma (F11 on a PC)                                                                |
 | Undo            | Pause                                                                              |
-| - and +         | Screen size                                                                        |
+| - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
-A joystick in port 1 moves, turns and fires.
+A joystick in port 1 moves, turns and fires. The mouse turns and walks,
+with the **right** button to fire and the **left** button held to
+strafe.
 
-Quit from the menu (or pressing F10) returns you to GEM.
+The mouse buttons are the other way round to a PC because of an ST
+quirk: inside the machine, the right mouse button and the joystick's
+fire button are the same wire, and while the mouse is switched on the
+keyboard chip reports that wire as the right mouse button and never as
+the joystick's trigger. So the right button has to be fire, or a
+joystick could not shoot, and strafe goes to the left button instead.
+
+Quit Game asks where to go: **Y** returns you to the desktop and **B**
+restarts your ST into the SidecarT Booster, which saves powering off
+and holding the SELECT button.
+
+Quit from the menu (or pressing F10) asks whether to return to GEM or
+go to the Booster.
+
+The full screen size gives you the whole 320×200 for the game at the
+cost of the status bar, exactly as the original did at its largest
+setting; your choice is remembered. The sizes in between are not
+available, because this renderer cannot draw a narrower view.
 
 Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
 Colour palettes: STDOOM (default), generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.

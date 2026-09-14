@@ -29,7 +29,10 @@ extern "C" {
 #include "doom/f_finale.h"
 #include "v_video.h"
 #include "i_video.h"
+#include "z_zone.h"
 }
+
+#include "debug.h" /* MD/DOOM: work-area reporting */
 // todo compare with and without
 #define USE_XIPCPY 0
 #if PICO_ON_DEVICE
@@ -319,14 +322,45 @@ const char *type_name(pd_column column) {
 }
 
 #if !PICO_RP2350
-#define RENDER_COL_MAX 3000 /* MD/DOOM: 3600 upstream; RAM */
+/* MD/DOOM: the renderer's work area is not a static array here; it is
+ * taken from the Doom zone once the level is in, and it is only ever
+ * whatever the level did not need.
+ *
+ * Upstream gives it 3600 columns of 12 bytes, plus one flat, and what
+ * remains of RAM becomes the zone. That split is fixed at build time,
+ * which is the wrong shape for this machine: 64 KB of its RAM is the
+ * cartridge the ST reads, so there is not enough left to satisfy both
+ * the biggest map and a full column budget at once. E1M1's level data
+ * is about 12 KB and E1M6's is over 37 KB, so any single split is
+ * either too mean for E1M1 (columns discarded, black holes in the
+ * picture) or too mean for E1M6 (the zone runs out and the game
+ * panics). Both were tried on hardware; both happened.
+ *
+ * So `pd_alloc_work_area` runs at the end of `P_SetupLevel`, when the
+ * level's own allocations are all in, and takes what is left bar a
+ * reserve for what play spawns. Small maps get the full upstream
+ * budget; the biggest map gets what it can. RENDER_COL_MAX is only the
+ * ceiling now, and `render_col_max` is the figure in force. */
+#define RENDER_COL_MAX 3600
 #else
 #define RENDER_COL_MAX 7200
 #endif
-static uint8_t __aligned(4) list_buffer[RENDER_COL_MAX * sizeof(pd_column) + 64*64]; // extra 64*64 is for one flat
-static uint8_t *last_list_buffer_limit = list_buffer + sizeof(list_buffer);
+/* One flat (64x64) has to fit above the columns whatever happens. */
+#define PD_WORK_AREA_MAX ((int)(RENDER_COL_MAX * sizeof(pd_column)) + 64*64)
+#define PD_WORK_AREA_MIN ((int)(500 * sizeof(pd_column)) + 64*64)
+/* Left in the zone for what play allocates on top of the level: the
+ * mobjs a firefight spawns, dropped items, the door and platform
+ * thinkers a level's specials start, and the 4 KB the settings library
+ * takes transiently when a setting is saved. */
+#define PD_ZONE_RESERVE (10 * 1024)
+
+static uint8_t *list_buffer;
+static int list_buffer_bytes;
+static int render_col_max;
+static uint8_t *last_list_buffer_limit;
+extern "C" void pd_alloc_work_area(void); /* called from P_SetupLevel */
 //static_assert(text_font_cpy > list_buffer, "");
-#define MAX_CACHED_FLATS (sizeof(list_buffer) / 4096)
+#define MAX_CACHED_FLATS (PD_WORK_AREA_MAX / 4096)
 static uint8_t cached_flat_picnum[MAX_CACHED_FLATS];
 static uint8_t cached_flat_slots;
 static uint8_t *cached_flat0;
@@ -337,7 +371,7 @@ static int16_t render_col_free;
 
 static int16_t alloc_pd_column(int x) {
     if (render_col_free < 0) {
-        if (render_col_count == RENDER_COL_MAX) {
+        if (render_col_count == render_col_max) {
             assert(x>=0 && x<SCREENWIDTH);
             not_fully_covered_cols[x/(4*32)] |= 1u << ((x/4)&31);
             return -1;
@@ -791,7 +825,7 @@ void pd_begin_frame() {
     memset(visplane_bit, 0, sizeof(visplane_bit)); // todo could do this with dma
     for(uint i=0;i<count_of(not_fully_covered_cols);i++) not_fully_covered_cols[i] = 0; // only 3 of these so loop
     not_fully_covered_yl = 0;
-    not_fully_covered_yh = MAIN_VIEWHEIGHT - 1;
+    not_fully_covered_yh = viewheight - 1; /* MD/DOOM: the size in use, not the maximum */
     render_col_count = 0;
     render_col_free = -1;
     pd_frame++;
@@ -821,6 +855,9 @@ static void interp_init() {
 }
 
 void pd_init() {
+    /* MD/DOOM: something to render the title screen with, until the
+     * first level's P_SetupLevel works out what it can really spare. */
+    pd_alloc_work_area();
     sem_init(&core1_wake, 0, 1);
     sem_init(&core0_done, 0, 1);
     sem_init(&core1_done, 0, 1);
@@ -2370,7 +2407,9 @@ static void draw_fuzz_columns() {
             assert(yl <= MAIN_VIEWHEIGHT);
             assert(yh <= MAIN_VIEWHEIGHT);
             if (yl == 0) yl = 1;
-            if (yh >= MAIN_VIEWHEIGHT - 1) yh = MAIN_VIEWHEIGHT - 2;
+            /* MD/DOOM: the size in use, so the fuzz never samples the
+             * row past the bottom of the view (it reads p[+-1]). */
+            if (yh >= viewheight - 1) yh = viewheight - 2;
 
             if (yl <= yh) {
                 uint8_t *p = screen_col + yl * SCREENWIDTH;
@@ -2483,7 +2522,7 @@ void draw_stbar_on_framebuffer(int frame, boolean refresh) {
 
 static void draw_framebuffer_patches_fullscreen() {
     V_RestoreBuffer();
-    vpatch_clip_bottom = MAIN_VIEWHEIGHT;
+    vpatch_clip_bottom = STATUS_BAR_TOP; /* MD/DOOM: band boundary, not view height */
     V_DrawPatchList(vpatchlists->framebuffer);
     I_VideoBuffer = frame_buffer[0] /* MD/DOOM: rows 168.. are real */;
     V_RestoreBuffer();
@@ -2496,10 +2535,10 @@ static void draw_framebuffer_patches_fullscreen() {
 
 void draw_fullscreen_background(int top, int bottom) {
     assert(top < bottom);
-    assert((top < MAIN_VIEWHEIGHT && bottom <= MAIN_VIEWHEIGHT) ||
-           (top >= MAIN_VIEWHEIGHT && bottom > MAIN_VIEWHEIGHT));
+    assert((top < STATUS_BAR_TOP && bottom <= STATUS_BAR_TOP) ||
+           (top >= STATUS_BAR_TOP && bottom > STATUS_BAR_TOP));
     int patch_num = 0;
-    byte *top_pixel = top < MAIN_VIEWHEIGHT ? render_frame_buffer + top * SCREENWIDTH :
+    byte *top_pixel = top < STATUS_BAR_TOP ? render_frame_buffer + top * SCREENWIDTH :
                         frame_buffer[0] + top * SCREENWIDTH /* MD/DOOM */;
     switch (gamestate) {
         case GS_INTERMISSION:
@@ -2557,7 +2596,7 @@ void draw_fullscreen_background(int top, int bottom) {
         // need to draw the initial text
         V_BeginPatchList(vpatchlists->framebuffer);
         WI_Drawer();
-        if (top >= MAIN_VIEWHEIGHT) {
+        if (top >= STATUS_BAR_TOP) {
             I_VideoBuffer = frame_buffer[0] /* MD/DOOM: rows 168.. are real */;
         }
         V_RestoreBuffer();
@@ -2633,7 +2672,7 @@ void pd_end_frame(int wipe_start) {
 
     DEBUG_PINS_SET(full_render, 1);
 
-    uint8_t *list_buffer_limit = list_buffer + count_of(list_buffer);
+    uint8_t *list_buffer_limit = list_buffer + list_buffer_bytes;
     if (!inhelpscreens) {
         if (was_in_help) {
 //            // todo graham, wtf this was a complete guess - why should this be necessary, and if so why
@@ -2651,13 +2690,13 @@ void pd_end_frame(int wipe_start) {
                         render_frame_index ^= 1;
                         render_frame_buffer = frame_buffer[render_frame_index];
                         I_VideoBuffer = render_frame_buffer;
-                        draw_fullscreen_background(0, MAIN_VIEWHEIGHT - 32);
+                        draw_fullscreen_background(0, STATUS_BAR_TOP - 32);
                     }
                     if (next_video_type == VIDEO_TYPE_DOUBLE) {
                         // coming from level already, so draw statusbar
                         draw_stbar_on_framebuffer(render_frame_index, false); // argh it is the wrong status bar
                     }
-                    clip_columns(0, MAIN_VIEWHEIGHT - 32 -
+                    clip_columns(0, STATUS_BAR_TOP - 32 -
                                     1); // note this is a noop in non GS_LEVEL so don't bother to add if
                     next_video_type = VIDEO_TYPE_WIPE;
                     // steal space for our wipe data structures
@@ -2682,11 +2721,11 @@ void pd_end_frame(int wipe_start) {
                     base = 0;
 #endif
                     for (int i = 0; i < SCREENHEIGHT; i++) {
-                        if (i < MAIN_VIEWHEIGHT)
-                            wipe_linelookup[i] = base + screen_front * SCREENWIDTH * MAIN_VIEWHEIGHT + i * SCREENWIDTH;
+                        if (i < STATUS_BAR_TOP)
+                            wipe_linelookup[i] = base + screen_front * SCREENWIDTH * STATUS_BAR_TOP + i * SCREENWIDTH;
                         else
                             wipe_linelookup[i] =
-                                    base + (screen_front ^ 1) * SCREENWIDTH * MAIN_VIEWHEIGHT + (i - 32) * SCREENWIDTH;
+                                    base + (screen_front ^ 1) * SCREENWIDTH * STATUS_BAR_TOP + (i - 32) * SCREENWIDTH;
                     }
                     wipestate = WIPESTATE_SKIP1;
                     wipe_min = 0;
@@ -2699,10 +2738,10 @@ void pd_end_frame(int wipe_start) {
             }
             case WIPESTATE_REDRAW1: {
                 // we need to render the bottom of the screen
-                clip_columns(MAIN_VIEWHEIGHT - 32,
-                             MAIN_VIEWHEIGHT - 1); // note this is a noop in non GS_LEVEL so don't bother to add if
+                clip_columns(STATUS_BAR_TOP - 32,
+                             STATUS_BAR_TOP - 1); // note this is a noop in non GS_LEVEL so don't bother to add if
                 if (gamestate != GS_LEVEL) {
-                    draw_fullscreen_background(MAIN_VIEWHEIGHT - 32, MAIN_VIEWHEIGHT);
+                    draw_fullscreen_background(STATUS_BAR_TOP - 32, STATUS_BAR_TOP);
                 }
                 wipestate = WIPESTATE_SKIP2;
                 break;
@@ -2715,7 +2754,7 @@ void pd_end_frame(int wipe_start) {
                 if (gamestate == GS_LEVEL) {
                     draw_stbar_on_framebuffer(render_frame_index ^ 1, true);
                 } else {
-                    draw_fullscreen_background(MAIN_VIEWHEIGHT, SCREENHEIGHT);
+                    draw_fullscreen_background(STATUS_BAR_TOP, SCREENHEIGHT);
                 }
                 wipestate = WIPESTATE_SKIP3;
                 break;
@@ -2750,7 +2789,7 @@ void pd_end_frame(int wipe_start) {
 //        printf("THIS IS A PROBLEM LIMIT TO %d cols\n", render_col_limit);
         new_cache_flat_slots = 1;
         uh_oh_discard_columns(render_col_limit);
-    } else if (render_col_count == RENDER_COL_MAX) {
+    } else if (render_col_count == render_col_max) {
         static int foo;
 //        printf("OOPS MAXXED OUT %d\n", foo++);
     }
@@ -2828,7 +2867,7 @@ void pd_end_frame(int wipe_start) {
                     if (automapactive)
                         AM_Drawer();
                     // goes into overlay set above
-                    ST_Drawer(false, !pre_wipe_state);
+                    ST_Drawer(viewheight == SCREENHEIGHT, !pre_wipe_state); /* MD/DOOM: full screen hides the bar */
                     sub_gamestate = 0;
                     next_video_type = VIDEO_TYPE_DOUBLE;
                 }
@@ -3017,6 +3056,35 @@ void th_bit_overrun(th_bit_input *bi) {
 uint8_t *pd_get_work_area(uint32_t *size) {
     *size = last_list_buffer_limit - list_buffer;
     return list_buffer;
+}
+
+/* MD/DOOM: hand the renderer a new work area. Everything derived from
+ * the old one is dropped: the flat cache is addressed from the top of
+ * the buffer, and pd_end_frame reworks it from these two limits. */
+static void pd_set_work_area(uint8_t *buf, int bytes) {
+    list_buffer = buf;
+    list_buffer_bytes = bytes;
+    last_list_buffer_limit = buf + bytes;
+    render_col_max = (bytes - 64*64) / (int)sizeof(pd_column);
+    if (render_col_max > RENDER_COL_MAX) render_col_max = RENDER_COL_MAX;
+    cached_flat0 = NULL; /* forces the picnum cache to be thrown away */
+    cached_flat_slots = 0;
+    render_col_count = 0;
+    render_col_free = -1;
+}
+
+/* Take what the level left, bar the reserve, and never more than the
+ * ceiling or less than the floor. Called at the end of P_SetupLevel and
+ * once at startup for the screens that come before any level. The block
+ * is PU_LEVEL, so the next level's Z_FreeTags hands it back before that
+ * level is built and this runs again with the new figures. */
+extern "C" void pd_alloc_work_area(void) {
+    int avail = Z_LargestFreeBlock() - PD_ZONE_RESERVE;
+    if (avail > PD_WORK_AREA_MAX) avail = PD_WORK_AREA_MAX;
+    if (avail < PD_WORK_AREA_MIN) avail = PD_WORK_AREA_MIN;
+    uint8_t *buf = (uint8_t *)Z_Malloc(avail, PU_LEVEL, 0);
+    pd_set_work_area(buf, avail);
+    DPRINTF("render: %d cols, zone free %d\n", render_col_max, Z_FreeMemory());
 }
 
 #if !DEMO1_ONLY

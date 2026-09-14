@@ -22,6 +22,7 @@
 
 #include "config.h"
 #include "doom/doomstat.h"
+#include "doom/m_menu.h"
 #include "doom/r_data.h"
 #include "doom/sounds.h"
 #include "doomtype.h"
@@ -31,6 +32,7 @@
 #include "whddata.h"
 
 #include "aconfig.h"
+#include "audio.h"
 #include "bg_mono.h" /* the 1-bit backdrop, defined here and only here */
 #include "debug.h"
 #include "doom_video.h"
@@ -136,11 +138,25 @@ static void program_pack(const char *map) {
   snprintf(path, sizeof(path), "%s/%s.whx", s_folder, map);
   s_loading_map = map;
   loading_screen(map, 0, 0);
+
+  /* Silence for the duration, and not only for quiet's sake. The mixer
+   * reads its samples straight out of the pack window over XIP, and
+   * that window is about to be erased; it also runs from an interrupt
+   * on Core 1, which pack_load parks around every flash call. Stopping
+   * the timer takes it out of the picture entirely, and it zeroes the
+   * cart audio buffer on the way out, so the ST plays silence rather
+   * than looping whatever was left in there -- the erase alone holds
+   * the refill off for about a second, which is a second of buzz. */
+  const int audio_core = audio_vbl_timer_core();
+  audio_stop_vbl_timer();
+
   if (!pack_load(path, progress)) {
     DPRINTF("cannot load %s\n", path);
-    missing_pack_screen(map);
+    missing_pack_screen(map); /* never returns; leave the sound off */
   }
   read_pack_map();
+
+  if (audio_core >= 0) audio_start_vbl_timer(audio_core);
 }
 
 void I_MD_LoadLevelPack(int ep, int mp) {
@@ -156,6 +172,10 @@ void I_MD_LoadLevelPack(int ep, int mp) {
   /* Re-point everything resolved against the previous pack. */
   W_AddFile("");
   R_InitData();
+  /* F_SKY1 was numbered against the pack that has just gone; see
+   * G_MD_ResolveSkyFlat. */
+  extern void G_MD_ResolveSkyFlat(void);
+  G_MD_ResolveSkyFlat();
   for (int i = 1; i < NUMSFX; i++) {
     sfx_mut(&S_sfx[i])->lumpnum = -1;
   }
@@ -184,7 +204,9 @@ void doomgame_start(const char *folder) {
     program_pack("E1M1");
   }
 
-  /* The dither and palette chosen last time (keypad * and /). */
+  /* The dither, palette and screen size chosen last time (keypad * and
+   * /, and - and +). The size has to be in before R_Init, which sizes
+   * the view from it. */
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DITHER);
     int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
@@ -192,6 +214,9 @@ void doomgame_start(const char *folder) {
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_PALETTE);
     v = e ? atoi(e->value) : (int)DOOM_VIDEO_PAL_SUBSET;
     if (v >= 0 && v < (int)DOOM_VIDEO_PAL_COUNT) doom_video_set_palette_mode((doom_video_palette_t)v);
+    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
+    v = e ? atoi(e->value) : 10;
+    screenblocks = (v >= 11) ? 11 : 10;
   }
 
   DPRINTF("D_DoomMain\n");
@@ -214,6 +239,7 @@ void I_MD_FlushVideoSettings(void) {
   SettingsContext *ctx = aconfig_getContext();
   settings_put_integer(ctx, ACONFIG_PARAM_DITHER, (int)doom_video_get_dither());
   settings_put_integer(ctx, ACONFIG_PARAM_PALETTE, (int)doom_video_get_palette_mode());
+  settings_put_integer(ctx, ACONFIG_PARAM_SCRNSIZE, (int)screenblocks);
   fb_core1_park();
   settings_save(ctx, true);
   fb_core1_unpark();

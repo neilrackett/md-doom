@@ -954,7 +954,12 @@ boolean setsizeneeded;
 int setblocks;
 int setdetail;
 #else
-#define setblocks 10
+/* MD/DOOM: upstream fixed this at 10 (the 168-row view with the status
+ * bar below it) because it had no way to change it. The screen size
+ * keys pick between that and 11, the full 200-row view with no status
+ * bar; nothing else is renderable here, since a narrower view needs
+ * tables this build leaves out. */
+int setblocks = 10;
 #define setdetail 0
 #endif
 
@@ -967,6 +972,9 @@ R_SetViewSize
 #if !DOOM_TINY
     setblocks = blocks;
     setdetail = detail;
+#else
+    setblocks = (blocks >= 11) ? 11 : 10;
+    (void)detail;
 #endif
 }
 

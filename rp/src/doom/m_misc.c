@@ -339,10 +339,17 @@ void M_ExtractFileBase(const char *path, char *dest)
 
 boolean M_StrToInt(const char *str, int *result)
 {
-    return sscanf(str, " 0x%x", result) == 1
-        || sscanf(str, " 0X%x", result) == 1
-        || sscanf(str, " 0%o", result) == 1
-        || sscanf(str, " %d", result) == 1;
+    /* MD/DOOM: strtol rather than sscanf; see ParseIntParameter. Base 0
+     * takes 0x as hex and a leading 0 as octal, as the four patterns
+     * below it did, and end != str is the "did it parse" test. */
+    char *end;
+    long value;
+
+    while (*str == ' ') str++;
+    value = strtol(str, &end, 0);
+    if (end == str) return false;
+    *result = (int)value;
+    return true;
 }
 
 

@@ -28,7 +28,17 @@
 #define SCREENWIDTH  320
 #define SCREENHEIGHT 200
 #if DOOM_TINY
-#define MAIN_VIEWHEIGHT (SCREENHEIGHT - 32 /* ST_HEIGHT */)
+/* MD/DOOM: these two were one constant upstream, where the view is
+ * always 168 rows and the status bar always occupies the 32 below it.
+ * The screen size control (- and +) makes the view either 168 or 200
+ * rows, so the two meanings had to be told apart:
+ *   MAIN_VIEWHEIGHT  the tallest the 3D view can be -- what the
+ *                    renderer's buffers and clipping are sized for.
+ *                    `viewheight` is the height in use right now.
+ *   STATUS_BAR_TOP   the first row the status bar overlay covers,
+ *                    which never moves. */
+#define MAIN_VIEWHEIGHT SCREENHEIGHT
+#define STATUS_BAR_TOP (SCREENHEIGHT - 32 /* ST_HEIGHT */)
 #endif
 
 // Screen height used when aspect_ratio_correct=true.

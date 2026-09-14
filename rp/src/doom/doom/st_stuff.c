@@ -772,7 +772,11 @@ void ST_drawWidgets(boolean refresh)
     st_fragson = deathmatch && st_statusbaron;
 
 #if DOOM_TINY
-    V_DrawPatch(0, ST_FACESY, sbar);
+    /* MD/DOOM: the widgets below each take st_statusbaron as their "on"
+     * flag, but the bar itself was drawn whatever happened, so the full
+     * screen size had nothing to show. */
+    if (st_statusbaron)
+        V_DrawPatch(0, ST_FACESY, sbar);
 #if USE_PICO_NET
     static vpatch_handle_small_t fb;
     if (refresh) fb = netgame ? VPATCH_NAME(STFB0) + consoleplayer : 0;

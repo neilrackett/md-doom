@@ -42,6 +42,7 @@
 #include "i_timer.h"
 #include "i_video.h"
 #include "picodoom.h"
+#include "tables.h"
 #include "v_video.h"
 #include "w_wad.h"
 #include "whddata.h"
@@ -67,6 +68,7 @@ uint8_t *const frame_buffer[2] = {fb_chunked_buffer, fb_chunked_buffer};
 
 static int8_t next_pal = -1;
 static int8_t shown_pal = -1;
+static int8_t shown_gamma = -1;
 static const uint8_t *s_playpal; /* page 0 in the current pack */
 
 semaphore_t render_frame_ready, display_frame_freed;
@@ -147,12 +149,29 @@ static void apply_palette(int pal) {
       *dst++ = (uint8_t)b;
     }
   }
+  /* Gamma correction (F11), applied last, to the tinted page, the way
+   * the original's I_SetPalette does. The tiny build's gammatable drops
+   * the identity row, so level 1..4 is row 0..3 and level 0 is "leave
+   * it alone". */
+  if (usegamma > 0) {
+    const byte *g = gammatable[(usegamma > 4 ? 4 : usegamma) - 1];
+    for (size_t i = 0; i < sizeof(page); i++) page[i] = g[page[i]];
+  }
+
   doom_video_set_playpal(page);
 }
 
 /* Called at the end of pd_end_frame, once the renderer has released the
  * frame: composite the overlays, apply any palette change, publish. */
 void I_MD_PresentFrame(void) {
+  /* A dither / palette change asked for by keypad * or / since the last
+   * frame. Done here, not where the key was seen: the renderer polls
+   * input mid-frame and the LUT rebuild has no business running there
+   * (see I_MD_ApplyVideoMode). Core 1 is idle from the join in
+   * pd_end_frame until the publish below. */
+  extern void I_MD_ApplyVideoMode(void);
+  I_MD_ApplyVideoMode();
+
   if (!sem_available(&render_frame_ready)) return;
   sem_acquire_blocking(&render_frame_ready);
   display_video_type = next_video_type;
@@ -172,9 +191,12 @@ void I_MD_PresentFrame(void) {
   }
 
   if (next_pal != -1) {
-    if (next_pal != shown_pal) {
+    /* The gamma key asks for a re-apply by re-posting the page it is
+     * already showing, so the level has to be part of the test. */
+    if (next_pal != shown_pal || usegamma != shown_gamma) {
       apply_palette(next_pal);
       shown_pal = next_pal;
+      shown_gamma = usegamma;
     }
     next_pal = -1;
   }
@@ -218,4 +240,8 @@ void I_InitGraphics(void) {
 void I_StartTic(void) {
   if (!initialized) return;
   I_GetEvent();
+  /* Once per tic, so the tic's whole mouse movement reaches G_Responder
+   * in one event (see I_MD_PostMouseEvent). */
+  extern void I_MD_PostMouseEvent(void);
+  I_MD_PostMouseEvent();
 }

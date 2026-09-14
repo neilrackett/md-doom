@@ -7,6 +7,10 @@
 /*---------------------------------------------------------------------------/
 / Function Configurations
 /---------------------------------------------------------------------------*/
+/* MD/DOOM: this app opens, reads and closes files and looks for one
+ * directory, and nothing else. Formatting, finding, expanding, chmod,
+ * forwarding and the string helpers are all switched off below -- they
+ * were about 11 KB of flash, and the debug build has very little. */
 
 #define FF_FS_READONLY 0
 /* This option switches read-only configuration. (0:Read/Write or 1:Read-only)
@@ -23,20 +27,20 @@
 /   2: f_opendir(), f_readdir() and f_closedir() are removed in addition to 1.
 /   3: f_lseek() function is removed in addition to 2. */
 
-#define FF_USE_FIND 1
+#define FF_USE_FIND 0
 /* This option switches filtered directory read functions, f_findfirst() and
 /  f_findnext(). (0:Disable, 1:Enable 2:Enable with matching altname[] too) */
 
-#define FF_USE_MKFS 1
+#define FF_USE_MKFS 0
 /* This option switches f_mkfs() function. (0:Disable or 1:Enable) */
 
 #define FF_USE_FASTSEEK 1
 /* This option switches fast seek function. (0:Disable or 1:Enable) */
 
-#define FF_USE_EXPAND 1
+#define FF_USE_EXPAND 0
 /* This option switches f_expand function. (0:Disable or 1:Enable) */
 
-#define FF_USE_CHMOD 1
+#define FF_USE_CHMOD 0
 /* This option switches attribute manipulation functions, f_chmod() and
 f_utime(). /  (0:Disable or 1:Enable) Also FF_FS_READONLY needs to be 0 to
 enable this option. */
@@ -45,10 +49,10 @@ enable this option. */
 /* This option switches volume label functions, f_getlabel() and f_setlabel().
 /  (0:Disable or 1:Enable) */
 
-#define FF_USE_FORWARD 1
+#define FF_USE_FORWARD 0
 /* This option switches f_forward() function. (0:Disable or 1:Enable) */
 
-#define FF_USE_STRFUNC 1
+#define FF_USE_STRFUNC 0
 #define FF_PRINT_LLI 1
 #define FF_PRINT_FLOAT 0
 #define FF_STRF_ENCODE 3

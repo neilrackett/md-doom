@@ -2178,6 +2178,24 @@ G_InitNew
     G_DoLoadLevel ();
 }
 
+#if MDDOOM
+/* MD/DOOM: F_SKY1's flat number is worked out in G_DoLoadLevel, before
+ * P_SetupLevel -- which is where this level's asset pack replaces the
+ * last one. The number therefore names a flat in a pack that has gone,
+ * and since each pack carries only the flats its own map needs, it
+ * names the wrong one: ceilings that should open onto the sky draw
+ * whatever flat now sits there instead. Nothing else needs redoing.
+ * Texture and flat *names* are compile-time numbers in this build
+ * (whd_gen enumerates them identically in every pack, and
+ * R_TextureNumForName is the identity), so the switch and animation
+ * tables, and skytexture itself, all stay valid across a swap. Called
+ * from the pack hook once the new pack's directory is in. */
+void G_MD_ResolveSkyFlat (void)
+{
+    skyflatnum = W_GetNumForName(SKYFLATNAME) - firstflat;
+}
+#endif
+
 
 //
 // DEMO RECORDING 

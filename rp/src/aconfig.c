@@ -6,6 +6,7 @@ static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_MODE, SETTINGS_TYPE_INT, "255"},  // 255: Menu mode
     {ACONFIG_PARAM_DITHER, SETTINGS_TYPE_INT, "2"},   // 4x4 Bayer
     {ACONFIG_PARAM_PALETTE, SETTINGS_TYPE_INT, "0"},  // STDOOM's 16
+    {ACONFIG_PARAM_SCRNSIZE, SETTINGS_TYPE_INT, "10"},  // view + status bar
 };
 
 // Create a global context for our settings

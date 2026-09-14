@@ -1,5 +1,176 @@
 # Changelog
 
+## v0.5.21 (2026-09-14)
+
+- The level selector uses the ordinary message font, and the firmware no
+  longer carries a way to draw menu-sized letters of its own. That
+  existed for this one item, which is now a debug-build option, so it
+  was 90 lines and a few hundred bytes for something nobody ships.
+
+## v0.5.19 (2026-09-14)
+
+- The Options menu's Level setting is a build-time option now, off by
+  default: it is a testing aid rather than something to ship. Build with
+  `MDDOOM_LEVEL_SELECT=1` to get it back, the way the test card works.
+  The doubled-font text it needed goes with it.
+
+## v0.5.17 (2026-09-14)
+
+- The sky survives a level change. Starting a new game after playing a
+  different level left the sky replaced by garbage: F_SKY1's flat number
+  is worked out before the level's asset pack is swapped in, and since
+  each pack carries only the flats its own map needs, the number then
+  pointed at the wrong flat. It is worked out again once the new pack is
+  in place.
+
+## v0.5.15 (2026-09-14)
+
+- The renderer and the level now share memory properly instead of
+  splitting it at build time. The column buffer is taken from the Doom
+  zone once the level is in, so it gets whatever that level did not
+  need: the small maps get the full 3600 columns the engine was written
+  for, and only the biggest map has to make do. Every fixed split tried
+  before this was either too mean for E1M1, which left black holes over
+  half the picture, or too mean for E1M6, which ran the zone out and
+  panicked.
+- Room for it came out of the debug build's flash: FatFs's formatting,
+  find, expand and string helpers are switched off, fatal errors print
+  through the compact printf rather than newlib's, and two config
+  parsers use `strtol` where they used `sscanf`, which was pulling in
+  12 KB of the scanf family.
+
+## v0.5.9 (2026-09-14)
+
+- E1M6 gets the memory it needs. The previous build gave the zone about
+  37 KB and E1M6 filled every byte of it before it was finished
+  building the level; every other map in the episode loads and plays.
+  The renderer's column budget goes from 2400 to 1800 and the heap
+  margin from 4 KB to 2 KB, which takes the zone to about 46 KB -- the
+  figure upstream quotes for its own busiest levels. Very busy views
+  may drop a few more columns to black in exchange.
+
+## v0.5.8 (2026-09-14)
+
+- Starting on one of the bigger maps no longer dies. E1M6 was running
+  the Doom zone out of memory as it built the level, and in this build
+  that is a panic rather than an error, which is why it looked like a
+  freeze with the loading screen still up. The level data alone comes to
+  about 31 KB on E1M6 -- twice E1M4, three times E1M1 -- against a zone
+  of about the same size. The renderer's column budget, the only large
+  tunable buffer left, gives the zone its memory, so it drops from 3000
+  columns to 2400 and the zone goes to about 38 KB. Very busy views may
+  drop a few more columns to black in exchange.
+- Every level load now reports what is left of the zone, and running it
+  out says how much was wanted and how much was free. The measured cost
+  of all nine maps is in `AGENTS.md`.
+
+## v0.5.7 (2026-09-14)
+
+- Quit Game now asks where to go: Y for GEM, B for the Booster. The
+  Booster moves here from the main menu, where an item of its own had
+  to draw its own letters and looked out of place among the original's
+  artwork.
+- Loading a level pack no longer buzzes. The sound mixer reads its
+  samples straight out of the pack window, which the load is busy
+  erasing, and it runs from an interrupt on the core that is parked
+  around every flash write -- so for the second or so the erase takes,
+  nothing refilled the ST's audio buffer and it looped whatever was
+  left in there. The mixer is now stopped for the duration, which
+  silences the buffer as it goes.
+- The Options item reads "LEVEL: N".
+
+## v0.5.5 (2026-09-14)
+
+- The two menu items MD/DOOM adds are drawn at the menu's own size
+  instead of in the little font the messages use. Doom's menu is
+  artwork, one picture per item, and the level packs carry those and no
+  alphabet, so there is nothing in them to set new words in: these are
+  drawn by the firmware in its own 8x8 font at double size, coloured
+  with whichever palette entry is the most saturated red. The Options
+  item is now "Level N", since "Start level" is too wide at that size.
+
+## v0.5.4 (2026-09-14)
+
+- A **Booster** item below Quit Game on the main menu. It asks the same
+  way Quit does and then restarts the ST into the SidecarT Booster,
+  which saves powering off and holding the SELECT button. The handover
+  is ordered so the ST is never reading a cartridge that is being
+  replaced: the m68k restores the machine and jumps through the reset
+  vector, and only once it is away in its memory test does the RP2040
+  reboot itself into the Booster.
+
+## v0.5.2 (2026-09-14)
+
+- Mouse buttons work. The right button fires and the left button held
+  strafes. The last build reported only the left button and expected
+  fire to arrive on the joystick's own line, which it never does: while
+  the mouse is switched on, the keyboard chip puts the wire that
+  joystick 1's trigger shares with the right mouse button into the
+  mouse packet and leaves the joystick packet's fire bit clear. So the
+  right button is the trigger, and nothing could shoot until it was
+  mapped to fire.
+- The mouse moves at a usable speed. An ST mouse reports on the order of
+  a hundred counts an inch, where the mice Doom's defaults were written
+  for manage thousands, and the game turns only eight angle units per
+  count: a full sweep of the mat used to turn a few degrees. Turning is
+  scaled by eight and walking by four.
+- Options has a new **Start level** setting: the map a new game begins
+  on, 1 to 9 and back to 1. It is for jumping straight to a level
+  without playing through, so it is not saved and it returns to 1 as
+  soon as a game starts.
+
+## v0.4.7 (2026-09-13)
+
+- Full screen. `+` gives the game the whole 320x200 and takes the
+  status bar away, `-` brings it back; the choice is saved. This is the
+  original's largest screen size, and the only one this renderer can
+  add: the sizes in between need a narrower view, which means tables
+  and border art the build and the level packs leave out.
+- The two meanings of the 168-row constant had to be told apart first.
+  Upstream has one number for "how tall the view is" and "where the
+  status bar starts", because they were never different. They are now
+  `MAIN_VIEWHEIGHT` and `STATUS_BAR_TOP`, and the tiny build learned to
+  act on a size change at all, which it could not do before: the call
+  that applies one was compiled out.
+- Room for the taller view: the renderer's visplane bitmap grew by
+  1,280 bytes, which the cart hole could not hold, so the melt's 640
+  bytes of column state moved into ordinary RAM. That and the taller
+  slope table cost the zone heap about 900 bytes, leaving it near
+  31 KB. Watch the log for Z_Malloc errors on the later maps.
+
+## v0.4.5 (2026-09-13)
+
+- The ST mouse now plays the game: X turns, Y walks, the right button
+  fires and the left button held strafes. The IKBD is left in its
+  default state rather than being told anything, which is what reports
+  mouse packets and joystick events together; the old boot-time
+  "disable mouse" command is what had been switching the mouse off. The
+  demux frames the three-byte packets and the movement is posted as a
+  real Doom mouse event once per tic. The buttons are the other way
+  round to a PC because the ST wires joystick 1's fire to the right
+  mouse button: they are one line, so the right button is a fire button
+  whether we want it or not, and strafe goes to the left. A side effect
+  of all this is that the desktop mouse works again after quitting to
+  GEM.
+- Gamma correction (the Help key) does something at last. The level was
+  tracked and its message printed, but the table was never applied to
+  the palette; it now is, after the pain and pickup tints, and a change
+  of level forces the palette to be rebuilt even when the page has not
+  changed.
+- Keypad `*` and `/` no longer risk a freeze. They were rebuilding the
+  4 KB dither lookup table where the key was seen, which is also the
+  input poll the renderer runs part-way through a frame, on the
+  renderer's own deep stack. The keypress now only records the choice
+  and the rebuild happens between frames, with Core 1 idle.
+- The README marks the F-keys that do nothing in this build: help and
+  detail, which this renderer has no screens or modes for, and save,
+  load, quick-save and quick-load, which wait on save games.
+- The `-` and `+` screen size keys now say "Screen size cannot be
+  changed" instead of doing nothing at all, so they do not look broken.
+  This renderer has no windowed view, and the menu item for it is
+  already compiled out; see the backlog in `AGENTS.md` for what
+  restoring it would take. The keys still zoom the automap.
+
 ## v0.4.0 (2026-09-09)
 
 The release build.

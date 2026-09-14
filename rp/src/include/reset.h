@@ -20,6 +20,42 @@
 
 #define RESET_WATCHDOG_TIMEOUT 20  // 20 ms
 
+/* MD/DOOM: "go to the Booster" from inside a running app. Jumping there
+ * directly would hand the Booster a chip with this app's PIO, DMA and
+ * second core still live -- the proven jump in main() happens before
+ * any of that is set up. So reboot instead, leaving a note in a
+ * watchdog scratch register (untouched by a watchdog reset, and by
+ * watchdog_reboot, which only uses 4..7), and let main() make the jump
+ * on the way back up from a clean machine. */
+#define RESET_BOOSTER_REQUEST_MAGIC 0xB0057E12u
+
+/**
+ * @brief Reboot, and jump to the Booster app once back up.
+ *
+ * @note This function does not return.
+ */
+static inline void reset_reboot_to_booster(void) {
+  watchdog_hw->scratch[0] = RESET_BOOSTER_REQUEST_MAGIC;
+  save_and_disable_interrupts();
+  watchdog_reboot(0, 0, RESET_WATCHDOG_TIMEOUT);
+  while (1) {
+    tight_loop_contents();
+  }
+}
+
+/**
+ * @brief Was this boot asked to go straight to the Booster?
+ *
+ * Consumes the request, so a later plain reset boots the app as usual.
+ */
+static inline bool reset_booster_requested(void) {
+  if (watchdog_hw->scratch[0] != RESET_BOOSTER_REQUEST_MAGIC) {
+    return false;
+  }
+  watchdog_hw->scratch[0] = 0;
+  return true;
+}
+
 /**
  * @brief Reset the current app and jump to the Booster app in flash
  *

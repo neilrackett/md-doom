@@ -1122,8 +1122,10 @@ P_SetupLevel
     if (precache)
 	R_PrecacheLevel ();
 
-    //printf ("free memory: 0x%x\n", Z_FreeMemory());
-
+    /* MD/DOOM: the level's own allocations are all in by now, so this
+     * is the moment to hand the renderer what is left of the zone. */
+    extern void pd_alloc_work_area(void);
+    pd_alloc_work_area();
 }
 
 

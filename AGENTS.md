@@ -135,9 +135,9 @@ the two IRQs the app actually needs:
 
 1. **m68k boot stubs 4 IRQ vectors** — HBL (`$68`), Timer-A (`$134`), Timer-C (`$114`) and Timer-D (`$110`) all point at a 1-instruction `userfw_dummy_irq` (just `rte`). MFP Timer A/C/D are disabled+masked at IERA/IERB so they never fire; HBL is masked by SR=$2300. Timer-B (`$120`) is owned by the YM audio path; it is left idle when STE DMA sound is in use. On a DMA-sound machine Timer-A is then claimed by `userfw_snd_irq` (event-count mode, one event per DMA frame end; see the audio pipeline).
 2. **The ACIA vector (`$118`) gets a real handler**, `userfw_acia_irq`, enabled at IERB/IMRB bit 6. It reads each IKBD byte the instant it arrives and forwards it to the RP with a cart-bus read at `IKBD_WINDOW_BASE + byte` (`$FB8200..$FB82FF`). Interrupt-driven rather than polled: the MC6850 has a one-byte receive buffer, and polling drops bytes, which desynchronises the multi-byte joystick packets. The MIDI ACIA shares the same MFP interrupt, so the handler drains it too. MFP is in auto-EOI mode, so the handler needs no in-service acknowledge; it saves only D0/A1, which makes it safe to fire in the middle of `FBDRV_INLINE`.
-3. **m68k boot configures the IKBD** — `$12` (disable mouse reporting) → `$14` (joystick event reporting). The byte stream is then keyboard scancodes plus `$FE`/`$FF`/`$FD` joystick packets.
+3. **m68k boot sends the IKBD nothing at all** — and must not: its default state, which TOS leaves alone, already reports relative mouse packets (`$F8`..`$FB` + signed dx, dy) *and* joystick 1 events (`$FE`/`$FF`) alongside the keyboard scancodes. The 6301 treats the two auto-report modes as one setting, so selecting joystick event reporting (`$14`) switches the mouse off, and `$12` — what this used to send, before the demux could frame mouse packets — switches it off outright. Y is at its default `Y=0 at top`, so positive `dy` is towards the user. md-sidepad's `sidepong` example drives two paddles from a mouse and a joystick the same way.
 4. **RP captures via commemul** — the 1 KB ROM3 DMA ring (`commemul.{c,pio}`) records every read in `$FB0000`–`$FBFFFF`. The main loop drains it with `fb_pump_rom3()`, whose callback routes each sample to the IKBD demux, the Xpad receiver, the VBL frame-sync detector and the sound-capability decoder.
-5. **RP demux** (`ikbd_pump()`) classifies each raw byte: `$00..$7F` = key press, `$80..$F1` = key release (scancode = `byte & $7F`), `$FD/$FE/$FF` = joystick packet headers whose following state byte(s) are framed into `s_joy_state[]`. Only port 1 is reported by `ikbd_get_joystick()` (bit0 up, 1 down, 2 left, 3 right, 7 fire). Apps drain key events via `ikbd_pop_key()`; scancode `$00` is suppressed.
+5. **RP demux** (`ikbd_pump()`) classifies each raw byte: `$00..$7F` = key press, `$80..$F1` = key release (scancode = `byte & $7F`), `$FD/$FE/$FF` = joystick packet headers whose following state byte(s) are framed into `s_joy_state[]`, `$F8..$FB` = mouse packet headers (bit 1 = left button, bit 0 = right) whose two signed deltas accumulate into the mouse state. Only port 1 is reported by `ikbd_get_joystick()` (bit0 up, 1 down, 2 left, 3 right, 7 fire). `ikbd_get_mouse()` returns the movement since the last call (cleared by the read, clamped to ±512 so a stall cannot come back as one huge jump) and the current buttons. **The ST wires joystick 1's fire to the right mouse button** — one line, indistinguishable — so the right button and joystick bit 7 always arrive together. Apps drain key events via `ikbd_pop_key()`; scancode `$00` is suppressed.
 6. **ESC** — `ikbd.c` posts `CART_CMD_BOOT_GEM` to the sentinel slot on an ESC press+release within 200 ms unless the app calls `ikbd_set_esc_auto_exit(false)`. The test card leaves it on (ESC = back to GEM); the game will turn it off (ESC = Doom's menu) and exit through `ikbd_request_boot_gem()` from a menu item. `ikbd_clear_command()` at the top of the main loop re-arms the slot to `CMD_NOP` so the exit is a one-shot and does not re-trigger after an ST reset.
 
 ### Audio pipeline (STE DMA sound, YM2149 fallback)
@@ -216,19 +216,48 @@ is the difference), of which newlib's boot-time allocations (the settings
 library and friends) and `ZONE_HEAP_MARGIN` (4 KB, for FatFs while a pack
 loads) come off the top: **Doom's zone is 32,768 B on hardware**
 (`0x20028000..0x20030000` in the boot log), less than the ~38 KB estimated
-from the map. Upstream rp2040-doom reports its zone using up to ~45 KB on
-the busiest levels; E1M1 and E1M2 play, so watch the UART for `Z_Malloc`
-errors on later maps. What already went: the engine renders
-single-buffered into `fb_chunked_buffer` (upstream double-buffers
-2 × 54 KB), the 32 KB planar scratch is gone (direct c2p),
-`RENDER_COL_MAX` is 3000 (upstream 3600; overflow degrades to black
-columns), the renderer's `visplane_bit`, patch decoder buffers and
-`column_heads` (12.6 KB) live in `CART_APP_FREE`, the vpatch lists live in
-the unused USB DPRAM, the sfx mix buffer (1 KB) in scratch X below Core 1's
-2 KB stack. Left to pull if needed: `RENDER_COL_MAX` lower still, the 4 KB
-dither LUT into scratch X, freeing the settings contexts after boot.
+from the map; `RENDER_COL_MAX` 2400 has since taken it to about 38 KB
+(see below). **The zone is the only thing standing between this build
+and the bigger maps**, and `list_buffer` (`RENDER_COL_MAX` × 12 B) is
+the only large tunable static left, so the two trade against each other
+directly. Modelled level-data cost for all nine maps, from the shareware
+WAD's lumps and this build's own struct sizes (probed with the real
+build flags): sectors × 36 B, three line bitmaps, blockmap links × 2 B,
+the line buffer × 2 B, mobjs × 32 B eight to a pool block, the
+sector-special thinkers (fireflicker and glow 20 B, lightflash and
+strobe 28 B, door 32 B), every allocation rounded to 4 B plus an 8 B
+block header, and things filtered as `P_SpawnMapThing` does for single
+player at the hardest skill:
 
-- **`CART_APP_FREE`** overlays the 15,104-byte hole between `CART_APP_FREE_OFFSET` (`$4500`) and `CART_FRAMEBUFFER_OFFSET` (`$8300`) inside the shared region — ordinary SRAM that neither the ST nor the framebuffer path reads. Buffers tagged `__cart_app_free("name")` live there (the commemul ring and 12.6 KB of renderer scratch; ~1.4 KB is free). It is `NOLOAD`, so only park things first touched after `emul_start()` has called `ERASE_FIRMWARE_IN_RAM()`. `emul_start()` re-checks the window against `cart_shared.h` at boot, and the linker script asserts the section starts on `ORIGIN`.
+| | E1M1 | E1M2 | E1M3 | E1M4 | E1M5 | E1M6 | E1M7 | E1M8 | E1M9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| at load, KB | 10.3 | 21.6 | 23.6 | 16.8 | 18.4 | **31.4** | 22.3 | 13.9 | 16.3 |
+
+**The model ranks the maps correctly but reads low.** On hardware, every
+map except E1M6 loads and plays; E1M6 panicked with the zone at 31 KB
+and again at 36,864 B, where it filled *every byte* ("out of memory:
+wanted 36, 0 free"). So its real cost is at least 37 KB against a
+modelled 31.4 KB — treat these figures as a ranking, not a budget. The
+zone is now ~46 KB, which is what upstream rp2040-doom quotes for its
+own busiest levels. The per-level `DPRINTF` is the measurement that
+matters: it reports what was left after each load. Everything else the engine
+puts there is small: the lumps are memory-mapped from flash
+(`USE_ROWAD`, so even the blockmap and reject are pointers), and the
+status bar's backing screen is compiled out. Each level's `DPRINTF`
+now reports what was left. What already went: the engine renders
+single-buffered into `fb_chunked_buffer` (upstream double-buffers
+2 × 54 KB), the 32 KB planar scratch is gone (direct c2p), the
+renderer's `visplane_bit`, patch decoder buffers and
+`column_heads` (13.9 KB) live in `CART_APP_FREE`, the vpatch lists live in
+the unused USB DPRAM, the sfx mix buffer (1 KB) in scratch X below Core 1's
+2 KB stack. Left to pull if needed: `RENDER_COL_MAX` lower still; the
+4 KB dither LUT will *not* fit scratch X (Core 1's 2 KB stack and the
+1 KB mix buffer are already there) and the USB DPRAM has only its first
+1 KB free, so neither is a home for it. Freeing the settings contexts
+after boot does not help either: `free()` does not lower the break, and
+the zone starts from `sbrk(0)`.
+
+- **`CART_APP_FREE`** overlays the 15,104-byte hole between `CART_APP_FREE_OFFSET` (`$4500`) and `CART_FRAMEBUFFER_OFFSET` (`$8300`) inside the shared region — ordinary SRAM that neither the ST nor the framebuffer path reads. Buffers tagged `__cart_app_free("name")` live there (the commemul ring and 13.9 KB of renderer scratch; **192 B is free** — the full-screen size grew `visplane_bit` to 8,000 B and pushed the melt's 640 B of column state out into ordinary RAM). It is `NOLOAD`, so only park things first touched after `emul_start()` has called `ERASE_FIRMWARE_IN_RAM()`. `emul_start()` re-checks the window against `cart_shared.h` at boot, and the linker script asserts the section starts on `ORIGIN`.
 - If you add a `static` array, check the link: `__bss_end__` .. `__StackLimit` in `rp/build-*/rp.elf.map` is the whole heap window. The boot-time settings library needs ~8.4 KB of it; "the app launches then lands straight back in Booster" is a heap failure, not a crash. `DPRINT_HEAP()` in `debug.h` reports the window at boot.
 
 The build assumes Core 0 owns flash writes (`PICO_FLASH_ASSUME_CORE0_SAFE=1`). **Core 1 is parked in `fb_core1_loop`** (`fb_chunked.c`), a generic job dispatcher; the c2p bottom half rides it, and so does the RAM-resident park job `pack.c` uses to hold Core 1 still while it programs flash. **Core 1 is otherwise free**: the cartridge bus is served by PIO + DMA with no CPU involvement (the original scoping assumption that one core is reserved for the cartridge interface does not hold), so upstream's Core 1 render split is kept via `fb_core1_dispatch`. The one other thing on Core 1 is the audio refill interrupt (see "Audio pipeline"), which is why it must never be moved to Core 0.
@@ -352,7 +381,54 @@ cursor cluster. `doom_input_poll_joystick()` folds the port-1 stick and an
 Xpad pad (`xpadin.c`) into `doom_joy_state_t` (x/y in -1..1 plus a button
 mask: fire, use, strafe, run, weapon prev/next, menu, map, strafe l/r).
 `md/i_input.c` posts the keys as `ev_keydown`/`ev_keyup` and turns the
-stick and pad into key presses on their edges.
+stick and pad into key presses on their edges. The mouse is a real
+`ev_mouse` (X turns, Y walks), posted once per tic from `I_StartTic` —
+`G_Responder` overwrites `mousex`/`mousey` with each event, so a second
+one in the same tic (the renderer polls input again from `NetUpdate`)
+would drop the first one's movement. **The buttons are the other way
+round to a PC, and not by choice**: joystick 1's fire and the right
+mouse button are one wire, and while the mouse is reporting, the IKBD
+puts that wire in the mouse packet's right-button bit and never in the
+joystick packet's fire bit — so the right button is the joystick
+trigger and *must* map to `mousebfire`, or a stick cannot shoot. That
+leaves the left button, which is the mouse's alone, for `mousebstrafe`.
+The deltas are scaled on the way through (`MD_MOUSE_TURN_SCALE` 8,
+`MD_MOUSE_WALK_SCALE` 4): an ST mouse reports on the order of a hundred
+counts an inch and Doom turns eight angle units per count, so unscaled
+a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
+at its default so those two are the only numbers to tune.
+- **Quit → Booster** (`m_menu.c`, `#if MDDOOM`). The quit prompt takes
+  `B` as well as `Y` and sets `md_booster_quit`, which `I_Quit` reads;
+  everything else about the exit is the quit's. It lives on the prompt
+  rather than as a menu item of its own because the menu is artwork and
+  a new item would have no letters (an earlier attempt drew its own and
+  looked out of place). `M_Responder`'s message-key filter has to let
+  `B` through or the prompt swallows it. Getting there is a three-step handover, and the
+  order matters: the RP posts `CMD_RESET` to the sentinel, `userfw.s`
+  restores the machine as it does for `CMD_BOOT_GEM` and then jumps
+  through the ST's reset vector (no delay — unlike `main.s`'s `.reset`
+  it is running *from the cartridge*, which is about to be replaced,
+  and the cleared `$420` forces the slow cold boot that covers the
+  rest); the RP keeps asking for ~400 ms so the m68k cannot miss it,
+  then stops Core 1 and reboots itself with
+  `reset_reboot_to_booster()`, which leaves a magic value in watchdog
+  scratch 0 that `main.c` acts on. **Do not jump straight to the
+  Booster from a running app** — the only proven entry is `main()`'s,
+  before this app's PIO, DMA and second core exist.
+- **Options → Level** (`m_menu.c`, `#if MDDOOM_LEVEL_SELECT`) picks the
+  map a new game begins on, for testing without playing through. **Off
+  by default**: build with `MDDOOM_LEVEL_SELECT=1` in
+  `rp/src/CMakeLists.txt` to get it, the way `MDDOOM_TEST_CARD` works.
+  It has no menu graphic, so `M_DrawOptions` writes the text with
+  `M_WriteText` and the item carries `VPATCH_NAME_INVALID`, which the
+  drawer skips. That text is the small message font, the only one the
+  WAD has — the menu's own letters are one picture per item, so a new
+  item cannot be set in them. An earlier version drew doubled 8x8
+  glyphs from the firmware's own font to match their size; it looked
+  out of place, and for a debug-only item it was not worth the code.
+  Deliberately not saved and not sticky:
+  `M_FinishGameSelection` passes it to `G_DeferedInitNew` and puts it
+  back to 1.
 
 ### Sound (`doom_sound.c`, `md/i_mdsound.c`)
 The game's mixer is `md/i_mdsound.c` (upstream's channel model and ADPCM
@@ -387,6 +463,19 @@ vendored file altered for the port carries `MD/DOOM:` comments at the
 change; the platform files under `md/` say which upstream file they derive
 from.
 
+- **Screen size.** `MAIN_VIEWHEIGHT` and `STATUS_BAR_TOP` (`i_video.h`)
+  were one constant upstream, where the view is always 168 rows and the
+  status bar always sits in the 32 below. They are now separate: the
+  first is the tallest the view can be (200, what the renderer's buffers
+  and clipping are sized for), the second is where the status bar
+  overlay starts (168, fixed). `viewheight` is the height actually in
+  use. `setblocks` is a variable again, limited to 10 or 11;
+  `R_ExecuteSetViewSize` already had the block-11 branch, and `D_Display`
+  now acts on `setsizeneeded` in tiny builds (upstream's call was inside
+  `#if !DOOM_TINY`, so the size could never change after boot).
+  `pd_render.cpp` passes `viewheight == SCREENHEIGHT` to `ST_Drawer`, and
+  `st_stuff.c` gates the bar's own patch on `st_statusbaron` the way the
+  widgets already were.
 - `md/i_video.c` — `I_VideoBuffer` is `fb_chunked_buffer`; both of
   upstream's `frame_buffer[2]` resolve to it (`pd_render.cpp`'s
   "other buffer minus 32 rows" tricks are patched to plain rows 168..199).
@@ -395,7 +484,9 @@ from.
   vpatch list (status bar, HUD, menus) into the frame with `V_DrawPatchList`,
   turns the requested PLAYPAL page into 16 colours + LUT
   (`doom_video_set_playpal`; pages 1–13 are derived from page 0 the way
-  upstream's scan-out does) and calls `doom_video_publish()`. Full-screen
+  upstream's scan-out does, then `gammatable[usegamma - 1]` is applied
+  to the result — the tiny build's table drops the identity row, so
+  level 1..4 is row 0..3) and calls `doom_video_publish()`. Full-screen
   pages are repainted every frame (`maybe_draw_single_screen`) because
   overlays land in the same buffer. The melt wipe is the platform's:
   `pd_end_frame` passes upstream's `wipe_start` to `I_MD_RequestWipe`
@@ -407,10 +498,14 @@ from.
   `ikbd_pump`, keys through `doom_input_translate`, the joystick/pad as
   edge-triggered key events (stick = cursors + Ctrl; pad South/East/West/North
   = Ctrl/Space/Alt/Shift, Start = Esc, Select = Tab). Keypad `*` and `/`
-  cycle the dither mode and palette source (`doom_video`) with a HUD
-  message, as the DOOM Accelerator did, and flag the settings for saving
-  (`I_MD_SaveVideoSettings`; the flash write itself happens at frame end,
-  see `md_main.c`). In debug builds keypad `-` cycles the audio
+  ask for the next dither mode or palette source with a HUD message, as
+  the DOOM Accelerator did. Only the choice is recorded: the LUT rebuild
+  and the settings write both happen from `I_MD_PresentFrame`
+  (`I_MD_ApplyVideoMode`, then `I_MD_SaveVideoSettings` →
+  `I_MD_FlushVideoSettings` in `md_main.c`), because the input poll also
+  runs mid-frame from the renderer, where a millisecond of LUT rebuild
+  on the renderer's own deep stack has no business being. In debug
+  builds keypad `-` cycles the audio
   interrupt off / Core 0 / Core 1 for A/B tests. `I_GetEvent` is also called by the renderer
   mid-frame (`NetUpdate`), so nothing in it may park Core 1 or touch
   flash. ESC auto-exit is off; quitting is `I_Quit` →
@@ -433,8 +528,14 @@ from.
   `I_MD_LoadLevelPack(ep, map)`, called at the top of
   `P_SetupLevel`: stops sounds, programs `/doom/E?M?.whx` with a loading
   screen, then re-points what was resolved against the old pack
-  (`W_AddFile("")`, `R_InitData()`, sfx lump numbers, `V_ResetSharedPalettes`,
-  the PLAYPAL pointer). It also reads the saved dither/palette at boot and
+  (`W_AddFile("")`, `R_InitData()`, **the sky flat** — see
+  `G_MD_ResolveSkyFlat`, F_SKY1 is numbered before `P_SetupLevel` and so
+  against the outgoing pack, which loses the sky — sfx lump numbers,
+  `V_ResetSharedPalettes`, the PLAYPAL pointer). Texture and flat
+  *names* need no fixing up: `whd_gen` numbers them identically in every
+  pack and `R_TextureNumForName` is the identity here, so the switch and
+  animation tables built once in `P_Init` stay valid. Anything resolved
+  by **lump lookup** before `P_SetupLevel`, though, is suspect. It also reads the saved dither/palette at boot and
   owns `I_MD_FlushVideoSettings()`, called at the end of
   `I_MD_PresentFrame` (Core 1 idle) to write them. Save-game slots are
   stubbed to "none".
@@ -443,7 +544,8 @@ from.
   `pd_render.cpp`, reported on the 64-frame debug line.
 - `pd_render.cpp` — Core 1's `pd_core1_loop` runs as a framework job
   dispatched in `pd_begin_frame` and joined after `core1_done`; the
-  per-frame scratch arrays are `__cart_app_free`; `RENDER_COL_MAX` 3000.
+  per-frame scratch arrays are `__cart_app_free`; the column buffer is
+  taken from the zone per level (see "Improvements backlog").
 - `w_file_memory.c` — the WHX is `pack_base()`, re-read at every open.
 - `d_main.c` — the demo loop only ever shows the title page (no DEMO or
   CREDIT lumps in the packs); `m_menu.c` hides Read This! and ignores F1;
@@ -488,17 +590,52 @@ revisited in order of visible payoff.
   m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
   ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
   A faster blue-noise path (a per-row LUT slice) would close it.
-- **`RENDER_COL_MAX` 3000** (upstream 3600): very busy views drop columns
-  to black. Raise it if RAM allows.
-- **Zone heap 32 KB** (measured; ~38 KB was the estimate). E1M1 and E1M2
-  load; if a later map fails (`Z_Malloc` errors in the UART log), the next
-  levers are listed under "Memory layout".
+- **The renderer's work area is taken from the zone, not carved out at
+  build time** (`pd_alloc_work_area` in `pd_render.cpp`, called at the
+  end of `P_SetupLevel` and once from `pd_init` for the screens before
+  any level). It takes the largest free block less
+  `PD_ZONE_RESERVE` (10 KB for the mobjs play spawns and the 4 KB the
+  settings library borrows to save), capped at `RENDER_COL_MAX` 3600
+  columns and floored at 500. `render_col_max` is the figure in force;
+  `RENDER_COL_MAX` is only the ceiling. This is what makes both ends of
+  the episode work: a fixed split has to serve E1M1's 12 KB of level
+  data and E1M6's 37-plus, and every value tried was either too mean
+  for E1M1 (columns discarded, black holes over half the screen) or too
+  mean for E1M6 (zone exhausted, panic). Small maps now get the full
+  upstream budget; E1M6 gets what is left. The block is `PU_LEVEL`, so
+  the next level's `Z_FreeTags` returns it before that level is built.
+  Nothing may render between that free and the new allocation —
+  `P_SetupLevel` draws nothing, and the pack loader's progress screens
+  go through `doom_video`, not the renderer.
+- **Zone heap ~72 KB**, now that the 25-47 KB column buffer comes out of
+  it rather than sitting beside it. If a map panics with "out of
+  memory", the message names what was wanted and what was free, and
+  every level reports its columns and remaining zone as it loads.
+  `ZONE_HEAP_MARGIN` is 2 KB: once the zone exists,
+  `malloc`/`calloc`/`realloc` are wrapped into it and newlib hands out
+  almost nothing more.
+- **Debug flash is nearly full** (~180 B of the 372 K `FLASH` region;
+  release has ~36 K). Trimming got it this far: FatFs's unused features
+  are off in `ff/ffconf.h`, `I_Error` uses `vprintf` rather than
+  `vfprintf(stderr)` (which drags in newlib's float formatter), and
+  `ParseIntParameter` / `M_StrToInt` use `strtol` rather than `sscanf`
+  (the scanf family was 12 K). The next addition will not fit.
 - **A freeze on picking up a clip in E1M2** was seen once on v0.1.x and
   has not recurred since the park handshake and the deferred settings
   write were fixed (v0.2.2); not confirmed fixed.
 - **Melt wipe at a level start** runs from the loading screen, not the
   intermission, because the pack is programmed (and its screen shown)
   before the level's first frame exists. A title pack would fix it too.
+- **Screen size has two positions, not the original's nine.** `-` and
+  `+` pick view block 10 (the 168-row view with the status bar below
+  it) or 11 (the full 200 rows, no status bar), saved as `SCRNSIZE` in
+  the app config. The sizes in between are not renderable here:
+  `FIXED_SCREENWIDTH=1` removes the `_distscale[]` table a narrower
+  view needs, `NO_RDRAW=1` drops `R_InitBuffer` / `R_FillBackScreen` /
+  `R_DrawViewBorder`, and the border art (`BRDR_*`, `FLOOR7_2`) is not
+  in the level packs. Restoring them means all of that plus rebuilt
+  packs. Note the keys must keep falling through to `AM_Responder`
+  while the automap is up, where they zoom.
 - **ST high resolution** (640×400 mono, low priority). Today the m68k bails
   to GEM in high-res. It would need a 1-bit reduction (the 4x4 dither
   already produces thresholds; the two-nearest step collapses to
