@@ -530,8 +530,14 @@ from.
   `I_MD_LoadLevelPack(ep, map)`, called at the top of
   `P_SetupLevel`: stops sounds, programs `/doom/E?M?.whx` with a loading
   screen, then re-points what was resolved against the old pack
-  (`W_AddFile("")`, `R_InitData()`, sfx lump numbers, `V_ResetSharedPalettes`,
-  the PLAYPAL pointer). It also reads the saved dither/palette at boot and
+  (`W_AddFile("")`, `R_InitData()`, **the sky flat** — see
+  `G_MD_ResolveSkyFlat`, F_SKY1 is numbered before `P_SetupLevel` and so
+  against the outgoing pack, which loses the sky — sfx lump numbers,
+  `V_ResetSharedPalettes`, the PLAYPAL pointer). Texture and flat
+  *names* need no fixing up: `whd_gen` numbers them identically in every
+  pack and `R_TextureNumForName` is the identity here, so the switch and
+  animation tables built once in `P_Init` stay valid. Anything resolved
+  by **lump lookup** before `P_SetupLevel`, though, is suspect. It also reads the saved dither/palette at boot and
   owns `I_MD_FlushVideoSettings()`, called at the end of
   `I_MD_PresentFrame` (Core 1 idle) to write them. Save-game slots are
   stubbed to "none".

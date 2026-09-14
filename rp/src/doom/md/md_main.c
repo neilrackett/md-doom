@@ -172,6 +172,10 @@ void I_MD_LoadLevelPack(int ep, int mp) {
   /* Re-point everything resolved against the previous pack. */
   W_AddFile("");
   R_InitData();
+  /* F_SKY1 was numbered against the pack that has just gone; see
+   * G_MD_ResolveSkyFlat. */
+  extern void G_MD_ResolveSkyFlat(void);
+  G_MD_ResolveSkyFlat();
   for (int i = 1; i < NUMSFX; i++) {
     sfx_mut(&S_sfx[i])->lumpnum = -1;
   }

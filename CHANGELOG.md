@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.5.17 (2026-09-14)
+
+- The sky survives a level change. Starting a new game after playing a
+  different level left the sky replaced by garbage: F_SKY1's flat number
+  is worked out before the level's asset pack is swapped in, and since
+  each pack carries only the flats its own map needs, the number then
+  pointed at the wrong flat. It is worked out again once the new pack is
+  in place.
+
 ## v0.5.15 (2026-09-14)
 
 - The renderer and the level now share memory properly instead of
