@@ -222,9 +222,6 @@ static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
 #if MDDOOM_LEVEL_SELECT
 static void M_StartLevel(int choice);
-/* MD/DOOM: menu-sized text for the item, which has no artwork of its
- * own; drawn by the platform layer, see md/i_video.c. */
-extern void I_MD_MenuText(int x, int y, const char *s);
 #endif
 #if !NO_USE_LOAD
 static void M_LoadGame(int choice);
@@ -1258,12 +1255,12 @@ void M_DrawOptions(void)
 
 #if MDDOOM_LEVEL_SELECT
     {
-	/* Doubled 8x8 glyphs, so it is the menu's size rather than the
-	 * message line's; "Start level" would not fit beside the other
-	 * items at that size, so the shorter word it is. */
-	char buf[16];
-	M_snprintf(buf, sizeof(buf), "LEVEL: %d", md_start_map);
-	I_MD_MenuText(OptionsDef.x, OptionsDef.y + LINEHEIGHT * startlevel, buf);
+	/* The message font, which is the only one the WAD has: this is a
+	 * debug-build item and not worth the firmware drawing letters of
+	 * its own to sit beside the menu's artwork. */
+	char buf[20];
+	M_snprintf(buf, sizeof(buf), "Start level: %d", md_start_map);
+	M_WriteText(OptionsDef.x, OptionsDef.y + LINEHEIGHT * startlevel, buf);
     }
 #endif
 }

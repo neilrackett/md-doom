@@ -397,17 +397,6 @@ The deltas are scaled on the way through (`MD_MOUSE_TURN_SCALE` 8,
 counts an inch and Doom turns eight angle units per count, so unscaled
 a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
 at its default so those two are the only numbers to tune.
-- **Menu text for items MD/DOOM adds** (`I_MD_MenuText` in
-  `md/i_video.c`, behind `MDDOOM_LEVEL_SELECT` — the level selector is
-  the only thing that uses it). The original's menu is artwork, one picture per item,
-  and the packs carry those and nothing else — there is no alphabet in
-  them, and `M_WriteText`'s little message font looks like a mistake
-  next to the menu's letters. So the new items queue their label during
-  `M_Drawer` and the platform draws it after `V_DrawPatchList`, in the
-  framework's 8x8 font at double size (about as tall as the original's
-  letters). The colour is whichever PLAYPAL index is the most saturated
-  red, found once rather than guessed. Keep labels short: 16 px a
-  character, so ~7 fit beside the other items.
 - **Quit → Booster** (`m_menu.c`, `#if MDDOOM`). The quit prompt takes
   `B` as well as `Y` and sets `md_booster_quit`, which `I_Quit` reads;
   everything else about the exit is the quit's. It lives on the prompt
@@ -430,10 +419,14 @@ at its default so those two are the only numbers to tune.
   map a new game begins on, for testing without playing through. **Off
   by default**: build with `MDDOOM_LEVEL_SELECT=1` in
   `rp/src/CMakeLists.txt` to get it, the way `MDDOOM_TEST_CARD` works.
-  It has no menu graphic, so `M_DrawOptions` writes the text and the
-  item carries `VPATCH_NAME_INVALID`, which the drawer skips — that
-  doubled-font path (`I_MD_MenuText`) exists only for this item and is
-  behind the same flag. Deliberately not saved and not sticky:
+  It has no menu graphic, so `M_DrawOptions` writes the text with
+  `M_WriteText` and the item carries `VPATCH_NAME_INVALID`, which the
+  drawer skips. That text is the small message font, the only one the
+  WAD has — the menu's own letters are one picture per item, so a new
+  item cannot be set in them. An earlier version drew doubled 8x8
+  glyphs from the firmware's own font to match their size; it looked
+  out of place, and for a debug-only item it was not worth the code.
+  Deliberately not saved and not sticky:
   `M_FinishGameSelection` passes it to `G_DeferedInitNew` and puts it
   back to 1.
 

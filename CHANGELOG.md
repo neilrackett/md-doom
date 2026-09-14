@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.21 (2026-09-14)
+
+- The level selector uses the ordinary message font, and the firmware no
+  longer carries a way to draw menu-sized letters of its own. That
+  existed for this one item, which is now a debug-build option, so it
+  was 90 lines and a few hundred bytes for something nobody ships.
+
 ## v0.5.19 (2026-09-14)
 
 - The Options menu's Level setting is a build-time option now, off by
