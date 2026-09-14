@@ -51,9 +51,15 @@ strafe.
 
 The mouse buttons are the other way round to a PC because of an ST
 quirk: inside the machine, the right mouse button and the joystick's
-fire button are the same wire. The keyboard chip cannot tell them
-apart, so the right button has to be fire, and strafe goes to the left
-button instead.
+fire button are the same wire, and while the mouse is switched on the
+keyboard chip reports that wire as the right mouse button and never as
+the joystick's trigger. So the right button has to be fire, or a
+joystick could not shoot, and strafe goes to the left button instead.
+
+Options has a **Start level** setting, which is the map a new game
+begins on. Use it to go straight to a level you want to play or test.
+It counts 1 to 9 and back to 1, and it returns to 1 as soon as you
+start a game, so it never surprises you later.
 
 Quit from the menu (or pressing F10) returns you to GEM.
 

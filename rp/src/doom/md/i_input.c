@@ -19,6 +19,7 @@
 #include "doomtype.h"
 #include "i_input.h"
 #include "m_argv.h"
+#include "m_controls.h"
 
 #include "audio.h"
 #include "doom/doomstat.h"
@@ -141,13 +142,19 @@ static void poll_joystick(void) {
 
 /* The ST mouse as Doom sees it: X turns, Y walks, the right button
  * fires and the left button held strafes -- the opposite way round to
- * a PC, because the ST wires joystick 1's fire to the right mouse
- * button. They are one line and cannot be told apart, so the right
- * button is a fire button whether we like it or not (it arrives as
- * joystick fire and needs nothing from us here), and strafe has to go
- * to the left button. Hence the only thing posted from the mouse
- * packet is the left button, as Doom's mouse button 2, which is
- * mousebstrafe.
+ * a PC, and not a free choice. The ST wires joystick 1's fire to the
+ * right mouse button, and while the mouse is reporting, the IKBD puts
+ * that shared line in the mouse packet's right-button bit and never in
+ * the joystick packet's fire bit. So the right button IS the joystick
+ * trigger: it has to be fire, or a joystick cannot shoot. That leaves
+ * the left button, which is the mouse's alone, for strafe.
+ *
+ * The deltas are scaled on the way through. An ST mouse reports on the
+ * order of a hundred counts an inch, against the thousands a mouse
+ * Doom's defaults were written for manages, and Doom turns by only
+ * eight angle units per count: unscaled, a full sweep of the mat turns
+ * a few degrees. The engine's own mouseSensitivity is left at its
+ * default so these are the only numbers to tune.
  *
  * Posted once per tic from I_StartTic rather than from I_GetEvent:
  * G_Responder overwrites mousex/mousey with each event it sees, so a
@@ -155,6 +162,9 @@ static void poll_joystick(void) {
  * NetUpdate) would throw the first one's movement away. The deltas
  * accumulate in ikbd.c until this reads them, so nothing is lost
  * either way. */
+#define MD_MOUSE_TURN_SCALE 8 /* counts -> Doom's turn units */
+#define MD_MOUSE_WALK_SCALE 4 /* counts -> Doom's forward units */
+
 void I_MD_PostMouseEvent(void) {
   int16_t dx, dy;
   uint8_t buttons;
@@ -164,12 +174,15 @@ void I_MD_PostMouseEvent(void) {
   if (!dx && !dy && buttons == s_last_buttons) return;
   s_last_buttons = buttons;
 
+  int mask = 0;
+  if (buttons & IKBD_MOUSE_BTN_RIGHT) mask |= 1 << mousebfire;
+  if (buttons & IKBD_MOUSE_BTN_LEFT) mask |= 1 << mousebstrafe;
+
   event_t ev;
   ev.type = ev_mouse;
-  /* Bit 1 is Doom's mouse button 2 = mousebstrafe; see above. */
-  ev.data1 = (buttons & IKBD_MOUSE_BTN_LEFT) ? 0x02 : 0x00;
-  ev.data2 = dx;
-  ev.data3 = -dy; /* IKBD +Y is towards the user; Doom's +Y is forward */
+  ev.data1 = mask;
+  ev.data2 = dx * MD_MOUSE_TURN_SCALE;
+  ev.data3 = -dy * MD_MOUSE_WALK_SCALE; /* IKBD +Y is towards the user */
   ev.data4 = ev.data5 = 0;
   D_PostEvent(&ev);
 }

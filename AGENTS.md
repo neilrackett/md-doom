@@ -356,12 +356,24 @@ stick and pad into key presses on their edges. The mouse is a real
 `ev_mouse` (X turns, Y walks), posted once per tic from `I_StartTic` —
 `G_Responder` overwrites `mousex`/`mousey` with each event, so a second
 one in the same tic (the renderer polls input again from `NetUpdate`)
-would drop the first one's movement. The buttons are the other way
-round to a PC: the right button shares its line with joystick 1's fire,
-so it is a fire button whether or not we want it to be, and it needs
-nothing from this code (it arrives through the joystick path). The only
-thing the mouse packet contributes is the left button, posted as Doom's
-mouse button 2, which is `mousebstrafe`.
+would drop the first one's movement. **The buttons are the other way
+round to a PC, and not by choice**: joystick 1's fire and the right
+mouse button are one wire, and while the mouse is reporting, the IKBD
+puts that wire in the mouse packet's right-button bit and never in the
+joystick packet's fire bit — so the right button is the joystick
+trigger and *must* map to `mousebfire`, or a stick cannot shoot. That
+leaves the left button, which is the mouse's alone, for `mousebstrafe`.
+The deltas are scaled on the way through (`MD_MOUSE_TURN_SCALE` 8,
+`MD_MOUSE_WALK_SCALE` 4): an ST mouse reports on the order of a hundred
+counts an inch and Doom turns eight angle units per count, so unscaled
+a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
+at its default so those two are the only numbers to tune.
+- **Options → Start level** (`m_menu.c`, `#if MDDOOM`) picks the map a
+  new game begins on, for testing without playing through. It has no
+  menu graphic, so `M_DrawOptions` writes the text and the item carries
+  `VPATCH_NAME_INVALID`, which the drawer skips. Deliberately not saved
+  and not sticky: `M_FinishGameSelection` passes it to
+  `G_DeferedInitNew` and puts it back to 1.
 
 ### Sound (`doom_sound.c`, `md/i_mdsound.c`)
 The game's mixer is `md/i_mdsound.c` (upstream's channel model and ADPCM

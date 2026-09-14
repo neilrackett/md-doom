@@ -95,6 +95,13 @@ isb_int8_t		screenblocks = 9;
 // temp for screenblocks (0-9)
 static isb_int8_t 	screenSize;
 
+#if MDDOOM
+// MD/DOOM: the map a new game starts on (Options -> Start level). Doom 1
+// has nine maps in every episode.
+#define MD_START_MAP_MAX 9
+static isb_int8_t	md_start_map = 1;
+#endif
+
 // -1 = no quicksave slot picked!
 static isb_int8_t 	quickSaveSlot;
 
@@ -206,6 +213,9 @@ menu_t*	currentMenu;
 static void M_NewGame(int choice);
 static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
+#if MDDOOM
+static void M_StartLevel(int choice);
+#endif
 #if !NO_USE_LOAD
 static void M_LoadGame(int choice);
 #endif
@@ -401,6 +411,9 @@ enum
     option_empty2,
 #endif
     soundvol,
+#if MDDOOM
+    startlevel, /* MD/DOOM: which map a new game begins on */
+#endif
     opt_end
 } options_e;
 
@@ -420,7 +433,12 @@ static const menuitem_t OptionsMenu[]=
     {2,VPATCH_NAME(M_MSENS),'m',	M_ChangeSensitivity},
     {-1,VPATCH_NAME_INVALID,'\0',0},
 #endif
-    {1,VPATCH_NAME(M_SVOL),'s',	M_Sound}
+    {1,VPATCH_NAME(M_SVOL),'s',	M_Sound},
+#if MDDOOM
+    /* MD/DOOM: no menu graphic for this one, so M_DrawOptions writes
+     * the text; an invalid patch name draws nothing. */
+    {2,VPATCH_NAME_INVALID,'l',	M_StartLevel},
+#endif
 };
 
 menu_t  OptionsDef =
@@ -1146,7 +1164,12 @@ boolean M_FinishGameSelection() {
         return true;
     }
 #endif
+#if MDDOOM
+    G_DeferedInitNew(skill,epi+1,md_start_map, false);
+    md_start_map = 1; /* one game only; back to the start next time */
+#else
     G_DeferedInitNew(skill,epi+1,1, false);
+#endif
     M_ClearMenus ();
     return false;
 }
@@ -1222,7 +1245,31 @@ void M_DrawOptions(void)
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(scrnsize+1),
 		 9,screenSize);
 #endif
+
+#if MDDOOM
+    {
+	char buf[24];
+	M_snprintf(buf, sizeof(buf), "Start level %d", md_start_map);
+	M_WriteText(OptionsDef.x, OptionsDef.y + LINEHEIGHT * startlevel, buf);
+    }
+#endif
 }
+
+#if MDDOOM
+/* MD/DOOM: which map a new game starts on, for testing without playing
+ * through. Deliberately not saved and not carried past the game it
+ * starts: M_FinishGameSelection puts it back to 1. */
+void M_StartLevel(int choice)
+{
+    /* Status 2, so the arrow keys step it either way; enter comes in as
+     * choice 1 and steps up, which is the whole control on a machine
+     * with no mouse in the menu. Either way it wraps. */
+    if (choice == 0)
+	md_start_map = (md_start_map > 1) ? md_start_map - 1 : MD_START_MAP_MAX;
+    else
+	md_start_map = (md_start_map < MD_START_MAP_MAX) ? md_start_map + 1 : 1;
+}
+#endif
 
 void M_Options(int choice)
 {

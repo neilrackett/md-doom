@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.5.2 (2026-09-14)
+
+- Mouse buttons work. The right button fires and the left button held
+  strafes. The last build reported only the left button and expected
+  fire to arrive on the joystick's own line, which it never does: while
+  the mouse is switched on, the keyboard chip puts the wire that
+  joystick 1's trigger shares with the right mouse button into the
+  mouse packet and leaves the joystick packet's fire bit clear. So the
+  right button is the trigger, and nothing could shoot until it was
+  mapped to fire.
+- The mouse moves at a usable speed. An ST mouse reports on the order of
+  a hundred counts an inch, where the mice Doom's defaults were written
+  for manage thousands, and the game turns only eight angle units per
+  count: a full sweep of the mat used to turn a few degrees. Turning is
+  scaled by eight and walking by four.
+- Options has a new **Start level** setting: the map a new game begins
+  on, 1 to 9 and back to 1. It is for jumping straight to a level
+  without playing through, so it is not saved and it returns to 1 as
+  soon as a game starts.
+
 ## v0.4.7 (2026-09-13)
 
 - Full screen. `+` gives the game the whole 320x200 and takes the
