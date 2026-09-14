@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.19 (2026-09-14)
+
+- The Options menu's Level setting is a build-time option now, off by
+  default: it is a testing aid rather than something to ship. Build with
+  `MDDOOM_LEVEL_SELECT=1` to get it back, the way the test card works.
+  The doubled-font text it needed goes with it.
+
 ## v0.5.17 (2026-09-14)
 
 - The sky survives a level change. Starting a new game after playing a

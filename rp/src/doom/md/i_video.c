@@ -175,6 +175,7 @@ static void apply_palette(int pal) {
  * list is being built and drawn below, after that list, so nothing can
  * land on top of them. */
 
+#if MDDOOM_LEVEL_SELECT
 #define MD_MENU_TEXT_MAX 2
 #define MD_MENU_TEXT_LEN 16
 
@@ -242,6 +243,9 @@ static void draw_menu_text(void) {
   }
   s_menu_text_count = 0;
 }
+#else
+#define draw_menu_text() ((void)0)
+#endif
 
 /* Called at the end of pd_end_frame, once the renderer has released the
  * frame: composite the overlays, apply any palette change, publish. */

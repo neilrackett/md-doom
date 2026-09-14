@@ -100,8 +100,10 @@ static isb_int8_t 	screenSize;
 #define MD_KEY_BOOSTER 'b'
 #endif
 
-#if MDDOOM
-// MD/DOOM: the map a new game starts on (Options -> Start level). Doom 1
+#if MDDOOM_LEVEL_SELECT
+// MD/DOOM: the map a new game starts on (Options -> Level), for testing
+// without playing through. Off by default -- build with
+// MDDOOM_LEVEL_SELECT=1 in rp/src/CMakeLists.txt to get the item. Doom 1
 // has nine maps in every episode.
 #define MD_START_MAP_MAX 9
 static isb_int8_t	md_start_map = 1;
@@ -218,10 +220,10 @@ menu_t*	currentMenu;
 static void M_NewGame(int choice);
 static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
-#if MDDOOM
+#if MDDOOM_LEVEL_SELECT
 static void M_StartLevel(int choice);
-/* MD/DOOM: menu-sized text for the items with no artwork of their own;
- * drawn by the platform layer, see md/i_video.c. */
+/* MD/DOOM: menu-sized text for the item, which has no artwork of its
+ * own; drawn by the platform layer, see md/i_video.c. */
 extern void I_MD_MenuText(int x, int y, const char *s);
 #endif
 #if !NO_USE_LOAD
@@ -419,7 +421,7 @@ enum
     option_empty2,
 #endif
     soundvol,
-#if MDDOOM
+#if MDDOOM_LEVEL_SELECT
     startlevel, /* MD/DOOM: which map a new game begins on */
 #endif
     opt_end
@@ -442,7 +444,7 @@ static const menuitem_t OptionsMenu[]=
     {-1,VPATCH_NAME_INVALID,'\0',0},
 #endif
     {1,VPATCH_NAME(M_SVOL),'s',	M_Sound},
-#if MDDOOM
+#if MDDOOM_LEVEL_SELECT
     /* MD/DOOM: no menu graphic for this one, so M_DrawOptions writes
      * the text; an invalid patch name draws nothing. */
     {2,VPATCH_NAME_INVALID,'l',	M_StartLevel},
@@ -1172,7 +1174,7 @@ boolean M_FinishGameSelection() {
         return true;
     }
 #endif
-#if MDDOOM
+#if MDDOOM_LEVEL_SELECT
     G_DeferedInitNew(skill,epi+1,md_start_map, false);
     md_start_map = 1; /* one game only; back to the start next time */
 #else
@@ -1254,7 +1256,7 @@ void M_DrawOptions(void)
 		 9,screenSize);
 #endif
 
-#if MDDOOM
+#if MDDOOM_LEVEL_SELECT
     {
 	/* Doubled 8x8 glyphs, so it is the menu's size rather than the
 	 * message line's; "Start level" would not fit beside the other
@@ -1266,7 +1268,7 @@ void M_DrawOptions(void)
 #endif
 }
 
-#if MDDOOM
+#if MDDOOM_LEVEL_SELECT
 /* MD/DOOM: which map a new game starts on, for testing without playing
  * through. Deliberately not saved and not carried past the game it
  * starts: M_FinishGameSelection puts it back to 1. */

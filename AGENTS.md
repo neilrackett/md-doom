@@ -398,7 +398,8 @@ counts an inch and Doom turns eight angle units per count, so unscaled
 a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
 at its default so those two are the only numbers to tune.
 - **Menu text for items MD/DOOM adds** (`I_MD_MenuText` in
-  `md/i_video.c`). The original's menu is artwork, one picture per item,
+  `md/i_video.c`, behind `MDDOOM_LEVEL_SELECT` — the level selector is
+  the only thing that uses it). The original's menu is artwork, one picture per item,
   and the packs carry those and nothing else — there is no alphabet in
   them, and `M_WriteText`'s little message font looks like a mistake
   next to the menu's letters. So the new items queue their label during
@@ -425,12 +426,16 @@ at its default so those two are the only numbers to tune.
   scratch 0 that `main.c` acts on. **Do not jump straight to the
   Booster from a running app** — the only proven entry is `main()`'s,
   before this app's PIO, DMA and second core exist.
-- **Options → Start level** (`m_menu.c`, `#if MDDOOM`) picks the map a
-  new game begins on, for testing without playing through. It has no
-  menu graphic, so `M_DrawOptions` writes the text and the item carries
-  `VPATCH_NAME_INVALID`, which the drawer skips. Deliberately not saved
-  and not sticky: `M_FinishGameSelection` passes it to
-  `G_DeferedInitNew` and puts it back to 1.
+- **Options → Level** (`m_menu.c`, `#if MDDOOM_LEVEL_SELECT`) picks the
+  map a new game begins on, for testing without playing through. **Off
+  by default**: build with `MDDOOM_LEVEL_SELECT=1` in
+  `rp/src/CMakeLists.txt` to get it, the way `MDDOOM_TEST_CARD` works.
+  It has no menu graphic, so `M_DrawOptions` writes the text and the
+  item carries `VPATCH_NAME_INVALID`, which the drawer skips — that
+  doubled-font path (`I_MD_MenuText`) exists only for this item and is
+  behind the same flag. Deliberately not saved and not sticky:
+  `M_FinishGameSelection` passes it to `G_DeferedInitNew` and puts it
+  back to 1.
 
 ### Sound (`doom_sound.c`, `md/i_mdsound.c`)
 The game's mixer is `md/i_mdsound.c` (upstream's channel model and ADPCM
