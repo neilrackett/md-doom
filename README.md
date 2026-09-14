@@ -56,17 +56,17 @@ keyboard chip reports that wire as the right mouse button and never as
 the joystick's trigger. So the right button has to be fire, or a
 joystick could not shoot, and strafe goes to the left button instead.
 
-The main menu has a **Booster** item below Quit Game. It leaves the
-game the way Quit does, but restarts your ST into the SidecarT Booster
-instead of returning you to the desktop, which saves powering off and
-holding the SELECT button.
+Quit Game asks where to go: **Y** returns you to the desktop and **B**
+restarts your ST into the SidecarT Booster, which saves powering off
+and holding the SELECT button.
 
 Options has a **Level** setting, which is the map a new game begins on.
 Use it to go straight to a level you want to play or test. It counts 1
 to 9 and back to 1, and it returns to 1 as soon as you start a game, so
 it never surprises you later.
 
-Quit from the menu (or pressing F10) returns you to GEM.
+Quit from the menu (or pressing F10) asks whether to return to GEM or
+go to the Booster.
 
 The full screen size gives you the whole 320×200 for the game at the
 cost of the status bar, exactly as the original did at its largest

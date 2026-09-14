@@ -96,6 +96,11 @@ isb_int8_t		screenblocks = 9;
 static isb_int8_t 	screenSize;
 
 #if MDDOOM
+// MD/DOOM: the quit prompt's "B for Booster" answer.
+#define MD_KEY_BOOSTER 'b'
+#endif
+
+#if MDDOOM
 // MD/DOOM: the map a new game starts on (Options -> Start level). Doom 1
 // has nine maps in every episode.
 #define MD_START_MAP_MAX 9
@@ -215,7 +220,6 @@ static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
 #if MDDOOM
 static void M_StartLevel(int choice);
-static void M_QuitToBooster(int choice);
 /* MD/DOOM: menu-sized text for the items with no artwork of their own;
  * drawn by the platform layer, see md/i_video.c. */
 extern void I_MD_MenuText(int x, int y, const char *s);
@@ -302,9 +306,6 @@ enum
 #endif
     readthis,
     quitdoom,
-#if MDDOOM
-    boosterexit, /* MD/DOOM: quit, but to the Booster */
-#endif
     main_end
 } main_e;
 
@@ -320,12 +321,7 @@ static menuitem_t MainMenu[]=
 #endif
     // Another hickup with Special edition.
     {1,VPATCH_NAME(M_RDTHIS), 'r', M_ReadThis},
-    {1,VPATCH_NAME(M_QUITG),'q',M_QuitDOOM},
-#if MDDOOM
-    /* MD/DOOM: no menu graphic for this one, so M_DrawMainMenu writes
-     * the text; an invalid patch name draws nothing. */
-    {1,VPATCH_NAME_INVALID,'b',M_QuitToBooster},
-#endif
+    {1,VPATCH_NAME(M_QUITG),'q',M_QuitDOOM}
 };
 
 menu_t  MainDef =
@@ -1120,12 +1116,6 @@ void M_DrawMainMenu(void)
 {
     V_DrawPatchDirect(94, 2,
                       VPATCH_HANDLE(VPATCH_NAME(M_DOOM)));
-#if MDDOOM
-    /* The Booster item has no menu graphic; it is always the last one,
-     * wherever M_Init's shuffling leaves it. */
-    I_MD_MenuText(MainDef.x, MainDef.y + LINEHEIGHT * (MainDef.numitems - 1),
-		  "BOOSTER");
-#endif
 }
 
 
@@ -1270,7 +1260,7 @@ void M_DrawOptions(void)
 	 * message line's; "Start level" would not fit beside the other
 	 * items at that size, so the shorter word it is. */
 	char buf[16];
-	M_snprintf(buf, sizeof(buf), "LEVEL %d", md_start_map);
+	M_snprintf(buf, sizeof(buf), "LEVEL: %d", md_start_map);
 	I_MD_MenuText(OptionsDef.x, OptionsDef.y + LINEHEIGHT * startlevel, buf);
     }
 #endif
@@ -1568,8 +1558,21 @@ static const sfxenum_t quitsounds2[8] =
 
 
 
+#if MDDOOM
+/* MD/DOOM: the quit prompt offers the Booster as well as GEM, since
+ * there is nowhere else to put it -- the menu is artwork and this item
+ * would have no letters of its own. I_Quit reads the flag to decide
+ * where to leave the machine. */
+boolean md_booster_quit;
+#endif
+
 boolean M_QuitResponse(int key)
 {
+#if MDDOOM
+    if (key == MD_KEY_BOOSTER)
+	md_booster_quit = true;
+    else
+#endif
     if (key != key_menu_confirm)
 	return false;
     if (!netgame)
@@ -1614,29 +1617,6 @@ static const char *M_SelectEndMessage(void)
 }
 
 
-#if MDDOOM
-/* MD/DOOM: quit, but to the Booster rather than to GEM. Everything the
- * quit does -- the message, the sound, deferring the exit to the main
- * loop -- is the quit's; only where it lands differs, and I_Quit reads
- * this flag to decide. */
-boolean md_booster_quit;
-
-static boolean M_BoosterResponse(int key)
-{
-    if (key != key_menu_confirm)
-	return false;
-    md_booster_quit = true;
-    return M_QuitResponse(key);
-}
-
-void M_QuitToBooster(int choice)
-{
-    choice = 0;
-    M_StartMessage2("Leave the game for the Booster?",
-		    M_BoosterResponse, true, "\n" DOSY);
-}
-#endif
-
 void M_QuitDOOM(int choice)
 {
 #if !DOOM_TINY
@@ -1646,7 +1626,12 @@ void M_QuitDOOM(int choice)
     M_StartMessage(endstring,M_QuitResponse,true);
 #else
     // one less \n as M_StartMessage2 adds a newline between
+#if MDDOOM
+    M_StartMessage2(M_SelectEndMessage(),M_QuitResponse,true,
+		    "\nPress Y to quit to GEM,\nB for Booster");
+#else
     M_StartMessage2(M_SelectEndMessage(),M_QuitResponse,true, "\n" DOSY);
+#endif
 #endif
 }
 
@@ -2140,7 +2125,11 @@ boolean M_Responder (event_t* ev)
 	if (messageNeedsInput)
         {
             if (key != ' ' && key != KEY_ESCAPE
-             && key != key_menu_confirm && key != key_menu_abort)
+             && key != key_menu_confirm && key != key_menu_abort
+#if MDDOOM
+             && key != MD_KEY_BOOSTER /* the quit prompt's third answer */
+#endif
+             )
             {
                 return false;
             }
@@ -2718,10 +2707,6 @@ void M_Init (void)
     if (gamemode == commercial || MDDOOM)
     {
         MainMenu[readthis] = MainMenu[quitdoom];
-#if MDDOOM
-        /* Keep Booster below Quit as the items shuffle up. */
-        MainMenu[quitdoom] = MainMenu[boosterexit];
-#endif
         MainDef.numitems--;
         MainDef.y += 8;
         NewDef.prevMenu = &MainDef;

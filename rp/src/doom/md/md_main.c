@@ -32,6 +32,7 @@
 #include "whddata.h"
 
 #include "aconfig.h"
+#include "audio.h"
 #include "bg_mono.h" /* the 1-bit backdrop, defined here and only here */
 #include "debug.h"
 #include "doom_video.h"
@@ -137,11 +138,25 @@ static void program_pack(const char *map) {
   snprintf(path, sizeof(path), "%s/%s.whx", s_folder, map);
   s_loading_map = map;
   loading_screen(map, 0, 0);
+
+  /* Silence for the duration, and not only for quiet's sake. The mixer
+   * reads its samples straight out of the pack window over XIP, and
+   * that window is about to be erased; it also runs from an interrupt
+   * on Core 1, which pack_load parks around every flash call. Stopping
+   * the timer takes it out of the picture entirely, and it zeroes the
+   * cart audio buffer on the way out, so the ST plays silence rather
+   * than looping whatever was left in there -- the erase alone holds
+   * the refill off for about a second, which is a second of buzz. */
+  const int audio_core = audio_vbl_timer_core();
+  audio_stop_vbl_timer();
+
   if (!pack_load(path, progress)) {
     DPRINTF("cannot load %s\n", path);
-    missing_pack_screen(map);
+    missing_pack_screen(map); /* never returns; leave the sound off */
   }
   read_pack_map();
+
+  if (audio_core >= 0) audio_start_vbl_timer(audio_core);
 }
 
 void I_MD_LoadLevelPack(int ep, int mp) {

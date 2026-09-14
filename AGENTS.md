@@ -378,10 +378,13 @@ at its default so those two are the only numbers to tune.
   letters). The colour is whichever PLAYPAL index is the most saturated
   red, found once rather than guessed. Keep labels short: 16 px a
   character, so ~7 fit beside the other items.
-- **Main menu → Booster** (`m_menu.c`, `#if MDDOOM`) quits to the
-  Booster instead of GEM. It reuses `M_QuitResponse` for the message,
-  the sound and the deferred exit, and only sets `md_booster_quit`,
-  which `I_Quit` reads. Getting there is a three-step handover, and the
+- **Quit → Booster** (`m_menu.c`, `#if MDDOOM`). The quit prompt takes
+  `B` as well as `Y` and sets `md_booster_quit`, which `I_Quit` reads;
+  everything else about the exit is the quit's. It lives on the prompt
+  rather than as a menu item of its own because the menu is artwork and
+  a new item would have no letters (an earlier attempt drew its own and
+  looked out of place). `M_Responder`'s message-key filter has to let
+  `B` through or the prompt swallows it. Getting there is a three-step handover, and the
   order matters: the RP posts `CMD_RESET` to the sentinel, `userfw.s`
   restores the machine as it does for `CMD_BOOT_GEM` and then jumps
   through the ST's reset vector (no delay — unlike `main.s`'s `.reset`

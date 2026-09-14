@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.7 (2026-09-14)
+
+- Quit Game now asks where to go: Y for GEM, B for the Booster. The
+  Booster moves here from the main menu, where an item of its own had
+  to draw its own letters and looked out of place among the original's
+  artwork.
+- Loading a level pack no longer buzzes. The sound mixer reads its
+  samples straight out of the pack window, which the load is busy
+  erasing, and it runs from an interrupt on the core that is parked
+  around every flash write -- so for the second or so the erase takes,
+  nothing refilled the ST's audio buffer and it looped whatever was
+  left in there. The mixer is now stopped for the duration, which
+  silences the buffer as it goes.
+- The Options item reads "LEVEL: N".
+
 ## v0.5.5 (2026-09-14)
 
 - The two menu items MD/DOOM adds are drawn at the menu's own size
