@@ -319,7 +319,16 @@ const char *type_name(pd_column column) {
 }
 
 #if !PICO_RP2350
-#define RENDER_COL_MAX 3000 /* MD/DOOM: 3600 upstream; RAM */
+/* MD/DOOM: 3600 upstream. Every column costs 12 bytes of list_buffer,
+ * which is the only large tunable static left, so this is also the
+ * Doom zone's only real supply of memory: the zone is whatever is left
+ * over. E1M6 is the biggest map in the episode and its level data
+ * alone comes to about 31 KB (250 sectors, 1352 lines, a 1748-block
+ * blockmap, 463 things), which would not fit a zone of the same size
+ * -- it panicked with "out of memory" on hardware. 2400 puts the zone
+ * near 38 KB, enough for E1M6 with room for the mobjs a firefight
+ * spawns. Raising it again means finding the memory elsewhere. */
+#define RENDER_COL_MAX 2400
 #else
 #define RENDER_COL_MAX 7200
 #endif

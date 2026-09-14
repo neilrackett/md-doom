@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.8 (2026-09-14)
+
+- Starting on one of the bigger maps no longer dies. E1M6 was running
+  the Doom zone out of memory as it built the level, and in this build
+  that is a panic rather than an error, which is why it looked like a
+  freeze with the loading screen still up. The level data alone comes to
+  about 31 KB on E1M6 -- twice E1M4, three times E1M1 -- against a zone
+  of about the same size. The renderer's column budget, the only large
+  tunable buffer left, gives the zone its memory, so it drops from 3000
+  columns to 2400 and the zone goes to about 38 KB. Very busy views may
+  drop a few more columns to black in exchange.
+- Every level load now reports what is left of the zone, and running it
+  out says how much was wanted and how much was free. The measured cost
+  of all nine maps is in `AGENTS.md`.
+
 ## v0.5.7 (2026-09-14)
 
 - Quit Game now asks where to go: Y for GEM, B for the Booster. The

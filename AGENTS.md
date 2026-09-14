@@ -216,17 +216,31 @@ is the difference), of which newlib's boot-time allocations (the settings
 library and friends) and `ZONE_HEAP_MARGIN` (4 KB, for FatFs while a pack
 loads) come off the top: **Doom's zone is 32,768 B on hardware**
 (`0x20028000..0x20030000` in the boot log), less than the ~38 KB estimated
-from the map. Upstream rp2040-doom reports its zone using up to ~45 KB on
-the busiest levels; E1M1 and E1M2 play, so watch the UART for `Z_Malloc`
-errors on later maps. What already went: the engine renders
+from the map; `RENDER_COL_MAX` 2400 has since taken it to about 38 KB
+(see below). **The zone is the only thing standing between this build
+and the bigger maps**, and `list_buffer` (`RENDER_COL_MAX` × 12 B) is
+the only large tunable static left, so the two trade against each other
+directly. Measured level-data cost, from the shareware WAD's lump sizes
+and this build's struct sizes (sectors × 36 B, three line bitmaps,
+blockmap links × 2 B, line buffer × 2 B, mobjs × 32 B from the thinker
+pool): E1M1 10.8 KB, E1M8 13.7 KB, E1M4 16.9 KB, E1M9 16.4 KB, E1M5
+18.7 KB, E1M2 21.3 KB, E1M7 22.2 KB, E1M3 23.4 KB, **E1M6 31.3 KB** —
+which is why E1M6 panicked on a 31 KB zone. Everything else the engine
+puts there is small: the lumps are memory-mapped from flash
+(`USE_ROWAD`, so even the blockmap and reject are pointers), and the
+status bar's backing screen is compiled out. Each level's `DPRINTF`
+now reports what was left. What already went: the engine renders
 single-buffered into `fb_chunked_buffer` (upstream double-buffers
-2 × 54 KB), the 32 KB planar scratch is gone (direct c2p),
-`RENDER_COL_MAX` is 3000 (upstream 3600; overflow degrades to black
-columns), the renderer's `visplane_bit`, patch decoder buffers and
+2 × 54 KB), the 32 KB planar scratch is gone (direct c2p), the
+renderer's `visplane_bit`, patch decoder buffers and
 `column_heads` (13.9 KB) live in `CART_APP_FREE`, the vpatch lists live in
 the unused USB DPRAM, the sfx mix buffer (1 KB) in scratch X below Core 1's
-2 KB stack. Left to pull if needed: `RENDER_COL_MAX` lower still, the 4 KB
-dither LUT into scratch X, freeing the settings contexts after boot.
+2 KB stack. Left to pull if needed: `RENDER_COL_MAX` lower still; the
+4 KB dither LUT will *not* fit scratch X (Core 1's 2 KB stack and the
+1 KB mix buffer are already there) and the USB DPRAM has only its first
+1 KB free, so neither is a home for it. Freeing the settings contexts
+after boot does not help either: `free()` does not lower the break, and
+the zone starts from `sbrk(0)`.
 
 - **`CART_APP_FREE`** overlays the 15,104-byte hole between `CART_APP_FREE_OFFSET` (`$4500`) and `CART_FRAMEBUFFER_OFFSET` (`$8300`) inside the shared region — ordinary SRAM that neither the ST nor the framebuffer path reads. Buffers tagged `__cart_app_free("name")` live there (the commemul ring and 13.9 KB of renderer scratch; **192 B is free** — the full-screen size grew `visplane_bit` to 8,000 B and pushed the melt's 640 B of column state out into ordinary RAM). It is `NOLOAD`, so only park things first touched after `emul_start()` has called `ERASE_FIRMWARE_IN_RAM()`. `emul_start()` re-checks the window against `cart_shared.h` at boot, and the linker script asserts the section starts on `ORIGIN`.
 - If you add a `static` array, check the link: `__bss_end__` .. `__StackLimit` in `rp/build-*/rp.elf.map` is the whole heap window. The boot-time settings library needs ~8.4 KB of it; "the app launches then lands straight back in Booster" is a heap failure, not a crash. `DPRINT_HEAP()` in `debug.h` reports the window at boot.
@@ -511,7 +525,7 @@ from.
   `pd_render.cpp`, reported on the 64-frame debug line.
 - `pd_render.cpp` — Core 1's `pd_core1_loop` runs as a framework job
   dispatched in `pd_begin_frame` and joined after `core1_done`; the
-  per-frame scratch arrays are `__cart_app_free`; `RENDER_COL_MAX` 3000.
+  per-frame scratch arrays are `__cart_app_free`; `RENDER_COL_MAX` 2400.
 - `w_file_memory.c` — the WHX is `pack_base()`, re-read at every open.
 - `d_main.c` — the demo loop only ever shows the title page (no DEMO or
   CREDIT lumps in the packs); `m_menu.c` hides Read This! and ignores F1;
@@ -556,11 +570,14 @@ revisited in order of visible payoff.
   m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
   ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
   A faster blue-noise path (a per-row LUT slice) would close it.
-- **`RENDER_COL_MAX` 3000** (upstream 3600): very busy views drop columns
-  to black. Raise it if RAM allows.
-- **Zone heap 32 KB** (measured; ~38 KB was the estimate). E1M1 and E1M2
-  load; if a later map fails (`Z_Malloc` errors in the UART log), the next
-  levers are listed under "Memory layout".
+- **`RENDER_COL_MAX` 2400** (upstream 3600, and 3000 here until E1M6 ran
+  the zone out): very busy views drop columns to black, and the flat
+  cache gets fewer slots. Raise it only by finding the zone memory
+  somewhere else — the two come out of the same pool.
+- **Zone heap ~38 KB**, against E1M6's 31.3 KB of level data, so roughly
+  7 KB is left for the mobjs a firefight spawns. If a map panics with
+  "out of memory", the message names what was wanted and what was free,
+  and every level load reports its headroom.
 - **A freeze on picking up a clip in E1M2** was seen once on v0.1.x and
   has not recurred since the park handshake and the deferred settings
   write were fixed (v0.2.2); not confirmed fixed.

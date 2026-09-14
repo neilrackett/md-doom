@@ -333,7 +333,10 @@ Z_MallocNoUser
         {
             // scanned all the way around the list
 #if DOOM_TINY
-            panic("out of memory");
+            /* MD/DOOM: say how much was wanted and what was left --
+             * the zone is the tightest thing in the build and this is
+             * the only report of it anyone gets. */
+            panic("out of memory: wanted %d, %d free", size, Z_FreeMemory());
 #else
             I_Error ("Z_Malloc: failed on allocation of %i bytes", size);
 #endif
