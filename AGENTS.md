@@ -220,12 +220,24 @@ from the map; `RENDER_COL_MAX` 2400 has since taken it to about 38 KB
 (see below). **The zone is the only thing standing between this build
 and the bigger maps**, and `list_buffer` (`RENDER_COL_MAX` × 12 B) is
 the only large tunable static left, so the two trade against each other
-directly. Measured level-data cost, from the shareware WAD's lump sizes
-and this build's struct sizes (sectors × 36 B, three line bitmaps,
-blockmap links × 2 B, line buffer × 2 B, mobjs × 32 B from the thinker
-pool): E1M1 10.8 KB, E1M8 13.7 KB, E1M4 16.9 KB, E1M9 16.4 KB, E1M5
-18.7 KB, E1M2 21.3 KB, E1M7 22.2 KB, E1M3 23.4 KB, **E1M6 31.3 KB** —
-which is why E1M6 panicked on a 31 KB zone. Everything else the engine
+directly. Modelled level-data cost for all nine maps, from the shareware
+WAD's lumps and this build's own struct sizes (probed with the real
+build flags): sectors × 36 B, three line bitmaps, blockmap links × 2 B,
+the line buffer × 2 B, mobjs × 32 B eight to a pool block, the
+sector-special thinkers (fireflicker and glow 20 B, lightflash and
+strobe 28 B, door 32 B), every allocation rounded to 4 B plus an 8 B
+block header, and things filtered as `P_SpawnMapThing` does for single
+player at the hardest skill:
+
+| | E1M1 | E1M2 | E1M3 | E1M4 | E1M5 | E1M6 | E1M7 | E1M8 | E1M9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| at load, KB | 10.3 | 21.6 | 23.6 | 16.8 | 18.4 | **31.4** | 22.3 | 13.9 | 16.3 |
+
+E1M6 is the only map that will not fit a 31 KB zone, which is exactly
+what panicked. Against ~38.5 KB it leaves ~7 KB for what play spawns
+(dropped items persist; puffs and blood do not). The per-level
+`DPRINTF` is the check on all of this: E1M1 should report about 28 KB
+free. Everything else the engine
 puts there is small: the lumps are memory-mapped from flash
 (`USE_ROWAD`, so even the blockmap and reject are pointers), and the
 status bar's backing screen is compiled out. Each level's `DPRINTF`
