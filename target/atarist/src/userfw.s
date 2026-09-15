@@ -215,6 +215,16 @@ PALETTE_SIZE          equ 32
 ; assumption -- screens land at $70000/$78000, matching md-sprites-demo).
 UFW_SCREEN_A          equ $00070000
 UFW_SCREEN_B          equ $00078000
+
+; Where main.s copies this module before running it. userfw executes
+; from ST RAM rather than in place from the cartridge, so that the RP
+; can reclaim the cartridge's 16 KB code area as ordinary SRAM for the
+; Doom zone -- see "Memory layout" in AGENTS.md. 8 KB immediately below
+; screen page A, which is the block userfw already commandeers; GEMDOS
+; has nothing here at CA_INIT time, before any disk boot.
+; KEEP IN STEP with main.s.
+UFW_RAM_DEST          equ $0006E000
+UFW_RAM_SIZE          equ $2000
 UFW_SCREEN_XOR        equ (UFW_SCREEN_A ^ UFW_SCREEN_B)
 
 UFW_FB_SRC            equ $00FA8300           ; FRAMEBUFFER_ADDR
@@ -457,13 +467,14 @@ XPAD_ENABLE           equ 0
 FORCE_NO_DMA          equ 0
     endc
 
-; Save area for vectors + MFP regs we'll restore on ESC exit. Lives
-; in the top 32 bytes of the 4 KB copied-code area below ST screen
-; memory (pre_auto in main.s relocates start_rom_code..end_rom_code
-; into that area; the bootstrap occupies the bottom ~1 KB, leaving
-; the top free). A5 holds the pointer (physbase - UFW_SAVE_SIZE)
-; throughout the userfw run; the exit path recomputes from D6
-; (physbase save) in case anything clobbered A5.
+; Save area for vectors + MFP regs we'll restore on ESC exit. A fixed
+; address in the free part of screen page A's tail, beside the other
+; UFW_* state. It used to be physbase - 32, which was fine while the
+; only way in was the autostart: on a 1 MB machine that address is the
+; top of the GEMDOS pool, and once MD/DOOM can also be launched from
+; the desktop it may be inside somebody's allocation -- including our
+; own. A5 holds the pointer throughout the userfw run; the exit path
+; reloads it in case anything clobbered A5.
 ;   offset  0: $68  HBL vector save (long)
 ;   offset  4: $110 Timer-D vector save (long)
 ;   offset  8: $114 Timer-C vector save (long)
@@ -477,8 +488,26 @@ FORCE_NO_DMA          equ 0
 ;   offset 28: MFP VR save (byte) -- S-bit + vector base, switched to auto-EOI under userfw
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
+UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F06..$77FCF gap
 
     section text
+
+; --- Relocatable image header -------------------------------------
+;
+; main.s copies this module to UFW_RAM_DEST and jumps to offset 0, so
+; offset 0 has to be a branch to the entry point rather than the entry
+; point itself. The magic and length let the copier check it is looking
+; at what it thinks it is, at both ends of the copy, and let the length
+; come from the image rather than from a constant the two files would
+; have to keep in step.
+;
+; Relocating costs nothing in this module: it is linked at $000800, not
+; $FA0800, so every self-reference is already PC-relative and there is
+; no writable data.
+userfw_image_start:
+    bra.w   userfw                   ; offset 0: entry
+    dc.b    'MDOM'                   ; offset 4: magic
+    dc.l    userfw_image_end - userfw_image_start   ; offset 8: image length
 
 userfw:
     ; --- Boot setup (runs once) ---
@@ -609,8 +638,7 @@ userfw:
     ; the 6 IRQ vectors + MFP IER/IMR; ESC exit recomputes A5 from
     ; UFW_PHYSBASE_SAVE before reading the save area, so A5 doesn't
     ; need to survive the per-VBL FBDRV_INLINE expansion.
-    movea.l UFW_PHYSBASE_SAVE, a5
-    lea     -UFW_SAVE_SIZE(a5), a5
+    lea     UFW_SAVE, a5
 
     ; The command sentinel at CMD_MAGIC_SENTINEL is RP-owned (m68k
     ; can't write to the cart shared region) and is zeroed by the
@@ -1077,8 +1105,7 @@ userfw:
 
     ; Recompute the save-area pointer from UFW_PHYSBASE_SAVE in
     ; case anything clobbered A5 during the run.
-    movea.l UFW_PHYSBASE_SAVE, a5
-    lea     -UFW_SAVE_SIZE(a5), a5
+    lea     UFW_SAVE, a5
 
     ; Stop both timers so no IRQ can fire mid-restore.
     clr.b   MFP_TBCR.w
@@ -1262,3 +1289,16 @@ userfw_snd_irq:
 userfw_dummy_irq:
     rte
 
+; The copier rounds the length up to a longword, so leave it something
+; harmless to read; the same convention the sibling projects use for
+; firmware.py's trailing-zero trim.
+    nop
+    nop
+userfw_image_end:
+
+; Build-time guard: the destination is a fixed 8 KB window immediately
+; below screen page A, so an image that outgrows it would silently
+; overrun the screen.
+    ifgt (userfw_image_end - userfw_image_start) - UFW_RAM_SIZE
+    fail "userfw image is larger than UFW_RAM_SIZE"
+    endc

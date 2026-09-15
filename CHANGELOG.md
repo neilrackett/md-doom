@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.3 (2026-09-15)
+
+- The Atari ST firmware now runs from the ST's own RAM instead of being
+  executed in place from the cartridge. Nothing about the game changes,
+  but it is what lets the cartridge's 16 KB of code space become memory
+  for the game to use, which is worth roughly a thousand more rendered
+  columns on the biggest maps.
+- The image carries a header so the copy can be checked at both ends,
+  and the build refuses to produce one too large for the space reserved
+  for it.
+
 ## v0.6.1 (2026-09-15)
 
 - Hold either Shift key at power-on to boot to the desktop instead of the

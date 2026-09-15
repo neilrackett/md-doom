@@ -92,6 +92,14 @@ MONO_UI_BUFFER_SIZE	equ 8000
 ; fixed split above $0800.)
 USERFW			equ (ROM4_ADDR + $800)				; $FA0800
 
+; userfw is copied here and run from ST RAM rather than in place from
+; the cartridge, so that the RP can reclaim the cartridge's 16 KB code
+; area as ordinary SRAM for the Doom zone. 8 KB immediately below screen
+; page A, which userfw already owns; GEMDOS has nothing here at CA_INIT
+; time, before any disk boot. KEEP IN STEP with userfw.s.
+UFW_RAM_DEST	equ $0006E000
+UFW_RAM_SIZE	equ $2000
+
 SCREEN_SIZE			equ (-4096)	; Use the memory before the screen memory to store the copied code
 PRE_RESET_WAIT		equ $FFFFF
 
@@ -313,16 +321,35 @@ start_rom_code:
 ; install itself before MD/DOOM takes the machine over.
 	check_shift_keys
 
-; The old mono boot-UI loop (.print_loop_low, which read the
-; first 8 KB of the cartridge framebuffer and expanded it 1bpp -> 4bpp
-; into the ST screen) is gone. With u8g2 removed there's nothing left
-; to render in mono, and the expander mis-mapped any 4bpp content
-; written to the cart FB (40 cart bytes -> 1 ST row, so rows 0..4 of
-; a 4bpp image landed on ST rows 0, 4, 8, 12, 16). Boot straight into
-; the user firmware: userfw owns the VBL loop and runs fbdrv (or, on
-; STE-class machines, an inline blitter copy) which copies the cart FB
-; to ST screen verbatim with the correct 4bpp planar interpretation.
-	jmp USERFW
+; Relocate the user firmware into ST RAM and run it from there. It used
+; to run in place at $FA0800 for the whole session, which kept the
+; cartridge's 16 KB code area busy forever; with nothing executing from
+; it, the RP can hand that SRAM to the Doom zone instead. userfw is
+; already position-independent (linked at $000800, every self-reference
+; PC-relative, no writable data), so this is a copy and a jump.
+;
+; The image describes itself: magic at +4, length at +8, and a branch to
+; the entry point at +0. Check it at both ends -- a bad copy here means
+; a black screen with nothing to go on.
+	cmp.l #'MDOM', USERFW+4
+	bne .bad_userfw
+	move.l USERFW+8, d6
+	beq .bad_userfw
+	cmp.l #UFW_RAM_SIZE, d6
+	bhi .bad_userfw
+
+	addq.l #3, d6				; round the length up to a longword
+	lsr.l #2, d6
+	subq.l #1, d6
+	lea USERFW, a1
+	lea UFW_RAM_DEST, a2
+.copy_userfw:
+	move.l (a1)+, (a2)+
+	dbf d6, .copy_userfw
+
+	cmp.l #'MDOM', UFW_RAM_DEST+4
+	bne .bad_userfw
+	jmp UFW_RAM_DEST
 
 .highres_unsupported:
 	print .highres_unsupported_txt
@@ -340,6 +367,15 @@ start_rom_code:
 
 .not_enough_ram_txt:
 	dc.b "MD/DOOM needs 512 KB of RAM.",$d,$a
+	dc.b 0
+	even
+
+.bad_userfw:
+	print .bad_userfw_txt
+	bra boot_gem
+
+.bad_userfw_txt:
+	dc.b "MD/DOOM: bad firmware image.",$d,$a
 	dc.b 0
 	even
 
