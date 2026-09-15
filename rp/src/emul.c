@@ -140,6 +140,18 @@ void emul_start() {
   COPY_FIRMWARE_TO_RAM((uint16_t *)target_firmware, target_firmware_length);
   cart_check("post-copy");
 
+  // The user quit the last session, so ask the m68k not to autostart
+  // this time -- they asked to leave, and the ST restarting straight
+  // back into the game would be a poor answer. Written after the image
+  // copy (which would overwrite it) and before the ST can read it.
+  if (watchdog_hw->scratch[2] == RESET_SKIP_AUTOSTART_MAGIC) {
+    watchdog_hw->scratch[2] = 0;
+    *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
+                            CART_SKIP_AUTOSTART_OFFSET)) =
+        cart_asM68kLong(CART_SKIP_AUTOSTART_MAGIC);
+    DPRINTF("asking the m68k to skip its autostart this boot\n");
+  }
+
   // Controller-input receivers before commemul: both are fed by the ROM3
   // dispatcher from fb_init onward, and their producers run on the main
   // loop rather than from an IRQ.
@@ -173,6 +185,11 @@ void emul_start() {
     DPRINTF("no ST relocation in %u ms; running without the reclaim\n",
             (unsigned)ST_RELOC_TIMEOUT_MS);
   }
+
+  // Either way the m68k has been past its autostart check by now, so
+  // clear the request: it is for one boot, not for every reset after.
+  *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
+                          CART_SKIP_AUTOSTART_OFFSET)) = 0;
 
   // 320x200 4bpp framebuffer + fb_screen for the draw primitives.
   // (This launches Core 1 for the chunky->planar worker.)

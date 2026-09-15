@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.9 (2026-09-15)
+
+- MD/DOOM can be started from the desktop: open the cartridge icon and
+  run MDDOOM.TOS. Worth doing if you have a gamepad, because programs in
+  your AUTO folder have loaded by then and the game can see them, which
+  it cannot when it starts straight from the cartridge.
+- Quitting now restarts your ST and returns you to the desktop. The game
+  takes the machine over completely while it runs, so there is nothing
+  left to hand back to.
+
 ## v0.6.7 (2026-09-15)
 
 - The game gets another 16 KB of memory, which is the point of

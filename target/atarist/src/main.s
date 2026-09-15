@@ -129,6 +129,10 @@ COMMAND_TIMEOUT           equ $0000FFFF                      ; Timeout for the c
 COMMAND_WRITE_TIMEOUT     equ COMMAND_TIMEOUT                ; Timeout for write commands
 
 SHARED_VARIABLES:         equ (FB_FRAME_COUNTER_ADDR + 4)    ; $FA4010 (60 indexed 4-byte slots, app-free)
+; Slot 0: the RP writes this before the ST reads the cartridge to ask
+; for the autostart to be skipped once, after the user has quit a game.
+; Mirrored in rp/src/include/cart_shared.h.
+SKIP_AUTOSTART_MAGIC:     equ 'SKIP'
 
 ROMCMD_START_ADDR:        equ $FB0000					  ; We are going to use ROM3 address
 CMD_MAGIC_NUMBER    	  equ ($ABCD) 					  ; Magic number header to identify a command
@@ -321,6 +325,16 @@ start_rom_code:
 ; install itself before MD/DOOM takes the machine over.
 	check_shift_keys
 
+; The RP asks for the same thing after the user quits a game: it resets
+; the ST to get its memory back, and without this the machine would come
+; straight back up in the game the user just left. One boot only -- the
+; RP clears the slot once we are past here.
+	cmp.l #SKIP_AUTOSTART_MAGIC, SHARED_VARIABLES
+	bne.s .no_skip_autostart
+	print .skip_autostart_txt
+	bra boot_gem
+.no_skip_autostart:
+
 ; Relocate the user firmware into ST RAM and run it from there. It used
 ; to run in place at $FA0800 for the whole session, which kept the
 ; cartridge's 16 KB code area busy forever; with nothing executing from
@@ -379,6 +393,11 @@ start_rom_code:
 	dc.b 0
 	even
 
+.skip_autostart_txt:
+	dc.b "MD/DOOM: returning to the desktop.",$d,$a
+	dc.b 0
+	even
+
 .banner_txt:
 	dc.b "MD/DOOM - hold SHIFT for the desktop",$d,$a
 	dc.b 0
@@ -426,19 +445,78 @@ end_pre_auto:
 ; the block pre_auto copies to RAM -- the desktop jsr's here in the
 ; cartridge, where this code stays.
 ;
-; A launcher that starts the game from here is still to come; it has to
-; relocate the user firmware into ST RAM first, because running it in
-; place from the cartridge is what stops that memory being reclaimed.
-; Until then, say so rather than doing nothing. Note the rts: returning
-; from a cartridge entry is known to throw two bombs on the way back to
-; the desktop (md-net documents the same thing, and md-js reproduces
-; it), which is one more reason the real launcher will not return at
-; all -- it will reset the machine the way quitting the game does.
+; Same relocate-and-run as the autostart path, but reached from the
+; desktop, which is the point: by then the AUTO folder has run, so an
+; Xpad provider installed as a TSR is resident and userfw's cookie walk
+; can find it. At CA_INIT time it cannot be.
+;
+; No GEMDOS Malloc, deliberately. userfw's screen pages are $70000 and
+; $78000, and on a 512 KB machine $78000 is the physical screen, which
+; TOS owns and never puts in the free pool -- so a check that the
+; largest free block spans what we need could never pass. We take the
+; same memory the autostart path takes, for the same reason it is safe
+; to: MD/DOOM owns the machine from here and never hands it back. There
+; is no rts once the copy starts.
+;
+; Returning from a cartridge entry throws two bombs on the way back to
+; the desktop -- md-net documents it and md-js reproduces it -- so the
+; error paths below are the only ones that return, and quitting the game
+; resets the ST instead.
 cart_run:
-	print .cart_run_txt
+	; Supervisor: everything below reads low memory or takes over the
+	; machine. Keep what Super returns so the error paths can go back.
+	clr.l -(sp)
+	move.w #$20, -(sp)			; GEMDOS Super
+	trap #1
+	addq.l #6, sp
+	move.l d0, d5				; old stack, for Super-back
+
+	cmp.l #$80000, phystop.w
+	blo .cart_run_no_ram
+
+	cmp.l #'MDOM', USERFW+4
+	bne .cart_run_bad
+	move.l USERFW+8, d6
+	beq .cart_run_bad
+	cmp.l #UFW_RAM_SIZE, d6
+	bhi .cart_run_bad
+
+	; Past this point there is no way back. Mask interrupts first: the
+	; copy lands on memory GEM may be using, and nothing of GEM's should
+	; run between corrupting it and userfw taking the machine over.
+	move.w #$2700, sr
+
+	addq.l #3, d6				; round the length up to a longword
+	lsr.l #2, d6
+	subq.l #1, d6
+	lea USERFW, a1
+	lea UFW_RAM_DEST, a2
+.cart_run_copy:
+	move.l (a1)+, (a2)+
+	dbf d6, .cart_run_copy
+
+	cmp.l #'MDOM', UFW_RAM_DEST+4
+	bne .cart_run_bad
+	jmp UFW_RAM_DEST
+
+.cart_run_no_ram:
+	print .cart_run_ram_txt
+	bra .cart_run_return
+
+.cart_run_bad:
+	print .cart_run_bad_txt
+
+.cart_run_return:
+	move.l d5, -(sp)
+	move.w #$20, -(sp)			; GEMDOS Super, back to user mode
+	trap #1
+	addq.l #6, sp
 	rts
 
-.cart_run_txt:
-	dc.b "MD/DOOM: reboot your ST to play.",$d,$a
-	dc.b "Launching from here is not ready yet.",$d,$a,0
+.cart_run_ram_txt:
+	dc.b "MD/DOOM needs 512 KB of RAM.",$d,$a,0
+	even
+
+.cart_run_bad_txt:
+	dc.b "MD/DOOM: bad firmware image.",$d,$a,0
 	even

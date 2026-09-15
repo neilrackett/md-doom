@@ -65,7 +65,14 @@
 #define CART_CMD_SENTINEL_OFFSET         CART_SHARED_BLOCK_OFFSET
 #define CART_FB_FRAME_COUNTER_OFFSET     (CART_SHARED_BLOCK_OFFSET + 0x0C)
 #define CART_SHARED_VARIABLES_OFFSET     (CART_SHARED_BLOCK_OFFSET + 0x10)
-#define CART_SHARED_VARIABLES_SLOTS      60      /* 240 bytes total */
+#define CART_SHARED_VARIABLES_SLOTS      60
+/* Slot 0: the RP asks the m68k to skip its autostart this once, so that
+ * quitting a game lands the user on the desktop rather than starting it
+ * again. Written after the cartridge image is copied and before the ST
+ * can read it; cleared once the boot gate resolves. Mirrored in
+ * main.s. */
+#define CART_SKIP_AUTOSTART_OFFSET       CART_SHARED_VARIABLES_OFFSET
+#define CART_SKIP_AUTOSTART_MAGIC        0x534B4950u /* 'SKIP' */      /* 240 bytes total */
 
 /* 16-entry ST palette published by the RP, applied by the m68k VBL
  * handler to $FFFF8240..$FFFF825E each frame. Format: 16 contiguous

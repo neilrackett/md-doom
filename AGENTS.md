@@ -398,6 +398,7 @@ The deltas are scaled on the way through (`MD_MOUSE_TURN_SCALE` 8,
 counts an inch and Doom turns eight angle units per count, so unscaled
 a full sweep of the mat turns a few degrees. `mouseSensitivity` is left
 at its default so those two are the only numbers to tune.
+- **Quit → the desktop.** With the cartridge code area reclaimed there is nothing to hand back to: the zone is living where the m68k's code was, and the ST has taken GEM's screen and low RAM. So `I_Quit` posts `CMD_RESET`, sets `RESET_SKIP_AUTOSTART_MAGIC` in watchdog scratch 2, and lets the loss handler restore the image and reboot. On the way back up `emul_start` writes `CART_SKIP_AUTOSTART_MAGIC` into shared-variable slot 0 before the ST can read the cartridge, `main.s` sees it and falls through to GEM, and the slot is cleared once the boot gate resolves so it applies to one boot only. Without the reclaim (no heartbeat) the old `CMD_BOOT_GEM` path still applies.
 - **Quit → Booster** (`m_menu.c`, `#if MDDOOM`). The quit prompt takes
   `B` as well as `Y` and sets `md_booster_quit`, which `I_Quit` reads;
   everything else about the exit is the quit's. It lives on the prompt

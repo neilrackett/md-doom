@@ -29,6 +29,12 @@
  * on the way back up from a clean machine. */
 #define RESET_BOOSTER_REQUEST_MAGIC 0xB0057E12u
 
+/* Watchdog scratch usage across a reboot. 0 is the Booster request
+ * above; 1 counts consecutive reboots caused by a lost ST (emul.c); 2
+ * carries "the user quit, so skip the autostart when the ST comes back"
+ * from I_Quit to the next boot. */
+#define RESET_SKIP_AUTOSTART_MAGIC 0x5C1D0FF0u
+
 /**
  * @brief Reboot, and jump to the Booster app once back up.
  *

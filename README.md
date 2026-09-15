@@ -26,7 +26,16 @@ See below if you'd prefer to build alternative level packs yourself.
 4. To return to Booster, power on your ST while holding the SELECT button on your SidecarT.
 
 Hold either **Shift** key while your ST powers on to skip the game and
-boot to the desktop instead. MD/DOOM says so on the boot screen.
+boot to the desktop instead. MD/DOOM says so on the boot screen. From
+the desktop you can start it again by opening the cartridge icon (the
+lower-case `c` drive) and running **MDDOOM.TOS**. That route is worth
+knowing: programs in your AUTO folder have run by then, so a gamepad
+driver installed there is available to the game, which it cannot be when
+MD/DOOM starts straight from the cartridge.
+
+Quitting restarts your ST and returns you to the desktop. MD/DOOM takes
+the machine over completely while it runs, so there is nothing to hand
+back to.
 
 ## Controls
 

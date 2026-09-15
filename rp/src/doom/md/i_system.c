@@ -209,6 +209,24 @@ void __attribute__((noreturn)) I_Quit(void) {
 #if MDDOOM
   if (md_booster_quit) quit_to_booster();
 #endif
+
+  /* With the cartridge code area reclaimed there is no handing the
+   * machine back: the zone is living in the memory the m68k would need
+   * to be re-read, and the ST has taken GEM's screen and low RAM
+   * anyway. So reset it instead, and ask the next boot to skip the
+   * autostart so the user lands on the desktop they asked for rather
+   * than straight back in the game. The RP follows: the heartbeat stops,
+   * the loss handler restores the cartridge image and reboots. */
+  if (fb_st_reloc_count() != 0) {
+    DPRINTF("I_Quit: resetting the ST, skipping the next autostart\n");
+    watchdog_hw->scratch[2] = RESET_SKIP_AUTOSTART_MAGIC;
+    for (;;) {
+      ikbd_request_reset();
+      fb_pump_rom3();
+      sleep_ms(20);
+    }
+  }
+
   DPRINTF("I_Quit: back to GEM\n");
   for (;;) {
     ikbd_request_boot_gem();
