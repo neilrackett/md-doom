@@ -28,12 +28,16 @@
   do {                                                                  \
     const char *file =                                                  \
         strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__; \
-    fprintf(stderr, "%s:%d:%s(): " fmt "", file, __LINE__, __func__,    \
-            ##__VA_ARGS__);                                             \
+    /* printf, not fprintf(stderr): the SDK substitutes its own compact \
+     * printf for the former, while the latter drags in newlib's, and    \
+     * with it the floating-point formatter -- about 14 KB of flash the  \
+     * debug build has not got. Both land on the same UART. */           \
+    printf("%s:%d:%s(): " fmt "", file, __LINE__, __func__,             \
+           ##__VA_ARGS__);                                              \
   } while (0)
 #define DPRINTFRAW(fmt, ...)             \
   do {                                   \
-    fprintf(stderr, fmt, ##__VA_ARGS__); \
+    printf(fmt, ##__VA_ARGS__);          \
   } while (0)
 
 /**

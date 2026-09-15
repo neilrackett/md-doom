@@ -41,15 +41,16 @@
    do {                                                                  \
      const char *file =                                                  \
          strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__; \
-     fprintf(stderr, "%s:%d:%s(): " fmt "", file, __LINE__, __func__,    \
-             ##__VA_ARGS__);                                             \
+     /* printf, not fprintf(stderr) -- see debug.h. */                   \
+     printf("%s:%d:%s(): " fmt "", file, __LINE__, __func__,             \
+            ##__VA_ARGS__);                                              \
    } while (0)
  #endif
  
  #ifndef DPRINTFRAW
  #define DPRINTFRAW(fmt, ...)             \
    do {                                   \
-     fprintf(stderr, fmt, ##__VA_ARGS__); \
+     printf(fmt, ##__VA_ARGS__);          \
    } while (0)
  #endif
  
