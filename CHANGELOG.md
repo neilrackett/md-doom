@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.7.0 (2026-09-15)
+
+- Gamepad support works. It never could before, for two reasons that
+  both needed fixing: MD/DOOM started before the AUTO folder, so a
+  driver installed there did not exist yet when the game looked for one,
+  and the game stopped the system timer the driver relies on. Start
+  MD/DOOM from the desktop and a driver in your AUTO folder is found and
+  kept running.
+- Drivers that hook the vertical blank instead of the system timer are
+  not supported: MD/DOOM needs the vertical blank for the screen.
+
 ## v0.6.9 (2026-09-15)
 
 - MD/DOOM can be started from the desktop: open the cartridge icon and

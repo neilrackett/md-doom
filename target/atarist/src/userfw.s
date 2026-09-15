@@ -461,14 +461,20 @@ SNDLEN_WINDOW_BASE    equ $FB8C00
 XPAD_HI_WINDOW_BASE   equ $FB8800
 XPAD_LO_WINDOW_BASE   equ $FB8A00
 
-; XPAD_ENABLE=1 compiles the Xpad consumer in. Off by default: it is
-; the newest code on the boot path, it dereferences a pointer handed
-; over by a third party, and until the emulator itself is proven on
-; hardware it is one variable too many. With it off the RP simply never
-; receives a report and falls back to the IKBD joystick, which is the
-; standard's own fallback ladder -- nothing else changes.
+; XPAD_ENABLE=1 compiles the Xpad consumer in: the boot-time cookie
+; walk, the per-VBL report to the RP, and the etv_timer tick that keeps
+; an ETV-hooked provider running while userfw owns the machine.
+;
+; On by default now that there is a way for a provider to exist at all.
+; It never could before: MD/DOOM autostarts at CA_INIT bit 27, before
+; the AUTO folder, so a provider installed as a TSR was not resident
+; when the cookie walk ran and UFW_XPAD_HDR latched 0 forever. Launching
+; MDDOOM.TOS from the desktop runs the walk after AUTO instead.
+;
+; With no provider found, none of it does anything and the RP falls back
+; to the IKBD joystick, which is the standard's own fallback ladder.
     ifnd    XPAD_ENABLE
-XPAD_ENABLE           equ 0
+XPAD_ENABLE           equ 1
     endc
 
 ; FORCE_NO_DMA=1 (build flag) forces detection to report "no DMA" so
@@ -927,6 +933,41 @@ userfw:
     ; that nothing is executing from the cartridge code area any more.
     lea     RELOC_WINDOW_BASE, a1
     tst.b   RELOC_PROTOCOL(a1)
+
+    ; Give an ETV-hooked Xpad provider its tick. userfw owns the
+    ; machine, so TOS's 200 Hz Timer-C is dead and etv_timer ($400) is
+    ; never called -- and etv_timer is what md-sidepad's provider hooks
+    ; by default, precisely because games take the VBL. So call the
+    ; vector here instead.
+    ;
+    ; Four times a frame, not once: it is a 200 Hz vector and such a
+    ; hook divides by four to get back to ~50 Hz, so one call per frame
+    ; would leave the pad updating at 12.5 Hz -- 80 ms of lag.
+    ;
+    ; A0 is the Timer-B audio cursor, live across the whole frame, and
+    ; an etv_timer handler may clobber A0 by convention (TOS's own ISR
+    ; saves it around the call). So save it and mask MFP while the chain
+    ; runs. The MFP latches Timer-B rather than losing it outright, so
+    ; on the YM path this costs a little phase jitter rather than
+    ; garbage; on the DMA path Timer-B is idle and A0 is free anyway.
+    ; Nothing happens at all unless a provider was found at boot.
+    ifne    XPAD_ENABLE
+    tst.l   UFW_XPAD_HDR
+    beq.s   .no_etv_tick
+    move.l  $400.w, d1                   ; etv_timer; 0 = nothing hooked
+    beq.s   .no_etv_tick
+    move.w  sr, -(sp)
+    ori.w   #$0700, sr
+    move.l  a0, -(sp)
+    movea.l d1, a1
+    moveq   #3, d7                       ; 4 calls: 200 Hz / 4 = ~50 Hz
+.etv_tick:
+    jsr     (a1)
+    dbf     d7, .etv_tick
+    movea.l (sp)+, a0
+    move.w  (sp)+, sr
+.no_etv_tick:
+    endc
 
     ; Report pad 0's Xpad buttons to the RP, when a provider was found
     ; at boot. Read tear-free the way the standard prescribes: sample

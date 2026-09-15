@@ -57,6 +57,14 @@ Controls match the original PC Doom:
 | - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
+A USB gamepad works through [Xpad](https://github.com/neilrackett/atarist-xpad)
+if you have a provider for it. Start MD/DOOM from the desktop rather
+than letting it autostart, so the provider in your AUTO folder is
+loaded first; started from the cartridge, MD/DOOM runs before your AUTO
+folder does and cannot see it. Providers that hook the vertical blank
+rather than the system timer are not supported, because MD/DOOM needs
+the vertical blank for the screen.
+
 A joystick in port 1 moves, turns and fires. The mouse turns and walks,
 with the **right** button to fire and the **left** button held to
 strafe.
