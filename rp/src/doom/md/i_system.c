@@ -41,6 +41,7 @@
 #include "pico/multicore.h"
 
 #include "audio.h"
+#include "cart_shared.h"
 #include "debug.h"
 #include "doom/m_menu.h"
 #include "fb.h"
@@ -82,9 +83,34 @@ byte *I_ZoneBase(int *size) {
   uintptr_t brk = (uintptr_t)sbrk(0);
   brk = (brk + ZONE_HEAP_MARGIN + 7u) & ~(uintptr_t)7u;
   s_zone_base = (uint8_t *)brk;
-  s_zone_end = (uint8_t *)&__StackLimit;
+
+  /* The cartridge's 16 KB code area is ordinary SRAM, immediately above
+   * __StackLimit and contiguous with the zone. It is only the m68k's to
+   * read until the m68k has copied itself into ST RAM and said so, and
+   * emul_start waits for exactly that before anything can touch it --
+   * so if the heartbeat arrived, take it. A boot without the signal (no
+   * ST, an older ST image, Shift held for the desktop) keeps the old
+   * boundary, and the build behaves as it did before.
+   *
+   * __StackLimit itself stays where it is: it bounds _sbrk as well as
+   * the zone, and letting newlib into the cartridge region is the
+   * failure the comment in memmap_rp.ld describes.
+   *
+   * The 32-byte guard keeps an overrun off the command sentinel at the
+   * top of the area. A stray write there is read by the m68k as a
+   * command, and the ST would exit to GEM for no reason -- a horrible
+   * thing to chase, where an overrun into the guard is just a zone
+   * panic naming the size it wanted. */
+  if (fb_st_reloc_count() != 0) {
+    s_zone_end = (uint8_t *)((uintptr_t)&__rom_in_ram_start__ +
+                             CART_CARTRIDGE_CODE_SIZE - 32u);
+  } else {
+    s_zone_end = (uint8_t *)&__StackLimit;
+  }
+
   *size = (int)(s_zone_end - s_zone_base);
-  DPRINTF("zone: %p .. %p (%d bytes)\n", s_zone_base, s_zone_end, *size);
+  DPRINTF("zone: %p .. %p (%d bytes%s)\n", s_zone_base, s_zone_end, *size,
+          fb_st_reloc_count() != 0 ? ", cart code area reclaimed" : "");
   return s_zone_base;
 }
 

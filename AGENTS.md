@@ -166,7 +166,7 @@ The Atari ST sees a 64 KB window at `$FA0000`–`$FAFFFF` (mirrored RP-side at `
 
 | Offset | Symbol | Size | Purpose |
 | --- | --- | --- | --- |
-| `$FA0000` | cartridge image | 16 KB | m68k header + main.s (≤ 2 KB) + userfw.s at `$800`. Read-only from m68k. |
+| `$FA0000` | cartridge image | 16 KB | m68k header + main.s (≤ 2 KB) + userfw.s at `$800`. Read-only from m68k, and **only until the m68k has copied userfw into ST RAM** — after that heartbeat the Doom zone extends over it (see "Memory layout"). |
 | `$FA4000` | `CMD_MAGIC_SENTINEL_ADDR` | 4 B | RP→m68k command word (`CMD_NOP`, `CMD_RESET`, `CMD_BOOT_GEM`, `CMD_START`). |
 | `$FA4004` | (reserved) | 8 B | Former handshake slots; unused. |
 | `$FA400C` | `FB_FRAME_COUNTER_ADDR` | 4 B | RP-incremented dirty-frame counter; `userfw.s` only blits when this changes. |
@@ -608,8 +608,15 @@ revisited in order of visible payoff.
   Nothing may render between that free and the new allocation —
   `P_SetupLevel` draws nothing, and the pack loader's progress screens
   go through `doom_video`, not the renderer.
-- **Zone heap ~72 KB**, now that the 25-47 KB column buffer comes out of
-  it rather than sitting beside it. If a map panics with "out of
+- **Zone heap ~88 KB**: ~72 KB of the main RAM region plus the 16,352
+  bytes of the cartridge code area, which is contiguous with it and
+  reclaimed once the m68k reports that it is running from ST RAM. A boot
+  without that heartbeat keeps the old boundary. `__StackLimit` stays at
+  the RAM/cartridge boundary either way — it bounds `_sbrk` as well as
+  the zone — so the reclaim is a runtime decision in `I_ZoneBase`, not a
+  linker-script one. 32 bytes of guard keep an overrun off the command
+  sentinel, where a stray write would read as a command and exit the
+  game to GEM for no reason. If a map panics with "out of
   memory", the message names what was wanted and what was free, and
   every level reports its columns and remaining zone as it loads.
   `ZONE_HEAP_MARGIN` is 2 KB: once the zone exists,

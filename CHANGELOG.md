@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.7 (2026-09-15)
+
+- The game gets another 16 KB of memory, which is the point of
+  everything since v0.6.1. The Atari ST firmware now runs from the ST's
+  own RAM, so the 16 KB the cartridge reserved for it is free, and the
+  game takes it. On the biggest map that is worth roughly 1,500 more
+  rendered columns: E1M6 should now look like the rest of the episode
+  rather than showing black holes.
+- If you reset your ST, the SidecarT notices and restarts with it, so
+  one press of reset restores both.
+
 ## v0.6.4 (2026-09-15)
 
 - The ST and the SidecarT now tell each other they are both there. The
