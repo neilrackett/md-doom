@@ -29,6 +29,8 @@
 #include "memfunc.h"
 #include "palette.h"
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
+#include "reset.h"
 #include "romemul.h"
 #include "sdcard.h"
 #include "settings/settings.h"
@@ -47,6 +49,54 @@
  * machine, and irrelevant to the user either way: the ST cannot display
  * anything until the m68k is blitting, which is after the signal. */
 #define ST_RELOC_TIMEOUT_MS 15000u
+/* How long to give the ST to come back after a reset before rebooting
+ * anyway. Its cold boot has to get as far as reading the cartridge. */
+#define ST_REJOIN_TIMEOUT_MS 5000u
+/* Reboots caused by a lost ST, counted across reboots in a watchdog
+ * scratch register (0 belongs to the Booster request). Three in a row
+ * means something is wrong that rebooting will not fix, so stop. */
+#define ST_LOSS_REBOOT_LIMIT 3
+
+/* The ST was reset. Put the cartridge image back before TOS looks for
+ * it -- by now the zone may be living in that address space -- and then
+ * restart the RP so the two come up together. Everything the engine was
+ * doing is gone either way: the restore overwrites whatever the zone
+ * had there, which is why Core 1 and the audio refill are stopped
+ * first. Does not return. */
+static void __attribute__((noreturn)) st_lost_recover(void) {
+  DPRINTF("ST lost: restoring the cartridge image\n");
+  audio_stop_vbl_timer();
+  multicore_reset_core1();
+  ERASE_FIRMWARE_IN_RAM();
+  COPY_FIRMWARE_TO_RAM((uint16_t *)target_firmware, target_firmware_length);
+
+  const uint32_t strikes = watchdog_hw->scratch[1] + 1u;
+  watchdog_hw->scratch[1] = strikes;
+
+  /* Wait for the ST to find the restored cartridge and start
+   * heartbeating again, so the reboot lands while it is busy rather
+   * than leaving it reading an unserved bus. */
+  if (fb_wait_st_reloc(ST_REJOIN_TIMEOUT_MS)) {
+    DPRINTF("ST is back; rebooting to rejoin it\n");
+  } else {
+    DPRINTF("ST did not return in time; rebooting anyway\n");
+  }
+
+  if (strikes >= ST_LOSS_REBOOT_LIMIT) {
+    /* Rebooting is not helping. Leave the cartridge restored so the ST
+     * can at least boot, and stop. */
+    DPRINTF("%u ST losses in a row; not rebooting again\n",
+            (unsigned)strikes);
+    for (;;) {
+      fb_pump_rom3();
+    }
+  }
+
+  reset_device();
+  for (;;) {
+    tight_loop_contents();
+  }
+}
 
 static bool cart_check(const char *stage) {
   static bool ok = true;
@@ -118,6 +168,7 @@ void emul_start() {
   // of the two happened on every boot.
   if (fb_wait_st_reloc(ST_RELOC_TIMEOUT_MS)) {
     DPRINTF("ST relocated to RAM; cartridge code area is reclaimable\n");
+    fb_set_st_lost_handler(st_lost_recover);
   } else {
     DPRINTF("no ST relocation in %u ms; running without the reclaim\n",
             (unsigned)ST_RELOC_TIMEOUT_MS);

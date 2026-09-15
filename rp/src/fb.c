@@ -163,8 +163,9 @@ bool fb_wait_st_reloc(uint32_t timeout_ms) {
    * wait below times out rather than blocking, so nothing else in the
    * boot path proves it. Must be called before anything could write
    * into the cartridge code area. */
+  const uint32_t start_count = s_reloc_seen;
   const uint32_t start = time_us_32();
-  while (fb_st_reloc_count() == 0) {
+  while (s_reloc_seen == start_count) {
     fb_pump_rom3();
     if ((time_us_32() - start) / 1000u >= timeout_ms) {
       return false;
@@ -174,7 +175,53 @@ bool fb_wait_st_reloc(uint32_t timeout_ms) {
   return true;
 }
 
-void fb_pump_rom3(void) { commemul_poll(fb_rom3_dispatch); }
+/* --- Has the ST gone? ---------------------------------------------
+ *
+ * The heartbeat stopping means the machine was reset: TOS is back in
+ * its memory test and everything that was running from ST RAM is gone.
+ * That matters because by then the firmware may be using the
+ * cartridge's code area as memory, so the cartridge the ST is about to
+ * read has to be put back before it looks.
+ *
+ * The test is a counter delta, never time since the ring was last
+ * drained: a level-pack load erases flash with interrupts off for the
+ * better part of a second and nothing reads the ring meanwhile, but the
+ * count has moved by the next check. Core 0 only -- the audio interrupt
+ * scans the ring without consuming it, and the recovery reads flash. */
+#define FB_ST_LOSS_US 250000u
+
+static void (*s_st_lost_cb)(void);
+static uint32_t s_live_count;
+static uint32_t s_live_us;
+
+void fb_set_st_lost_handler(void (*fn)(void)) {
+  s_live_count = s_reloc_seen;
+  s_live_us = time_us_32();
+  s_st_lost_cb = fn;
+}
+
+static void fb_check_st_alive(void) {
+  if (!s_st_lost_cb) {
+    return;
+  }
+  const uint32_t n = s_reloc_seen;
+  if (n != s_live_count) {
+    s_live_count = n;
+    s_live_us = time_us_32();
+    return;
+  }
+  if (time_us_32() - s_live_us < FB_ST_LOSS_US) {
+    return;
+  }
+  void (*cb)(void) = s_st_lost_cb;
+  s_st_lost_cb = NULL; /* one shot: the handler does not come back */
+  cb();
+}
+
+void fb_pump_rom3(void) {
+  commemul_poll(fb_rom3_dispatch);
+  fb_check_st_alive();
+}
 
 static uint32_t s_dbg_wait_max_us;
 uint32_t fb_debug_wait_max_us(void) {

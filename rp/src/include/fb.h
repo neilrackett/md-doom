@@ -101,6 +101,13 @@ void fb_pump_rom3(void);
 uint32_t fb_st_reloc_count(void);
 bool fb_wait_st_reloc(uint32_t timeout_ms);
 
+/* Called from fb_pump_rom3 when the heartbeat has been gone long enough
+ * to mean the ST was reset. The handler does not return: the cartridge
+ * image has to be put back and the RP restarted alongside the ST.
+ * Registering also arms the check, so register it only once the first
+ * heartbeat has been seen. */
+void fb_set_st_lost_handler(void (*fn)(void));
+
 #ifdef __cplusplus
 }
 #endif
