@@ -34,6 +34,13 @@
  * the cart FB. The timeout below keeps the RP from hanging if the
  * m68k isn't emitting acks (e.g. before it boots). */
 #define FB_VBLSYNC_HIBYTE   0x8400u
+/* Relocation heartbeat, one read per VBL from the m68k -- see
+ * RELOC_WINDOW_BASE in userfw.s. Emitted only from the relocated copy
+ * running in ST RAM, so it is proof that nothing is executing from the
+ * cartridge code area and that 16 KB can be reclaimed. It doubles as
+ * the ST's liveness signal. */
+#define FB_RELOC_HIBYTE     0x8E00u
+#define FB_RELOC_PROTOCOL   0x01u
 /* Every ROM3 window is a 256-byte page, so the high byte is the
  * discriminator and the low byte the payload. */
 #define FB_WINDOW_HIMASK    0xFF00u
@@ -45,6 +52,7 @@
 #define FB_VSYNC_TIMEOUT_US 60000u
 
 static volatile uint32_t s_vbl_seen;
+static volatile uint32_t s_reloc_seen;
 static uint32_t s_vbl_published;
 
 /* Boot splash, painted once by fb_init (defined below). */
@@ -141,6 +149,29 @@ static void fb_rom3_dispatch(uint16_t sample) {
   if ((sample & FB_WINDOW_HIMASK) == FB_VBLSYNC_HIBYTE) {
     s_vbl_seen++;
   }
+  if ((sample & FB_WINDOW_HIMASK) == FB_RELOC_HIBYTE &&
+      (sample & 0xFFu) == FB_RELOC_PROTOCOL) {
+    s_reloc_seen++;
+  }
+}
+
+uint32_t fb_st_reloc_count(void) { return s_reloc_seen; }
+
+bool fb_wait_st_reloc(uint32_t timeout_ms) {
+  /* Block until the m68k says it is running from ST RAM. This is the
+   * only point at which the RP can know the ST exists at all: the ack
+   * wait below times out rather than blocking, so nothing else in the
+   * boot path proves it. Must be called before anything could write
+   * into the cartridge code area. */
+  const uint32_t start = time_us_32();
+  while (fb_st_reloc_count() == 0) {
+    fb_pump_rom3();
+    if ((time_us_32() - start) / 1000u >= timeout_ms) {
+      return false;
+    }
+    sleep_us(200);
+  }
+  return true;
 }
 
 void fb_pump_rom3(void) { commemul_poll(fb_rom3_dispatch); }

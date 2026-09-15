@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.4 (2026-09-15)
+
+- The ST and the SidecarT now tell each other they are both there. The
+  ST sends a heartbeat every frame once it is running from its own RAM,
+  and the firmware waits for the first one at startup. Nothing visible
+  changes yet; it is what the memory reclaim will be gated on, and it
+  gives the serial log a definite answer about whether an ST is
+  attached.
+
 ## v0.6.3 (2026-09-15)
 
 - The Atari ST firmware now runs from the ST's own RAM instead of being

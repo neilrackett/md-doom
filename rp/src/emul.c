@@ -42,6 +42,12 @@
  * makes the ST bomb or freeze on the boot frame, with no clue on the RP
  * side that anything is wrong. Logged (debug builds only) with a stage
  * tag so the culprit can be localised over UART. */
+/* How long to wait at boot for the m68k's relocation heartbeat. Long
+ * enough for a cold ST's memory test, which is seconds on a 1 MB
+ * machine, and irrelevant to the user either way: the ST cannot display
+ * anything until the m68k is blitting, which is after the signal. */
+#define ST_RELOC_TIMEOUT_MS 15000u
+
 static bool cart_check(const char *stage) {
   static bool ok = true;
   if (ok &&
@@ -101,6 +107,21 @@ void emul_start() {
     panic("commemul_init failed");
   }
   cart_check("post-commemul");
+
+  // Wait for the m68k to say it has relocated itself into ST RAM. This
+  // has to come before anything that could write into the cartridge
+  // code area, which is why it sits here rather than later: from this
+  // point the ST is provably alive and provably not executing from the
+  // region we want to reclaim. A boot without it is not an error -- no
+  // ST attached, an older firmware image, or the user held Shift for
+  // the desktop -- it simply means the reclaim stays off, so say which
+  // of the two happened on every boot.
+  if (fb_wait_st_reloc(ST_RELOC_TIMEOUT_MS)) {
+    DPRINTF("ST relocated to RAM; cartridge code area is reclaimable\n");
+  } else {
+    DPRINTF("no ST relocation in %u ms; running without the reclaim\n",
+            (unsigned)ST_RELOC_TIMEOUT_MS);
+  }
 
   // 320x200 4bpp framebuffer + fb_screen for the draw primitives.
   // (This launches Core 1 for the chunky->planar worker.)

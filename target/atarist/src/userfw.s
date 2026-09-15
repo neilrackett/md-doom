@@ -408,6 +408,16 @@ COOKIE_SND            equ $5F534E44          ; '_SND'; value bit 1 = DMA/PCM sou
 ; and VBLSYNC ($FB8400).
 SNDCAP_WINDOW_BASE    equ $FB8600
 
+; Relocation heartbeat: the m68k reads (RELOC_WINDOW_BASE + protocol
+; version) once per VBL, from the display loop and therefore only ever
+; from code running at UFW_RAM_DEST. It tells the RP three things with
+; one read: that this firmware relocated itself and the cartridge's code
+; area is free to reclaim, that the ST is still alive (the RP watches
+; for it to stop), and which protocol to expect. Distinct from IKBD
+; ($FB8200), VBLSYNC ($FB8400), SNDCAP ($FB8600) and Xpad ($FB8800/A00).
+RELOC_WINDOW_BASE     equ $FB8E00
+RELOC_PROTOCOL        equ 1
+
 ; Buffer-length report: the m68k reads (SNDLEN_WINDOW_BASE + len -
 ; STE_SND_LEN_MIN) once per VBL while STE DMA sound is running, so the
 ; RP produces exactly the number of samples the chip is about to eat.
@@ -911,6 +921,12 @@ userfw:
     move.b  UFW_HAS_DMA, d1
     lea     SNDCAP_WINDOW_BASE, a1
     tst.b   (a1, d1.w)
+
+    ; Relocation heartbeat, one read per VBL. Reached only from the
+    ; relocated copy, which is the whole point: it is the RP's proof
+    ; that nothing is executing from the cartridge code area any more.
+    lea     RELOC_WINDOW_BASE, a1
+    tst.b   RELOC_PROTOCOL(a1)
 
     ; Report pad 0's Xpad buttons to the RP, when a provider was found
     ; at boot. Read tear-free the way the standard prescribes: sample

@@ -15,6 +15,7 @@
 #ifndef FB_H
 #define FB_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -90,6 +91,15 @@ uint32_t fb_debug_wait_max_us(void);
  *         waiting for the VBL ack, so IKBD/ESC stay responsive during
  *         the wait. */
 void fb_pump_rom3(void);
+
+/* Relocation heartbeat from the m68k (userfw.s's RELOC_WINDOW_BASE),
+ * one per VBL once it is running from ST RAM rather than in place from
+ * the cartridge. `fb_wait_st_reloc` blocks for the first one, pumping
+ * the ROM3 ring, and returns false if it never arrives -- an ST that is
+ * not there, or an older firmware image. The count is what the liveness
+ * check watches for standing still. */
+uint32_t fb_st_reloc_count(void);
+bool fb_wait_st_reloc(uint32_t timeout_ms);
 
 #ifdef __cplusplus
 }
