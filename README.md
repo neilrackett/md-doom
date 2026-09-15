@@ -25,6 +25,9 @@ See below if you'd prefer to build alternative level packs yourself.
 3. On the Booster screen, press ESC for the app list and select MD/DOOM.
 4. To return to Booster, power on your ST while holding the SELECT button on your SidecarT.
 
+Hold either **Shift** key while your ST powers on to skip the game and
+boot to the desktop instead. MD/DOOM says so on the boot screen.
+
 ## Controls
 
 Controls match the original PC Doom:

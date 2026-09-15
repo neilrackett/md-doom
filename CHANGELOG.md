@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.6.1 (2026-09-15)
+
+- Hold either Shift key at power-on to boot to the desktop instead of the
+  game. The boot screen says so.
+- The cartridge icon is named MDDOOM.TOS and no longer crashes if you
+  double-click it: it had no run address at all, which the desktop reads
+  as a jump to address 0. It says the launcher is not ready yet, which
+  is the next piece of work.
+- MD/DOOM now says so and stops if the machine has less than 512 KB.
+  The screen pages have always assumed it and nothing ever checked.
+
 ## v0.5.21 (2026-09-14)
 
 - The level selector uses the ordinary message font, and the firmware no

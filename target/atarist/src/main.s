@@ -240,16 +240,22 @@ check_commands		macro
 
 	org ROM4_ADDR
 
+; One entry carries both jobs: CA_INIT (bit 27) autostarts it at boot,
+; and CA_RUN is what the desktop calls when the icon is double-clicked.
+; TOS shows the cartridge as a lower-case "c" drive and lists every
+; entry in the CA_NEXT chain by its CA_NAME, so no second entry and no
+; filesystem emulation is needed for a launchable MDDOOM.TOS.
+;
+; CA_RUN must never be 0: the desktop calls it for any entry the user
+; clicks, and a 0 here is a jsr to address 0.
 	dc.l $abcdef42 					; magic number
-first:
-;	dc.l second
-	dc.l 0
+	dc.l 0							; CA_NEXT: end of chain
 	dc.l $08000000 + pre_auto		; After GEMDOS init (before booting from disks)
-	dc.l 0
+	dc.l cart_run					; CA_RUN: double-clicked from the desktop
 	dc.w GEMDOS_TIME 				;time
 	dc.w GEMDOS_DATE 				;date
 	dc.l end_pre_auto - pre_auto
-	dc.b "TERM",0
+	dc.b "MDDOOM.TOS",0
     even
 
 pre_auto:
@@ -285,6 +291,28 @@ start_rom_code:
 	cmp.w #2, d0
 	beq .highres_unsupported
 
+; The user firmware puts its two screen pages at $70000 and $78000 and
+; keeps its per-VBL state in their tails, so it needs RAM up to $80000.
+; That has always been assumed and never checked; check it here, where
+; there is still a console to say so on.
+	cmp.l #$80000, phystop.w
+	blo .not_enough_ram
+
+; Say what this is and how to get past it. Cconws works at this point in
+; the boot -- the high-res bail-out below has always relied on it -- and
+; the message lands on the normal TOS boot console, above whatever TOS
+; prints next, until the game takes the screen.
+;
+; "Hold", not "press": the check below is a single sample taken right
+; now, so the key has to be down already. That is the usual ST idiom and
+; it keeps the normal path free of any boot delay.
+	print .banner_txt
+
+; Either shift key held means skip the game and carry on booting to the
+; desktop, where an Xpad provider in the AUTO folder gets a chance to
+; install itself before MD/DOOM takes the machine over.
+	check_shift_keys
+
 ; The old mono boot-UI loop (.print_loop_low, which read the
 ; first 8 KB of the cartridge framebuffer and expanded it 1bpp -> 4bpp
 ; into the ST screen) is gone. With u8g2 removed there's nothing left
@@ -303,6 +331,20 @@ start_rom_code:
 .highres_unsupported_txt:
 	dc.b "High resolution (640x400) not supported.",$d,$a
 	dc.b "Switch to low or medium res and reboot.",$d,$a
+	dc.b 0
+	even
+
+.not_enough_ram:
+	print .not_enough_ram_txt
+	bra boot_gem
+
+.not_enough_ram_txt:
+	dc.b "MD/DOOM needs 512 KB of RAM.",$d,$a
+	dc.b 0
+	even
+
+.banner_txt:
+	dc.b "MD/DOOM - hold SHIFT for the desktop",$d,$a
 	dc.b 0
 	even
 
@@ -342,3 +384,25 @@ end_rom_code:
 end_pre_auto:
 	even
 	dc.l 0
+
+; CA_RUN: the desktop calls this when MDDOOM.TOS is double-clicked.
+; Deliberately outside start_rom_code..end_rom_code so it is not part of
+; the block pre_auto copies to RAM -- the desktop jsr's here in the
+; cartridge, where this code stays.
+;
+; A launcher that starts the game from here is still to come; it has to
+; relocate the user firmware into ST RAM first, because running it in
+; place from the cartridge is what stops that memory being reclaimed.
+; Until then, say so rather than doing nothing. Note the rts: returning
+; from a cartridge entry is known to throw two bombs on the way back to
+; the desktop (md-net documents the same thing, and md-js reproduces
+; it), which is one more reason the real launcher will not return at
+; all -- it will reset the machine the way quitting the game does.
+cart_run:
+	print .cart_run_txt
+	rts
+
+.cart_run_txt:
+	dc.b "MD/DOOM: reboot your ST to play.",$d,$a
+	dc.b "Launching from here is not ready yet.",$d,$a,0
+	even
