@@ -23,6 +23,12 @@
  * cartridge image back and restart. Does not return. */
 void emul_quit_to_desktop(void);
 
+/* Ask the m68k to reset itself -- repeatedly, for long enough that it
+ * cannot miss the sentinel -- then stop core 1 and the audio refill.
+ * Shared by both routes out of a session: the quit to the desktop and
+ * the jump to the Booster. */
+void emul_request_st_reset(void);
+
 void emul_start();
 
 #endif  // EMUL_H

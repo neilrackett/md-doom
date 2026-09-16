@@ -505,6 +505,9 @@ FORCE_NO_DMA          equ 0
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
 UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F06..$77FCF gap
+    ifgt  UFW_SAVE+UFW_SAVE_SIZE-$00077FD0
+    fail  "userfw save area runs past the free gap at $77FD0"
+    endc
 
     section text
 
@@ -650,10 +653,9 @@ userfw:
 
     ; --- IKBD ownership setup --------------------------------------
     ;
-    ; A5 = save area pointer (physbase - 32). Used at boot to save
-    ; the 6 IRQ vectors + MFP IER/IMR; ESC exit recomputes A5 from
-    ; UFW_PHYSBASE_SAVE before reading the save area, so A5 doesn't
-    ; need to survive the per-VBL FBDRV_INLINE expansion.
+    ; A5 = save area pointer. Used at boot to save the 6 IRQ vectors
+    ; + MFP IER/IMR; the exit path reloads it the same way, so A5 does
+    ; not need to survive the per-VBL FBDRV_INLINE expansion.
     lea     UFW_SAVE, a5
 
     ; The command sentinel at CMD_MAGIC_SENTINEL is RP-owned (m68k
@@ -931,8 +933,7 @@ userfw:
     ; Relocation heartbeat, one read per VBL. Reached only from the
     ; relocated copy, which is the whole point: it is the RP's proof
     ; that nothing is executing from the cartridge code area any more.
-    lea     RELOC_WINDOW_BASE, a1
-    tst.b   RELOC_PROTOCOL(a1)
+    tst.b   RELOC_WINDOW_BASE+RELOC_PROTOCOL
 
     ; Give an ETV-hooked Xpad provider its tick. userfw owns the
     ; machine, so TOS's 200 Hz Timer-C is dead and etv_timer ($400) is
@@ -1160,8 +1161,8 @@ userfw:
     move.b  #$00, STE_DMA_CTRL.w
 .no_dma_stop:
 
-    ; Recompute the save-area pointer from UFW_PHYSBASE_SAVE in
-    ; case anything clobbered A5 during the run.
+    ; Reload the save-area pointer in case anything clobbered A5
+    ; during the run.
     lea     UFW_SAVE, a5
 
     ; Stop both timers so no IRQ can fire mid-restore.

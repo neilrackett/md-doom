@@ -155,7 +155,7 @@ static void fb_rom3_dispatch(uint16_t sample) {
   }
 }
 
-uint32_t fb_st_reloc_count(void) { return s_reloc_seen; }
+bool fb_st_relocated(void) { return s_reloc_seen != 0u; }
 
 bool fb_wait_st_reloc(uint32_t timeout_ms) {
   /* Block until the m68k says it is running from ST RAM. This is the

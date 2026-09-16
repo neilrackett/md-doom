@@ -1,8 +1,28 @@
 # Changelog
 
-## v0.6.20 (2026-09-16)
+## v0.7.0 (2026-09-16)
 
-- Boot messages are sentence case after the `MD/DOOM:` prefix.
+- MD/DOOM now runs its Atari ST firmware from the ST's own RAM instead
+  of from the cartridge, which frees the cartridge's 16 KB of code space
+  for Doom's memory pool — about 16 KB more for the levels to live in.
+- The cartridge appears on the desktop as drive `c` holding
+  `MDDOOM.TOS`, so you can start the game by double-clicking it after
+  the machine has booted. That is what makes a gamepad work: an Xpad
+  driver in your AUTO folder is loaded by then, where the automatic
+  start happens too early to see it.
+- Hold either SHIFT key at power-on to go to the desktop instead of
+  starting the game.
+- Gamepad support is on.
+- Quitting returns you to the desktop, and the ST and the cartridge now
+  recover together if you press reset mid-game.
+- Boot messages: version, copyright and licence first, then whatever
+  needs saying — that it needs a colour monitor or 512 KB, that SHIFT
+  goes to the desktop, or how to start the game again after quitting.
+
+## v0.6.21 (2026-09-16)
+
+- Boot messages are sentence case after the `MD/DOOM:` prefix, with no
+  trailing full stop.
 
 ## v0.6.19 (2026-09-16)
 

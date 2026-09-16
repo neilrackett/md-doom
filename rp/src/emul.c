@@ -57,31 +57,40 @@
  * means something is wrong that rebooting will not fix, so stop. */
 #define ST_LOSS_REBOOT_LIMIT 3
 
-/* The ST was reset. Put the cartridge image back before TOS looks for
- * it -- by now the zone may be living in that address space -- and then
- * restart the RP so the two come up together. Everything the engine was
- * doing is gone either way: the restore overwrites whatever the zone
- * had there, which is why Core 1 and the audio refill are stopped
- * first. Does not return. */
 /* Put the cartridge image back where the zone has been living, and ask
  * the next boot to skip the autostart if the user asked to leave. Used
  * by both routes out: the user quitting, and the ST being reset under
  * us. Everything the engine was doing dies here -- the restore
  * overwrites whatever the zone had in that address space -- so core 1
  * and the audio refill stop first. */
+static void cart_skip_autostart(bool skip) {
+  *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
+                          CART_SKIP_AUTOSTART_OFFSET)) =
+      skip ? cart_asM68kLong(CART_SKIP_AUTOSTART_MAGIC) : 0u;
+}
+
 static void restore_cart_image(void) {
   audio_stop_vbl_timer();
   multicore_reset_core1();
   ERASE_FIRMWARE_IN_RAM();
   COPY_FIRMWARE_TO_RAM((uint16_t *)target_firmware, target_firmware_length);
-  if (watchdog_hw->scratch[2] == RESET_SKIP_AUTOSTART_MAGIC) {
-    /* Write it now rather than waiting for the reboot to do it: the ST
-     * is already cold-booting, and if it reaches the cartridge first it
-     * would autostart the game the user has just quit. */
-    *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
-                            CART_SKIP_AUTOSTART_OFFSET)) =
-        cart_asM68kLong(CART_SKIP_AUTOSTART_MAGIC);
+}
+
+/* Ask the m68k to reset itself, and keep asking: it reads the sentinel
+ * once per VBL, and the window has to be long enough that it cannot be
+ * missed but short enough that the ST is still in its memory test when
+ * the RP follows it down. Both routes out of a session come through
+ * here -- the user quitting, and the jump to the Booster -- so the
+ * window is one number in one place. */
+void emul_request_st_reset(void) {
+  const uint32_t start = time_us_32();
+  while ((time_us_32() - start) < 400000u) {
+    ikbd_request_reset();
+    fb_pump_rom3();
+    sleep_ms(20);
   }
+  audio_stop_vbl_timer();
+  multicore_reset_core1();
 }
 
 /* The user quit and the ST has been told to reset. Deterministic: do
@@ -93,20 +102,14 @@ void __attribute__((noreturn)) emul_quit_to_desktop(void) {
   fb_set_st_lost_handler(NULL); /* this is the planned exit, not a loss */
   watchdog_hw->scratch[2] = RESET_SKIP_AUTOSTART_MAGIC;
 
-  /* Long enough for the m68k to read the sentinel on its next VBL and
-   * act on it, and short enough that it is still in its memory test. */
-  const uint32_t start = time_us_32();
-  while ((time_us_32() - start) < 400000u) {
-    ikbd_request_reset();
-    fb_pump_rom3();
-    sleep_ms(20);
-  }
-
+  emul_request_st_reset();
   restore_cart_image();
+
+  /* Write it now rather than leaving it to the reboot: the ST is
+   * already cold-booting, and if it reaches the cartridge first it
+   * would autostart the game the user has just quit. */
+  cart_skip_autostart(true);
   reset_device();
-  for (;;) {
-    tight_loop_contents();
-  }
 }
 
 static void __attribute__((noreturn)) st_lost_recover(void) {
@@ -119,11 +122,9 @@ static void __attribute__((noreturn)) st_lost_recover(void) {
   /* Wait for the ST to find the restored cartridge and start
    * heartbeating again, so the reboot lands while it is busy rather
    * than leaving it reading an unserved bus. */
-  if (fb_wait_st_reloc(ST_REJOIN_TIMEOUT_MS)) {
-    DPRINTF("ST is back; rebooting to rejoin it\n");
-  } else {
-    DPRINTF("ST did not return in time; rebooting anyway\n");
-  }
+  DPRINTF("ST %s; rebooting to rejoin it\n",
+          fb_wait_st_reloc(ST_REJOIN_TIMEOUT_MS) ? "is back"
+                                                 : "did not return in time");
 
   if (strikes >= ST_LOSS_REBOOT_LIMIT) {
     /* Rebooting is not helping. Leave the cartridge restored so the ST
@@ -136,9 +137,6 @@ static void __attribute__((noreturn)) st_lost_recover(void) {
   }
 
   reset_device();
-  for (;;) {
-    tight_loop_contents();
-  }
 }
 
 static bool cart_check(const char *stage) {
@@ -189,9 +187,7 @@ void emul_start() {
   // copy (which would overwrite it) and before the ST can read it.
   if (watchdog_hw->scratch[2] == RESET_SKIP_AUTOSTART_MAGIC) {
     watchdog_hw->scratch[2] = 0;
-    *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
-                            CART_SKIP_AUTOSTART_OFFSET)) =
-        cart_asM68kLong(CART_SKIP_AUTOSTART_MAGIC);
+    cart_skip_autostart(true);
     DPRINTF("asking the m68k to skip its autostart this boot\n");
   }
 
@@ -232,8 +228,7 @@ void emul_start() {
 
   // Either way the m68k has been past its autostart check by now, so
   // clear the request: it is for one boot, not for every reset after.
-  *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
-                          CART_SKIP_AUTOSTART_OFFSET)) = 0;
+  cart_skip_autostart(false);
 
   // 320x200 4bpp framebuffer + fb_screen for the draw primitives.
   // (This launches Core 1 for the chunky->planar worker.)

@@ -96,9 +96,10 @@ void fb_pump_rom3(void);
  * one per VBL once it is running from ST RAM rather than in place from
  * the cartridge. `fb_wait_st_reloc` blocks for the first one, pumping
  * the ROM3 ring, and returns false if it never arrives -- an ST that is
- * not there, or an older firmware image. The count is what the liveness
- * check watches for standing still. */
-uint32_t fb_st_reloc_count(void);
+ * not there, or an older firmware image. fb.c keeps the count itself,
+ * for the liveness check to watch for standing still; callers outside
+ * only ever ask whether it has happened. */
+bool fb_st_relocated(void);
 bool fb_wait_st_reloc(uint32_t timeout_ms);
 
 /* Called from fb_pump_rom3 when the heartbeat has been gone long enough

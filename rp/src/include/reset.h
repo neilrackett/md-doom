@@ -40,7 +40,7 @@
  *
  * @note This function does not return.
  */
-static inline void reset_reboot_to_booster(void) {
+static inline void __attribute__((noreturn)) reset_reboot_to_booster(void) {
   watchdog_hw->scratch[0] = RESET_BOOSTER_REQUEST_MAGIC;
   save_and_disable_interrupts();
   watchdog_reboot(0, 0, RESET_WATCHDOG_TIMEOUT);
@@ -101,7 +101,7 @@ static inline void reset_jump_to_booster(void) {
  * @note This function should not return. If it does, an error message is
  * printed.
  */
-void reset_device();
+void __attribute__((noreturn)) reset_device();
 
 /**
  * @brief Reset the app and reentry in the main device app in flash.
@@ -114,6 +114,6 @@ void reset_device();
  * @note This function should not return. If it does, an error message is
  * printed.
  */
-void reset_deviceAndEraseFlash();
+void __attribute__((noreturn)) reset_deviceAndEraseFlash();
 
 #endif  // RESET_H

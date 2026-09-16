@@ -351,7 +351,7 @@ start_rom_code:
 ; "Hold", not "press": the check below is a single sample taken right
 ; now, so the key has to be down already. That is the usual ST idiom and
 ; it keeps the normal path free of any boot delay.
-	print .shift_hint_txt
+	print msg_shift_hint
 
 ; Either shift key held means skip the game and carry on booting to the
 ; desktop, where an Xpad provider in the AUTO folder gets a chance to
@@ -389,46 +389,21 @@ start_rom_code:
 	jmp UFW_RAM_DEST
 
 .skip_autostart:
-	print .skip_autostart_txt
+	print msg_run_from_c
 	bra boot_gem
-
-.skip_autostart_txt:
-	dc.b $d,$a,"MD/DOOM: Run MDDOOM.TOS from drive c.",$d,$a
-	dc.b 0
-	even
 
 .highres_unsupported:
 	print banner_txt
-	print .highres_unsupported_txt
+	print msg_needs_colour
 	bra boot_gem
-
-.highres_unsupported_txt:
-	dc.b $d,$a,"MD/DOOM: Needs a colour monitor.",$d,$a
-	dc.b 0
-	even
 
 .not_enough_ram:
-	print .not_enough_ram_txt
+	print msg_no_ram
 	bra boot_gem
-
-.not_enough_ram_txt:
-	dc.b $d,$a,"MD/DOOM: Needs 512 KB of RAM.",$d,$a
-	dc.b 0
-	even
 
 .bad_userfw:
-	print .bad_userfw_txt
+	print msg_bad_image
 	bra boot_gem
-
-.bad_userfw_txt:
-	dc.b $d,$a,"MD/DOOM: Bad firmware image.",$d,$a
-	dc.b 0
-	even
-
-.shift_hint_txt:
-	dc.b $d,$a,"MD/DOOM: Hold SHIFT for the desktop.",$d,$a
-	dc.b 0
-	even
 
 .reset:
     move.l #PRE_RESET_WAIT, d6
@@ -539,17 +514,17 @@ cart_run:
 
 .cart_run_highres:
 	print banner_txt
-	print .cart_run_rez_txt
+	print msg_needs_colour
 	bra .cart_run_return
 
 .cart_run_no_ram:
 	print banner_txt
-	print .cart_run_ram_txt
+	print msg_no_ram
 	bra .cart_run_return
 
 .cart_run_bad:
 	print banner_txt
-	print .cart_run_bad_txt
+	print msg_bad_image
 
 .cart_run_return:
 	move.l d5, -(sp)
@@ -558,16 +533,28 @@ cart_run:
 	addq.l #6, sp
 	rts
 
-.cart_run_ram_txt:
-	dc.b $d,$a,"MD/DOOM: Needs 512 KB of RAM.",$d,$a,0
-	even
 
-.cart_run_rez_txt:
-	dc.b $d,$a,"MD/DOOM: Needs a colour monitor.",$d,$a,0
-	even
 
-.cart_run_bad_txt:
-	dc.b $d,$a,"MD/DOOM: Bad firmware image.",$d,$a,0
+
+; The messages, one copy each, shared by both entry paths. Data only --
+; the code that prints them is deliberately NOT shared, see cart_run.
+; print's pea takes an absolute address, so the block copied below the
+; screen reaches these here in the cartridge, as it already does for the
+; banner.
+msg_needs_colour:
+	dc.b $d,$a,"MD/DOOM: Needs a colour monitor",$d,$a,0
+	even
+msg_no_ram:
+	dc.b $d,$a,"MD/DOOM: Needs 512 KB of RAM",$d,$a,0
+	even
+msg_bad_image:
+	dc.b $d,$a,"MD/DOOM: Bad firmware image",$d,$a,0
+	even
+msg_shift_hint:
+	dc.b $d,$a,"MD/DOOM: Hold SHIFT for the desktop",$d,$a,0
+	even
+msg_run_from_c:
+	dc.b $d,$a,"MD/DOOM: Run MDDOOM.TOS from drive c",$d,$a,0
 	even
 
 ; Boot banner, printed above every message either entry path produces.

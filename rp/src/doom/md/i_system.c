@@ -102,7 +102,8 @@ byte *I_ZoneBase(int *size) {
    * command, and the ST would exit to GEM for no reason -- a horrible
    * thing to chase, where an overrun into the guard is just a zone
    * panic naming the size it wanted. */
-  if (fb_st_reloc_count() != 0) {
+  const bool reclaimed = fb_st_relocated();
+  if (reclaimed) {
     s_zone_end = (uint8_t *)((uintptr_t)&__rom_in_ram_start__ +
                              CART_CARTRIDGE_CODE_SIZE - 32u);
   } else {
@@ -111,7 +112,7 @@ byte *I_ZoneBase(int *size) {
 
   *size = (int)(s_zone_end - s_zone_base);
   DPRINTF("zone: %p .. %p (%d bytes%s)\n", s_zone_base, s_zone_end, *size,
-          fb_st_reloc_count() != 0 ? ", cart code area reclaimed" : "");
+          reclaimed ? ", cart code area reclaimed" : "");
   return s_zone_base;
 }
 
@@ -190,17 +191,8 @@ void I_Init(void) { I_InputInit(); }
  * code across the reset. */
 static void __attribute__((noreturn)) quit_to_booster(void) {
   DPRINTF("I_Quit: over to the Booster\n");
-  for (int i = 0; i < 20; i++) { /* ~400 ms of asking */
-    ikbd_request_reset();
-    fb_pump_rom3();
-    sleep_ms(20);
-  }
-  audio_stop_vbl_timer();
-  multicore_reset_core1();
+  emul_request_st_reset();
   reset_reboot_to_booster(); /* does not return */
-  for (;;) {
-    tight_loop_contents();
-  }
 }
 
 /* Quit: tell the m68k to return to GEM and idle. Nothing on the RP side
@@ -218,7 +210,7 @@ void __attribute__((noreturn)) I_Quit(void) {
    * autostart so the user lands on the desktop they asked for rather
    * than straight back in the game. The RP follows: the heartbeat stops,
    * the loss handler restores the cartridge image and reboots. */
-  if (fb_st_reloc_count() != 0) {
+  if (fb_st_relocated()) {
     emul_quit_to_desktop(); /* does not return */
   }
 

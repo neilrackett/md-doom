@@ -1,6 +1,6 @@
 #include "reset.h"
 
-void reset_device() {
+void __attribute__((noreturn)) reset_device() {
   DPRINTF("Resetting the device\n");
 
   save_and_disable_interrupts();
@@ -14,7 +14,7 @@ void reset_device() {
   DPRINTF("You should never reach this point\n");
 }
 
-void reset_deviceAndEraseFlash() {
+void __attribute__((noreturn)) reset_deviceAndEraseFlash() {
   // Erase the settings
   DPRINTF("Erasing the flash memory\n");
   settings_erase(gconfig_getContext());
