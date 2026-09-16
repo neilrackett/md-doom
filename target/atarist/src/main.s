@@ -336,6 +336,18 @@ start_rom_code:
 	cmp.l #$80000, phystop.w
 	blo .not_enough_ram
 
+; The RP asks for the desktop after the user quits a game: it resets the
+; ST to get its memory back, and without this the machine would come
+; straight back up in the game the user just left. One boot only -- the
+; RP clears the slot once we are past here.
+;
+; Checked before the hint below, not after: this boot is going to the
+; desktop whatever the keyboard says, so telling the user to hold SHIFT
+; for something they are already getting reads as a message that was
+; ignored. Say how to come back instead.
+	cmp.l #SKIP_AUTOSTART_MAGIC, SHARED_VARIABLES
+	beq .skip_autostart
+
 ; "Hold", not "press": the check below is a single sample taken right
 ; now, so the key has to be down already. That is the usual ST idiom and
 ; it keeps the normal path free of any boot delay.
@@ -345,13 +357,6 @@ start_rom_code:
 ; desktop, where an Xpad provider in the AUTO folder gets a chance to
 ; install itself before MD/DOOM takes the machine over.
 	check_shift_keys
-
-; The RP asks for the same thing after the user quits a game: it resets
-; the ST to get its memory back, and without this the machine would come
-; straight back up in the game the user just left. One boot only -- the
-; RP clears the slot once we are past here.
-	cmp.l #SKIP_AUTOSTART_MAGIC, SHARED_VARIABLES
-	beq boot_gem
 
 ; Relocate the user firmware into ST RAM and run it from there. It used
 ; to run in place at $FA0800 for the whole session, which kept the
@@ -382,6 +387,15 @@ start_rom_code:
 	cmp.l #'MDOM', UFW_RAM_DEST+4
 	bne .bad_userfw
 	jmp UFW_RAM_DEST
+
+.skip_autostart:
+	print .skip_autostart_txt
+	bra boot_gem
+
+.skip_autostart_txt:
+	dc.b $d,$a,"MD/DOOM: run MDDOOM.TOS from drive c.",$d,$a
+	dc.b 0
+	even
 
 .highres_unsupported:
 	print banner_txt

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6.19 (2026-09-16)
+
+- Quitting a desktop-launched game used to come back up saying to hold
+  SHIFT for the desktop, which is where that boot was going anyway. The
+  skip-autostart check now runs before the hint, and that boot says how
+  to get back into the game instead: run MDDOOM.TOS from drive c.
+
 ## v0.6.18 (2026-09-16)
 
 - The boot messages now follow MD/Net's shape: the standard banner —
