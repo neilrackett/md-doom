@@ -393,7 +393,7 @@ start_rom_code:
 	bra boot_gem
 
 .skip_autostart_txt:
-	dc.b $d,$a,"MD/DOOM: run MDDOOM.TOS from drive c.",$d,$a
+	dc.b $d,$a,"MD/DOOM: Run MDDOOM.TOS from drive c.",$d,$a
 	dc.b 0
 	even
 
@@ -403,7 +403,7 @@ start_rom_code:
 	bra boot_gem
 
 .highres_unsupported_txt:
-	dc.b $d,$a,"MD/DOOM: needs a colour monitor.",$d,$a
+	dc.b $d,$a,"MD/DOOM: Needs a colour monitor.",$d,$a
 	dc.b 0
 	even
 
@@ -412,7 +412,7 @@ start_rom_code:
 	bra boot_gem
 
 .not_enough_ram_txt:
-	dc.b $d,$a,"MD/DOOM: needs 512 KB of RAM.",$d,$a
+	dc.b $d,$a,"MD/DOOM: Needs 512 KB of RAM.",$d,$a
 	dc.b 0
 	even
 
@@ -421,12 +421,12 @@ start_rom_code:
 	bra boot_gem
 
 .bad_userfw_txt:
-	dc.b $d,$a,"MD/DOOM: bad firmware image.",$d,$a
+	dc.b $d,$a,"MD/DOOM: Bad firmware image.",$d,$a
 	dc.b 0
 	even
 
 .shift_hint_txt:
-	dc.b $d,$a,"MD/DOOM: hold SHIFT for the desktop.",$d,$a
+	dc.b $d,$a,"MD/DOOM: Hold SHIFT for the desktop.",$d,$a
 	dc.b 0
 	even
 
@@ -559,15 +559,15 @@ cart_run:
 	rts
 
 .cart_run_ram_txt:
-	dc.b $d,$a,"MD/DOOM: needs 512 KB of RAM.",$d,$a,0
+	dc.b $d,$a,"MD/DOOM: Needs 512 KB of RAM.",$d,$a,0
 	even
 
 .cart_run_rez_txt:
-	dc.b $d,$a,"MD/DOOM: needs a colour monitor.",$d,$a,0
+	dc.b $d,$a,"MD/DOOM: Needs a colour monitor.",$d,$a,0
 	even
 
 .cart_run_bad_txt:
-	dc.b $d,$a,"MD/DOOM: bad firmware image.",$d,$a,0
+	dc.b $d,$a,"MD/DOOM: Bad firmware image.",$d,$a,0
 	even
 
 ; Boot banner, printed above every message either entry path produces.

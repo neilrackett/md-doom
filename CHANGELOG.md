@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.20 (2026-09-16)
+
+- Boot messages are sentence case after the `MD/DOOM:` prefix.
+
 ## v0.6.19 (2026-09-16)
 
 - Quitting a desktop-launched game used to come back up saying to hold
