@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.6.17 (2026-09-16)
+
+- The boot messages read consistently, and leaving for the desktop no
+  longer announces itself. The high-resolution message also said to
+  switch to medium and reboot, which stopped being true when MD/DOOM
+  started switching to low resolution itself; it now just says it needs
+  a colour monitor.
+
 ## v0.6.16 (2026-09-16)
 
 - Starting MD/DOOM from the desktop in medium resolution no longer

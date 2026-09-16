@@ -350,10 +350,7 @@ start_rom_code:
 ; straight back up in the game the user just left. One boot only -- the
 ; RP clears the slot once we are past here.
 	cmp.l #SKIP_AUTOSTART_MAGIC, SHARED_VARIABLES
-	bne.s .no_skip_autostart
-	print .skip_autostart_txt
-	bra boot_gem
-.no_skip_autostart:
+	beq boot_gem
 
 ; Relocate the user firmware into ST RAM and run it from there. It used
 ; to run in place at $FA0800 for the whole session, which kept the
@@ -390,8 +387,7 @@ start_rom_code:
 	bra boot_gem
 
 .highres_unsupported_txt:
-	dc.b "High resolution (640x400) not supported.",$d,$a
-	dc.b "Switch to low or medium res and reboot.",$d,$a
+	dc.b "MD/DOOM: needs a colour monitor.",$d,$a
 	dc.b 0
 	even
 
@@ -400,7 +396,7 @@ start_rom_code:
 	bra boot_gem
 
 .not_enough_ram_txt:
-	dc.b "MD/DOOM needs 512 KB of RAM.",$d,$a
+	dc.b "MD/DOOM: needs 512 KB of RAM.",$d,$a
 	dc.b 0
 	even
 
@@ -413,13 +409,8 @@ start_rom_code:
 	dc.b 0
 	even
 
-.skip_autostart_txt:
-	dc.b "MD/DOOM: returning to the desktop.",$d,$a
-	dc.b 0
-	even
-
 .banner_txt:
-	dc.b "MD/DOOM - hold SHIFT for the desktop",$d,$a
+	dc.b "MD/DOOM: hold SHIFT for the desktop.",$d,$a
 	dc.b 0
 	even
 
@@ -549,11 +540,11 @@ cart_run:
 	rts
 
 .cart_run_ram_txt:
-	dc.b "MD/DOOM needs 512 KB of RAM.",$d,$a,0
+	dc.b "MD/DOOM: needs 512 KB of RAM.",$d,$a,0
 	even
 
 .cart_run_rez_txt:
-	dc.b "MD/DOOM needs a colour monitor.",$d,$a,0
+	dc.b "MD/DOOM: needs a colour monitor.",$d,$a,0
 	even
 
 .cart_run_bad_txt:
