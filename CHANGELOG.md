@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.6.18 (2026-09-16)
+
+- The boot messages now follow MD/Net's shape: the standard banner —
+  version, copyright, licence and URL — prints first, and whatever else
+  there is to say goes underneath it. The banner comes from a generated
+  `version.inc`, the way MD/Net builds its, so the version on screen
+  always matches the build. Every message either entry path produces now
+  has the banner above it, including the three the desktop launcher can
+  print.
+
 ## v0.6.17 (2026-09-16)
 
 - The boot messages read consistently, and leaving for the desktop no

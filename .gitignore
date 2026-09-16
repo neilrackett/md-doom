@@ -76,3 +76,4 @@ __pycache__/
 
 # Local scratch (generated level packs etc.)
 tmp/
+/target/atarist/src/version.inc

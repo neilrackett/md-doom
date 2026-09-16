@@ -61,7 +61,12 @@ prepare: clean
 
 clean-compile : clean main.o userfw.o
 
+# main.s prints a boot banner, so write version.inc from version.txt for
+# it to include. Done here rather than through the -D string macros
+# above, which vasm will not concatenate inside a dc.b, so the banner the
+# user reads always matches the build. Same arrangement as MD/Net.
 main.o: prepare
+	printf 'banner_txt:\tdc.b "MD/DOOM $(VERSION) (c)2026 Neil Rackett",13,10\n\tdc.b "GPLv3 neilrackett.com/atarist",13,10,0\n\teven\n' > $(SOURCES_DIR)/version.inc
 	$(VASM) $(VASMFLAGS) $(SOURCES_DIR)/main.s -o $(BUILD_DIR)/main.o
 
 userfw.o: prepare
