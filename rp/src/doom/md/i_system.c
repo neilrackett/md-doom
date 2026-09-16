@@ -43,6 +43,7 @@
 #include "audio.h"
 #include "cart_shared.h"
 #include "debug.h"
+#include "emul.h"
 #include "doom/m_menu.h"
 #include "fb.h"
 #include "ikbd.h"
@@ -218,13 +219,7 @@ void __attribute__((noreturn)) I_Quit(void) {
    * than straight back in the game. The RP follows: the heartbeat stops,
    * the loss handler restores the cartridge image and reboots. */
   if (fb_st_reloc_count() != 0) {
-    DPRINTF("I_Quit: resetting the ST, skipping the next autostart\n");
-    watchdog_hw->scratch[2] = RESET_SKIP_AUTOSTART_MAGIC;
-    for (;;) {
-      ikbd_request_reset();
-      fb_pump_rom3();
-      sleep_ms(20);
-    }
+    emul_quit_to_desktop(); /* does not return */
   }
 
   DPRINTF("I_Quit: back to GEM\n");

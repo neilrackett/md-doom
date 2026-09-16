@@ -1,6 +1,18 @@
 # Changelog
 
-## v0.7.0 (2026-09-15)
+## v0.6.16 (2026-09-16)
+
+- Starting MD/DOOM from the desktop in medium resolution no longer
+  shows a stripy mess: it switches to low resolution first, which is
+  what the game's picture needs. Starting from the desktop on a mono
+  monitor says so and returns instead. The autostart never hit this,
+  because the cartridge runs before your saved desktop resolution is
+  applied.
+- Quitting a game started from the desktop is now a single, definite
+  sequence rather than something the firmware works out after the fact,
+  which should stop the reboot loop.
+
+## v0.6.12 (2026-09-15)
 
 - Gamepad support works. It never could before, for two reasons that
   both needed fixing: MD/DOOM started before the AUTO folder, so a
@@ -11,7 +23,7 @@
 - Drivers that hook the vertical blank instead of the system timer are
   not supported: MD/DOOM needs the vertical blank for the screen.
 
-## v0.6.9 (2026-09-15)
+## v0.6.11 (2026-09-15)
 
 - MD/DOOM can be started from the desktop: open the cartridge icon and
   run MDDOOM.TOS. Worth doing if you have a gamepad, because programs in
@@ -21,7 +33,7 @@
   takes the machine over completely while it runs, so there is nothing
   left to hand back to.
 
-## v0.6.7 (2026-09-15)
+## v0.6.9 (2026-09-15)
 
 - The game gets another 16 KB of memory, which is the point of
   everything since v0.6.1. The Atari ST firmware now runs from the ST's
@@ -32,7 +44,7 @@
 - If you reset your ST, the SidecarT notices and restarts with it, so
   one press of reset restores both.
 
-## v0.6.4 (2026-09-15)
+## v0.6.5 (2026-09-15)
 
 - The ST and the SidecarT now tell each other they are both there. The
   ST sends a heartbeat every frame once it is running from its own RAM,

@@ -63,12 +63,55 @@
  * doing is gone either way: the restore overwrites whatever the zone
  * had there, which is why Core 1 and the audio refill are stopped
  * first. Does not return. */
-static void __attribute__((noreturn)) st_lost_recover(void) {
-  DPRINTF("ST lost: restoring the cartridge image\n");
+/* Put the cartridge image back where the zone has been living, and ask
+ * the next boot to skip the autostart if the user asked to leave. Used
+ * by both routes out: the user quitting, and the ST being reset under
+ * us. Everything the engine was doing dies here -- the restore
+ * overwrites whatever the zone had in that address space -- so core 1
+ * and the audio refill stop first. */
+static void restore_cart_image(void) {
   audio_stop_vbl_timer();
   multicore_reset_core1();
   ERASE_FIRMWARE_IN_RAM();
   COPY_FIRMWARE_TO_RAM((uint16_t *)target_firmware, target_firmware_length);
+  if (watchdog_hw->scratch[2] == RESET_SKIP_AUTOSTART_MAGIC) {
+    /* Write it now rather than waiting for the reboot to do it: the ST
+     * is already cold-booting, and if it reaches the cartridge first it
+     * would autostart the game the user has just quit. */
+    *((volatile uint32_t *)((uintptr_t)&__rom_in_ram_start__ +
+                            CART_SKIP_AUTOSTART_OFFSET)) =
+        cart_asM68kLong(CART_SKIP_AUTOSTART_MAGIC);
+  }
+}
+
+/* The user quit and the ST has been told to reset. Deterministic: do
+ * not wait for the liveness check to notice, because that leaves the ST
+ * free to come back up and autostart before the skip request has been
+ * written. */
+void __attribute__((noreturn)) emul_quit_to_desktop(void) {
+  DPRINTF("quit: resetting the ST and standing down\n");
+  fb_set_st_lost_handler(NULL); /* this is the planned exit, not a loss */
+  watchdog_hw->scratch[2] = RESET_SKIP_AUTOSTART_MAGIC;
+
+  /* Long enough for the m68k to read the sentinel on its next VBL and
+   * act on it, and short enough that it is still in its memory test. */
+  const uint32_t start = time_us_32();
+  while ((time_us_32() - start) < 400000u) {
+    ikbd_request_reset();
+    fb_pump_rom3();
+    sleep_ms(20);
+  }
+
+  restore_cart_image();
+  reset_device();
+  for (;;) {
+    tight_loop_contents();
+  }
+}
+
+static void __attribute__((noreturn)) st_lost_recover(void) {
+  DPRINTF("ST lost: restoring the cartridge image\n");
+  restore_cart_image();
 
   const uint32_t strikes = watchdog_hw->scratch[1] + 1u;
   watchdog_hw->scratch[1] = strikes;
@@ -180,6 +223,7 @@ void emul_start() {
   // of the two happened on every boot.
   if (fb_wait_st_reloc(ST_RELOC_TIMEOUT_MS)) {
     DPRINTF("ST relocated to RAM; cartridge code area is reclaimable\n");
+    watchdog_hw->scratch[1] = 0; /* a good boot clears the loss strikes */
     fb_set_st_lost_handler(st_lost_recover);
   } else {
     DPRINTF("no ST relocation in %u ms; running without the reclaim\n",

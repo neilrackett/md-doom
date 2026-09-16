@@ -17,6 +17,12 @@
  * loop which includes firmware bypass, user interaction and potential
  * system resets.
  */
+/* The user quit and the cartridge code area has been reclaimed, so
+ * there is nothing to hand the machine back to: reset the ST, ask its
+ * next boot to skip the autostart so it lands on the desktop, put the
+ * cartridge image back and restart. Does not return. */
+void emul_quit_to_desktop(void);
+
 void emul_start();
 
 #endif  // EMUL_H

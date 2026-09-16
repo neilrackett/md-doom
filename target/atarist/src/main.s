@@ -164,6 +164,22 @@ vsync_wait          macro
 					addq.l #2,sp
                     endm    
 
+; XBIOS Setscreen, resolution only: switch to low res and leave both
+; screen addresses alone. MD/DOOM's picture is 320x200 in 16 colours,
+; which is four bitplanes; in medium res the shifter reads two, so the
+; same memory comes out as stripes. Autostart never saw this because
+; the cartridge runs before TOS applies the saved desktop resolution,
+; so it is always low res there -- but a desktop launch inherits
+; whatever the user is in.
+set_lowres			macro
+					move.w #0,-(sp)			; rez 0 = low
+					move.l #-1,-(sp)		; physical screen unchanged
+					move.l #-1,-(sp)		; logical screen unchanged
+					move.w #5,-(sp)			; XBIOS Setscreen
+					trap #14
+					lea 12(sp),sp
+					endm
+
 ; XBIOS GetRez
 ; Return the current screen resolution in D0
 get_rez				macro
@@ -302,6 +318,10 @@ start_rom_code:
 	get_rez
 	cmp.w #2, d0
 	beq .highres_unsupported
+	tst.w d0
+	beq.s .rez_is_low
+	set_lowres
+.rez_is_low:
 
 ; The user firmware puts its two screen pages at $70000 and $78000 and
 ; keeps its per-VBL state in their tails, so it needs RAM up to $80000.
@@ -474,6 +494,17 @@ cart_run:
 	cmp.l #$80000, phystop.w
 	blo .cart_run_no_ram
 
+	; Unlike the autostart path, this one inherits whatever resolution
+	; the desktop is in. Mono has nowhere to go; medium just needs
+	; switching.
+	get_rez
+	cmp.w #2, d0
+	beq .cart_run_highres
+	tst.w d0
+	beq.s .cart_run_rez_ok
+	set_lowres
+.cart_run_rez_ok:
+
 	cmp.l #'MDOM', USERFW+4
 	bne .cart_run_bad
 	move.l USERFW+8, d6
@@ -499,6 +530,10 @@ cart_run:
 	bne .cart_run_bad
 	jmp UFW_RAM_DEST
 
+.cart_run_highres:
+	print .cart_run_rez_txt
+	bra .cart_run_return
+
 .cart_run_no_ram:
 	print .cart_run_ram_txt
 	bra .cart_run_return
@@ -515,6 +550,10 @@ cart_run:
 
 .cart_run_ram_txt:
 	dc.b "MD/DOOM needs 512 KB of RAM.",$d,$a,0
+	even
+
+.cart_run_rez_txt:
+	dc.b "MD/DOOM needs a colour monitor.",$d,$a,0
 	even
 
 .cart_run_bad_txt:
