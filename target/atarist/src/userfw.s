@@ -282,6 +282,7 @@ MFP_VR                equ $FFFFFA17          ; vector register (high nibble = ve
 MFP_TACR              equ $FFFFFA19          ; Timer-A control register (cleared at boot for safety)
 MFP_TADR              equ $FFFFFA1F          ; Timer-A data register
 MFP_TIMERA_BIT        equ 5                  ; IERA/IMRA bit for Timer-A
+MFP_TIMERC_BIT        equ 5                  ; IERB/IMRB bit for Timer-C
 MFP_TBCR              equ $FFFFFA1B          ; Timer-B control register (delay-mode + prescaler)
 MFP_TBDR              equ $FFFFFA21          ; Timer-B data register (8-bit countdown)
 
@@ -474,7 +475,14 @@ XPAD_LO_WINDOW_BASE   equ $FB8A00
 ; With no provider found, none of it does anything and the RP falls back
 ; to the IKBD joystick, which is the standard's own fallback ladder.
     ifnd    XPAD_ENABLE
-XPAD_ENABLE           equ 1
+XPAD_ENABLE           equ 0
+
+; How an ETV-hooked Xpad provider gets its tick. 1 = hand TOS's 200 Hz
+; Timer-C back when a provider was found, so TOS's own ISR calls
+; etv_timer ($400) as it always did. 0 = no tick at all: the pad will
+; not update, but everything else runs -- build it that way to prove
+; whether the tick is what is bombing.
+XPAD_TICK             equ 1
     endc
 
 ; FORCE_NO_DMA=1 (build flag) forces detection to report "no DMA" so
@@ -828,6 +836,36 @@ userfw:
     bset    #MFP_ACIA_BIT, MFP_IERB.w     ; enable keyboard/MIDI ACIA IRQ
     bset    #MFP_ACIA_BIT, MFP_IMRB.w     ;         and unmask it
 
+    ; --- Give TOS's Timer-C back to an Xpad provider ---------------
+    ; A provider hooks etv_timer ($400), TOS's 200 Hz timer vector, and
+    ; tail-chains to whatever it displaced. That chain bottoms out in
+    ; TOS's own handler, which returns into TOS's Timer-C ISR and rte's
+    ; off its interrupt frame -- md-sidepad's resident block says as
+    ; much where it explains why "push orig; rts" is valid for $400.
+    ;
+    ; So the vector cannot be called by hand. Doing it from the VBL
+    ; loop, as this used to, put no interrupt frame on the stack and
+    ; bombed with 3 (address error) the first time it met a real
+    ; provider. Let the real ISR make the call instead: TCDCR is left
+    ; alone above, so Timer-C is still counting at TOS's rate and only
+    ; its enable was cleared. That also gets the rate right for free
+    ; (200 Hz, which providers divide by four) and makes A0 safe
+    ; without masking anything, because TOS's ISR saves registers.
+    ;
+    ; The cost is TOS's 200 Hz handler running during the blit, which
+    ; is the trade named when this was planned. Nothing happens at all
+    ; unless a provider was found at boot.
+    ifne    XPAD_ENABLE
+    ifne    XPAD_TICK
+    tst.l   UFW_XPAD_HDR
+    beq.s   .no_timerc
+    move.l  UFW_SAVE+8, VEC_TIMERC.w      ; TOS's handler back in place
+    bset    #MFP_TIMERC_BIT, MFP_IERB.w
+    bset    #MFP_TIMERC_BIT, MFP_IMRB.w
+.no_timerc:
+    endc
+    endc
+
     ; Interrupts back on (caller's level, typically $2300).
     move.w  (sp)+, sr
 
@@ -935,40 +973,6 @@ userfw:
     ; that nothing is executing from the cartridge code area any more.
     tst.b   RELOC_WINDOW_BASE+RELOC_PROTOCOL
 
-    ; Give an ETV-hooked Xpad provider its tick. userfw owns the
-    ; machine, so TOS's 200 Hz Timer-C is dead and etv_timer ($400) is
-    ; never called -- and etv_timer is what md-sidepad's provider hooks
-    ; by default, precisely because games take the VBL. So call the
-    ; vector here instead.
-    ;
-    ; Four times a frame, not once: it is a 200 Hz vector and such a
-    ; hook divides by four to get back to ~50 Hz, so one call per frame
-    ; would leave the pad updating at 12.5 Hz -- 80 ms of lag.
-    ;
-    ; A0 is the Timer-B audio cursor, live across the whole frame, and
-    ; an etv_timer handler may clobber A0 by convention (TOS's own ISR
-    ; saves it around the call). So save it and mask MFP while the chain
-    ; runs. The MFP latches Timer-B rather than losing it outright, so
-    ; on the YM path this costs a little phase jitter rather than
-    ; garbage; on the DMA path Timer-B is idle and A0 is free anyway.
-    ; Nothing happens at all unless a provider was found at boot.
-    ifne    XPAD_ENABLE
-    tst.l   UFW_XPAD_HDR
-    beq.s   .no_etv_tick
-    move.l  $400.w, d1                   ; etv_timer; 0 = nothing hooked
-    beq.s   .no_etv_tick
-    move.w  sr, -(sp)
-    ori.w   #$0700, sr
-    move.l  a0, -(sp)
-    movea.l d1, a1
-    moveq   #3, d7                       ; 4 calls: 200 Hz / 4 = ~50 Hz
-.etv_tick:
-    jsr     (a1)
-    dbf     d7, .etv_tick
-    movea.l (sp)+, a0
-    move.w  (sp)+, sr
-.no_etv_tick:
-    endc
 
     ; Report pad 0's Xpad buttons to the RP, when a provider was found
     ; at boot. Read tear-free the way the standard prescribes: sample

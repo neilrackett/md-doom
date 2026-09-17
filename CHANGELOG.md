@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.1 (2026-09-17)
+
+- Fixed: quitting to the Booster reset the ST and then started MD/DOOM
+  again instead of going to the Booster. MD/DOOM watches for the ST
+  disappearing so the two can recover together after a reset, and that
+  watch was still running while MD/DOOM deliberately reset the ST on its
+  way out — so it treated its own shutdown as a fault and restarted
+  itself. The watch now stands down before any planned reset.
+- Gamepad support is off for now, and starting MD/DOOM from the desktop
+  is only safe on a machine with nothing else resident. MD/DOOM claims a
+  fixed region of memory for its screens without checking whether
+  anything else is using it, so anything loaded from your AUTO folder —
+  a gamepad driver, for instance — moves things into that region and
+  MD/DOOM bombs shortly after the splash screen. Letting it start on its
+  own from the cartridge is unaffected. The gamepad code is not at
+  fault; the crash happens with it compiled out, which is why it is
+  simply switched off until the memory claim is fixed.
+
 ## v0.7.0 (2026-09-16)
 
 - MD/DOOM now runs its Atari ST firmware from the ST's own RAM instead

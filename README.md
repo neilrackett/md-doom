@@ -28,10 +28,15 @@ See below if you'd prefer to build alternative level packs yourself.
 Hold either **Shift** key while your ST powers on to skip the game and
 boot to the desktop instead. MD/DOOM says so on the boot screen. From
 the desktop you can start it again by opening the cartridge icon (the
-lower-case `c` drive) and running **MDDOOM.TOS**. That route is worth
-knowing: programs in your AUTO folder have run by then, so a gamepad
-driver installed there is available to the game, which it cannot be when
-MD/DOOM starts straight from the cartridge.
+lower-case `c` drive) and running **MDDOOM.TOS**.
+
+> **Start MD/DOOM from the desktop only on a machine with nothing else
+> resident.** MD/DOOM claims a fixed region of memory for its screens,
+> and it does not yet check whether anything else is using it. Anything
+> loaded from your AUTO folder shifts what is where, and the result is
+> bombs a moment after the splash screen. Letting MD/DOOM start on its
+> own from the cartridge is unaffected — it runs before the AUTO folder
+> does — and is the way to play until this is fixed.
 
 Quitting restarts your ST and returns you to the desktop. MD/DOOM takes
 the machine over completely while it runs, so there is nothing to hand
@@ -57,13 +62,14 @@ Controls match the original PC Doom:
 | - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
 
-A USB gamepad works through [Xpad](https://github.com/neilrackett/atarist-xpad)
-if you have a provider for it. Start MD/DOOM from the desktop rather
-than letting it autostart, so the provider in your AUTO folder is
-loaded first; started from the cartridge, MD/DOOM runs before your AUTO
-folder does and cannot see it. Providers that hook the vertical blank
-rather than the system timer are not supported, because MD/DOOM needs
-the vertical blank for the screen.
+**Gamepad support is off in this release.** MD/DOOM can read an
+[Xpad](https://github.com/neilrackett/atarist-xpad) gamepad, but only a
+driver loaded from your AUTO folder can provide one, and MD/DOOM
+currently crashes when it is started from the desktop with anything
+resident (see the warning above) — so there is no working route to it
+yet. The crash is not in the gamepad code: it happens just the same
+with gamepad support compiled out. Fixing the memory claim comes first;
+gamepad support goes back on after that.
 
 A joystick in port 1 moves, turns and fires. The mouse turns and walks,
 with the **right** button to fire and the **left** button held to

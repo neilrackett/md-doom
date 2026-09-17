@@ -83,6 +83,15 @@ static void restore_cart_image(void) {
  * here -- the user quitting, and the jump to the Booster -- so the
  * window is one number in one place. */
 void emul_request_st_reset(void) {
+  /* Disarm the loss check first, and here rather than in the callers:
+   * this loop pumps ROM3 for 400 ms while the ST resets, so the
+   * heartbeat stops inside it and fb_check_st_alive would otherwise
+   * fire st_lost_recover -- which never returns and ends in a plain
+   * reset_device(). That is what sent Quit -> B back into MD/DOOM
+   * instead of the Booster. Every planned reset comes through here, so
+   * no exit can forget it. */
+  fb_set_st_lost_handler(NULL);
+
   const uint32_t start = time_us_32();
   while ((time_us_32() - start) < 400000u) {
     ikbd_request_reset();
@@ -99,7 +108,6 @@ void emul_request_st_reset(void) {
  * written. */
 void __attribute__((noreturn)) emul_quit_to_desktop(void) {
   DPRINTF("quit: resetting the ST and standing down\n");
-  fb_set_st_lost_handler(NULL); /* this is the planned exit, not a loss */
   watchdog_hw->scratch[2] = RESET_SKIP_AUTOSTART_MAGIC;
 
   emul_request_st_reset();
