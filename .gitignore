@@ -76,5 +76,7 @@ __pycache__/
 
 # Local scratch (generated level packs etc.)
 tmp/
+# The emulated SD card (EmuMD): level packs are game data
+/emu/sd/
 /target/atarist/src/version.inc
 test-builds/

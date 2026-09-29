@@ -109,7 +109,25 @@ Build flow (orchestrated by `build.sh`):
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests
-There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`.
+There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host.
+
+### EmuMD: the game in Hatari, on the host
+[EmuMD](https://github.com/neilrackett/emumd) (the `emu/emumd` submodule; its skill is `emu/emumd/skills/emumd/SKILL.md`) builds the firmware's C and C++ for the host as `build/md-doom.mdfw` and runs it in a patched Hatari, with the real m68k cartridge (`target_firmware.h`, so whatever the last hardware build made) on the cartridge port and `emu/sd` as the microSD card. `make emu TOS=...` runs it in a window. For a check without one:
+
+```bash
+emu/emumd/tools/mdfw run --headless --frames 700 --no-user-config --tos TOS.IMG \
+    --screenshot build/title.png --log build/run.log -V --timeout 120
+```
+
+`-V` shows `DPRINTF`, the 64-frame line included; the level packs go in `emu/sd/doom`. Hatari's `-- --cmd-fifo FILE` takes `hatari-event keypress 28` (ST scancodes) to drive the menus from a script.
+
+How it is put together (`mdfw.ini`, `emu/`):
+- The game never returns to a main loop, so `emu/mdfw_app.c` runs main.c's configuration and `emul_start()` as EmuMD's `main`, on a thread of its own alongside Hatari. Sleeping there waits for emulated time; the audio refill timer fires on Hatari's thread, in step with the ST. It also stands in for the Booster's first run (this app as `BOOT_FEATURE`, a lookup entry for sector 0), since the emulated flash starts empty (`-O flash=FILE` keeps it between runs).
+- Left out and replaced in `emu/`: `main.c`, `romemul`, `commemul` (EmuMD's, plus `commemul_scan` on `mdfw_rom3_peek`), `sdcard`, `hw_config`, `select`, `reset.c` (a `reset_device` that EmuMD can stop), and `fb_chunked.c` — its jobs and arguments are 64-bit pointers on the host and cannot go through the 32-bit FIFO, so they wait in a slot with the FIFO as the doorbell; parking is a no-op, and `fb_c2p_half` is C.
+- `emu/shim/` replaces `constants.h` (memmap_rp.ld's regions at the same offsets in EmuMD's flash, `ROM_IN_RAM` as the ROM4 window), `memfunc.h`, `debug.h` and `romemul.h`, and makes `__cart_app_free` an ordinary variable. **The headers in `rp/src/include` include their neighbours in quotes, which finds the neighbour in the same folder before any stand-in**, so `emu/shim/mddoom_emu.h` is force-included first (`cflags`) to set the stand-ins' include guards; a new stand-in for a header in that folder has to go in there too.
+- The engine takes rp2040-doom's host paths (`PICO_BUILD=1`, `PICO_ON_DEVICE=0`): ordinary pointers rather than short ones, no interpolator or divider hardware, and the renderer draws everything on core 0 while core 1 only signals. EmuMD compiles with `-fshort-enums`, the RP2040's enum sizes, which the settings library's flash layout depends on.
+- Firmware changes for it, all no-ops on the RP2040: pointer arithmetic in `uintptr_t` rather than 32-bit casts (`fb.c`, `pack.c`, `gconfig.c`, `aconfig.c`), `__scratch_x` for the sfx mix buffer, upstream's host `tiny.whd.h` branch dropped from `w_file_memory.c`, the save-slot stubs in `md_main.c` guarded as `p_saveg.h` guards their declarations, and two `EMUMD` guards: the `.cart_app_free` linker check in `emul.c` and a 255 KB zone of its own in `i_system.c` (a tiny zone's block sizes are 16 bits of 4-byte units, and the host's pointers are twice the size, so the RP2040's figures mean nothing there).
+- What it cannot tell you: anything about time (the host is far faster, and the frame and c2p figures are in emulated time), tearing, memory (the zone is not the RP2040's), or races between the cores. EmuMD keeps the firmware's variables across a reboot (Quit, an ST reset) where the RP2040 starts afresh; MD/DOOM re-initialises what it uses, but a bug that only shows after a reboot may not reproduce.
 
 ## Architecture
 
@@ -660,7 +678,7 @@ revisited in order of visible payoff.
 
 ## Editing guardrails
 
-- **Never modify** `pico-sdk/`, `pico-extras/`, `fatfs-sdk/` or `lib/xpad/` — they are git submodules pinned to specific upstream revisions, and the build re-pins them on every run. To change FatFs configuration, edit `rp/src/ff/ffconf.h`.
+- **Never modify** `pico-sdk/`, `pico-extras/`, `fatfs-sdk/`, `lib/xpad/` or `emu/emumd/` — they are git submodules pinned to specific upstream revisions, and the build re-pins the first three on every run. To change FatFs configuration, edit `rp/src/ff/ffconf.h`; for EmuMD, change it upstream and update the submodule.
 - Don't touch `main.c` for feature work — boot changes go in `emul.c`, game-side changes in `rp/src/doom/md/` (or `doomapp.c` for the test card).
 - Match the existing C style (clang-format config in `.clang-format`, clang-tidy in `.clang-tidy` — both wired up via CMake when the binaries are on `PATH`).
 - Keep `cart_shared.h` and `main.s` in step: they are the two halves of one layout.

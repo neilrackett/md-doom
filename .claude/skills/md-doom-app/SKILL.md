@@ -111,6 +111,10 @@ framework loop in `emul.c`.
 
 Build: `make debug`. The fused LUT + c2p has a host test pattern
 (random frame + random LUT vs. a naive planar encoder); reproduce it if
-`doom_c2p_chunks` or `doom_c2p_block` changes. Everything else needs the
-ST: ask for the UART log, whose 64-frame debug line (c2p time, longest
-frame, audio counters, per-phase maxima) is how hardware bugs get found.
+`doom_c2p_chunks` or `doom_c2p_block` changes. The game itself runs in
+Hatari on the host with EmuMD (`mdfw.ini`, `emu/`; AGENTS.md's "EmuMD"
+section): headless runs give screenshots and the debug log, and a
+command fifo can drive the menus. Timing, tearing, memory and races
+still need the ST: ask for the UART log, whose 64-frame debug line (c2p
+time, longest frame, audio counters, per-phase maxima) is how hardware
+bugs get found.

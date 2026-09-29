@@ -150,6 +150,17 @@ make uart
 
 Flash and RAM are both nearly full; `AGENTS.md` has the budgets, the architecture notes and the improvements backlog.
 
+### Running it on your computer
+
+You can also run MD/DOOM on your Mac or Linux PC, no SidecarT required, using [EmuMD](https://github.com/neilrackett/emumd) in the `emu/emumd` submodule. It builds the firmware for your computer and runs it in a version of [Hatari](https://www.hatari-emu.org) with a Multi-device on its cartridge port, with a folder standing in for the microSD card. You'll need the tools in [EmuMD's README](https://github.com/neilrackett/emumd#getting-started), a TOS image ([EmuTOS](https://emutos.sourceforge.io/download.html) is fine) and the level packs (see above) in `emu/sd/doom`, then:
+
+```bash
+emu/emumd/tools/mdfw hatari            # once: builds EmuMD's Hatari
+make emu TOS=/path/to/etos256uk.img    # builds and runs MD/DOOM in Hatari
+```
+
+Add `-V` to `emu/emumd/tools/mdfw run` to see the firmware's debug output, including the 64-frame timing line. It's great for testing the game and the code that talks to the ST, but the emulated Multi-device has all the speed and memory it wants, so timing, tearing and running out of memory still need real hardware.
+
 For more on coding for the SidecarT, [the docs are here](https://docs.sidecartridge.com/sidecartridge-multidevice/programming/).
 
 ## License

@@ -22,6 +22,13 @@ debug:
 	@echo "Using APP_UUID_KEY: $(APP_UUID_KEY_RESOLVED)"
 	./build.sh pico_w debug "$(APP_UUID_KEY_RESOLVED)"
 
+## Build MD/DOOM for this computer and run it in Hatari with EmuMD (see
+## README.md). TOS= a TOS image; EMUMD= another EmuMD checkout.
+EMUMD ?= emu/emumd
+.PHONY: emu
+emu:
+	$(EMUMD)/tools/mdfw run $(if $(TOS),--tos $(TOS))
+
 ## Tag this version
 .PHONY: tag
 tag:

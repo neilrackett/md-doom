@@ -75,6 +75,11 @@ fi
 if [ -d "$REPO_ROOT/target/atarist" ]; then
     printf "%s\n" "$FINAL_VERSION" > "$REPO_ROOT/target/atarist/version.txt"
 fi
+# The EmuMD build (mdfw.ini) names the version too.
+if [ -f "$REPO_ROOT/mdfw.ini" ]; then
+    sed -i.bak -E "s/^version = .*/version = $FINAL_VERSION/" "$REPO_ROOT/mdfw.ini"
+    rm -f "$REPO_ROOT/mdfw.ini.bak"
+fi
 
 if [ -n "$HEADER_PATH" ]; then
     mkdir -p "$(dirname "$HEADER_PATH")"
