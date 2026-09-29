@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.2 (2026-09-29)
+
+- You can now run MD/DOOM on your Mac or Linux PC, no SidecarT
+  required: [EmuMD](https://github.com/neilrackett/emumd) builds it for
+  your computer and runs it in Hatari with a Multi-device on the
+  cartridge port and a folder standing in for the microSD card. See
+  "Running it on your computer" in the README. Nothing has changed in
+  the game itself.
+
 ## v0.7.1 (2026-09-17)
 
 - Fixed: quitting to the Booster reset the ST and then started MD/DOOM
