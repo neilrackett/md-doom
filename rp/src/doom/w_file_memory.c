@@ -40,10 +40,8 @@
 #if !USE_WHD
 #error no longer supported
 #else
-#if !PICO_ON_DEVICE
-#include "tiny.whd.h"
-#define wad_map_base tiny_whd
-#endif
+/* MD/DOOM: the pack window off the RP2040 too, where upstream built in
+ * tiny.whd.h. */
 const uint8_t *whd_map_base; /* MD/DOOM: set at open, the window is re-read per pack */
 #endif
 

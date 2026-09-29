@@ -79,6 +79,23 @@ void I_Tactile(int on, int off, int total) {
 static uint8_t *s_zone_base;
 static uint8_t *s_zone_end;
 
+#if EMUMD
+/* On the host (EmuMD) there is no linker-script heap window to fill, and
+ * with pointers twice the size the engine's structures do not fit the
+ * RP2040's figures anyway, so the zone is a block of its own, about twice
+ * the RP2040's and as big as a tiny zone's 16-bit block sizes allow.
+ * Out-of-memory testing needs the real hardware. */
+#define EMUMD_ZONE_BYTES (255u * 1024u)
+
+byte *I_ZoneBase(int *size) {
+  static uint8_t zone[EMUMD_ZONE_BYTES] __attribute__((aligned(8)));
+  s_zone_base = zone;
+  s_zone_end = zone + sizeof(zone);
+  *size = (int)sizeof(zone);
+  DPRINTF("zone: %p .. %p (%d bytes)\n", s_zone_base, s_zone_end, *size);
+  return s_zone_base;
+}
+#else
 byte *I_ZoneBase(int *size) {
   extern char __StackLimit;
   uintptr_t brk = (uintptr_t)sbrk(0);
@@ -115,6 +132,7 @@ byte *I_ZoneBase(int *size) {
           reclaimed ? ", cart code area reclaimed" : "");
   return s_zone_base;
 }
+#endif
 
 /* malloc/calloc/realloc/free routed into the zone once it exists, so the
  * engine's own allocations (and everything newlib does after boot) come

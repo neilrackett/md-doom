@@ -249,6 +249,7 @@ void I_MD_FlushVideoSettings(void) {
  * which here belongs to the Booster). The menu sees no saved games and a
  * save quietly fails. The SD card is the place for them later. */
 #include "doom/p_saveg.h"
+#if PICO_ON_DEVICE
 void P_SaveGameGetExistingFlashSlotAddresses(flash_slot_info_t *slots, int count) {
   for (int i = 0; i < count; i++) {
     slots[i].data = NULL;
@@ -259,3 +260,4 @@ boolean P_SaveGameWriteFlashSlot(int slot, const uint8_t *buffer, uint size, uin
   (void)slot; (void)buffer; (void)size; (void)buffer4k;
   return false;
 }
+#endif

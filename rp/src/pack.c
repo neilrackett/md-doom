@@ -50,7 +50,7 @@ bool pack_load(const char *path, pack_progress_cb_t progress) {
     return false;
   }
 
-  const uint32_t base = (uint32_t)(uintptr_t)&_pack_flash_start - XIP_BASE;
+  const uint32_t base = (uint32_t)((uintptr_t)&_pack_flash_start - XIP_BASE);
   const uint32_t erase_len =
       (size + FLASH_SECTOR_SIZE - 1u) & ~(uint32_t)(FLASH_SECTOR_SIZE - 1u);
 

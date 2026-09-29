@@ -360,7 +360,7 @@ static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes)
     }
 
     /* MD/DOOM: 1 KB in scratch X, below Core 1's stack. */
-    static int16_t mix[512] __attribute__((section(".scratch_x.sfxmix")));
+    static int16_t mix[512] __scratch_x("sfxmix");
     if (nsamp > 512u) return;
     memset(mix, 0, nsamp * sizeof(mix[0]));
 
