@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.0 (2026-10-03)
+
+- MD/DOOM now runs on a mono monitor (the SM124, or any ST in high res)
+  instead of stopping with "Needs a colour monitor". The picture is
+  640×400 in black and white: each Doom pixel is a 2×2 block, and the
+  dither works at the full resolution, so its pattern is twice as fine
+  as the picture. Brightness is taken from each colour's strongest
+  channel rather than its luminance, which keeps the status bar's red
+  numbers readable against the grey. Keypad \* still cycles the dither
+  options; keypad / does nothing in mono, as there are no colours to
+  choose. A mono screen refreshes at 71 Hz, faster than a whole screen
+  can be copied, so the picture updates every other refresh — about 36
+  times a second. Not yet tried on real hardware.
+- Running it on your computer: EmuMD now downloads EmuTOS and boots it
+  by default, so `make emu` needs no TOS image, and `make emu MONO=1`
+  gives the ST a mono monitor.
+
 ## v0.7.2 (2026-09-29)
 
 - You can now run MD/DOOM on your Mac or Linux PC, no SidecarT
