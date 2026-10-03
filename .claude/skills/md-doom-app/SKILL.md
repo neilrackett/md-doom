@@ -106,6 +106,12 @@ framework loop in `emul.c`.
   Timer-A frame-end handler (`userfw_snd_irq`), never from the VBL loop.
 - **The cart FB is written in place** by `doom_video_publish` between
   `fb_wait_blit_ack` and `fb_frame_done`; keep that window short.
+- **ST high res** (a mono monitor, `fb_st_mono()`): the same 32000-byte
+  cart FB holds a 640x400 one-bit picture (80-byte rows, same chunk
+  reversal), dithered at full resolution from each colour's brightest
+  channel; a frame is two 71 Hz VBLs, and only `$FB8400` itself is a
+  frame ack (`$FB8401` is the half-frame one). `make emu MONO=1` or
+  `-- --monitor mono` runs it in Hatari.
 
 ## Verifying without hardware
 

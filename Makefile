@@ -23,11 +23,12 @@ debug:
 	./build.sh pico_w debug "$(APP_UUID_KEY_RESOLVED)"
 
 ## Build MD/DOOM for this computer and run it in Hatari with EmuMD (see
-## README.md). TOS= a TOS image; EMUMD= another EmuMD checkout.
+## README.md). TOS= a TOS image (default: EmuMD's EmuTOS); MONO=1 a mono
+## monitor (ST high res); EMUMD= another EmuMD checkout.
 EMUMD ?= emu/emumd
 .PHONY: emu
 emu:
-	$(EMUMD)/tools/mdfw run $(if $(TOS),--tos $(TOS))
+	$(EMUMD)/tools/mdfw run $(if $(TOS),--tos $(TOS)) $(if $(MONO),-- --monitor mono)
 
 ## Tag this version
 .PHONY: tag

@@ -23,6 +23,11 @@
  * This is the same reduction the DOOM Accelerator microfirmware for
  * STDOOM does, carried over here; the default 16-colour subset is the
  * one hand-picked for STDOOM by Jonas Eschenburg.
+ *
+ * In ST high res (fb_st_mono()) the same calls draw a 640x400 one-bit
+ * picture instead: each colour's brightness, dithered at the full
+ * resolution with the same dither modes. The palette source is kept and
+ * saved but has no effect there.
  */
 
 #ifndef DOOM_VIDEO_H_INCLUDED

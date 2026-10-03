@@ -29,23 +29,31 @@
  * audio_get_mode() to produce the matching format:
  *  - AUDIO_MODE_YM: 5,585 Hz, 112 samples/VBL x 2 B (vA,vB) = 224 B
  *    (m68k Timer-B, TBDR=110 /4 prescaler; ~800 B of the cart buffer
- *    stays as overrun headroom).
- *  - AUDIO_MODE_DMA: 25,033 Hz, 500 samples/VBL x 1 B (signed) = 500 B.
+ *    stays as overrun headroom). In ST high res the VBL is 71.47 Hz,
+ *    so 79 samples = 158 B.
+ *  - AUDIO_MODE_DMA: 25,033 Hz, 500 samples/VBL x 1 B (signed) = 500 B
+ *    to start with; the m68k steers the exact count (see below).
  *  - AUDIO_MODE_SILENT: 500 B of zeros until the first report arrives
  *    (zeros are silence for both the DMA and YM readers).
  * Default is SILENT so nothing plays garbage before the m68k reports. */
-#define AUDIO_FILL_BYTES_YM  224u
-#define AUDIO_FILL_BYTES_DMA 500u
+#define AUDIO_FILL_BYTES_YM      224u
+#define AUDIO_FILL_BYTES_YM_MONO 158u
+#define AUDIO_FILL_BYTES_DMA     500u
 
 static audio_mode_t s_audio_mode = AUDIO_MODE_SILENT;
 static uint32_t s_fill_bytes = AUDIO_FILL_BYTES_DMA;
+static bool s_st_mono; /* 71 Hz VBLs: fewer YM samples to each */
+
+static uint32_t ym_fill_bytes(void) {
+  return s_st_mono ? AUDIO_FILL_BYTES_YM_MONO : AUDIO_FILL_BYTES_YM;
+}
 
 void audio_set_mode(audio_mode_t mode) {
   if (mode == s_audio_mode) {
     return;
   }
   s_audio_mode = mode;
-  s_fill_bytes = (mode == AUDIO_MODE_YM) ? AUDIO_FILL_BYTES_YM
+  s_fill_bytes = (mode == AUDIO_MODE_YM) ? ym_fill_bytes()
                                          : AUDIO_FILL_BYTES_DMA;
   DPRINTF("audio_set_mode: %s (%u B/VBL)\n",
           mode == AUDIO_MODE_DMA ? "STE DMA" : mode == AUDIO_MODE_YM
@@ -70,17 +78,24 @@ uint32_t audio_get_fill_bytes(void) { return s_fill_bytes; }
  * per frame -- it is about 501.5, not 500, and it varies by machine
  * because the DMA and the video run off different oscillators -- and
  * sends the length back as bytes/4 once a VBL. Producing exactly that
- * many is what stops the chip running a buffer dry and replaying it. */
+ * many is what stops the chip running a buffer dry and replaying it.
+ * In ST high res a VBL is 71.47 Hz, so the length is about 350. */
 #define AUDIO_SNDLEN_HIBYTE 0x8C00u
 
 /* The report is biased by the m68k's minimum so it fits one byte; this
  * must match STE_SND_LEN_MIN in userfw.s. */
-#define AUDIO_SNDLEN_BIAS 480u
+#define AUDIO_SNDLEN_BIAS 320u
+
+/* Display report (VIDEO_WINDOW_BASE in userfw.s): $FB9000 + 1 in ST high
+ * res. fb.c reads it for the picture; here it sets how many YM samples
+ * a VBL takes, the Timer-B rate being fixed. */
+#define AUDIO_VIDEO_HIBYTE 0x9000u
 
 /* Guard rails on a value that arrives over a bus. The m68k steers
- * within a narrow band around one VBL's worth, so anything well outside
- * it is a corrupt sample rather than a length, and is ignored. */
-#define AUDIO_FILL_BYTES_MIN 448u
+ * within a narrow band around one VBL's worth, at 50 or 71 Hz, so
+ * anything outside the band it steers in is a corrupt sample rather
+ * than a length, and is ignored. */
+#define AUDIO_FILL_BYTES_MIN AUDIO_SNDLEN_BIAS
 #define AUDIO_FILL_BYTES_MAX 576u
 
 void audio_set_fill_bytes(uint32_t bytes) {
@@ -100,6 +115,11 @@ void audio_consume_rom3_sample(uint16_t addr_lsb) {
     audio_set_mode((addr_lsb & 1u) ? AUDIO_MODE_DMA : AUDIO_MODE_YM);
   } else if (window == AUDIO_SNDLEN_HIBYTE) {
     audio_set_fill_bytes(AUDIO_SNDLEN_BIAS + (uint32_t)(addr_lsb & 0xFFu));
+  } else if (window == AUDIO_VIDEO_HIBYTE) {
+    s_st_mono = (addr_lsb & 1u) != 0u;
+    if (s_audio_mode == AUDIO_MODE_YM) {
+      s_fill_bytes = ym_fill_bytes();
+    }
   }
 }
 
@@ -128,7 +148,9 @@ void audio_set_fill_callback(audio_fill_cb_t cb) {
 
 /* VBL-synced refill (see audio.h). The scan cursor is the timer's own,
  * separate from commemul_poll's read index. A fill is never repeated
- * within 5 ms, in case an ack is seen twice across a scan boundary. */
+ * within 5 ms, in case an ack is seen twice across a scan boundary. The
+ * whole window counts, so in mono the half-frame ack ($FB8401) refills
+ * too: the m68k copies a buffer every VBL, not every frame. */
 #define AUDIO_VBLSYNC_HIBYTE 0x8400u
 #define AUDIO_MIN_FILL_GAP_US 5000u
 

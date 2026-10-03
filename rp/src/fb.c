@@ -32,8 +32,14 @@
  * routes ROM3 samples to both the IKBD demux and this detector;
  * fb_publish() blocks until s_vbl_seen advances before overwriting
  * the cart FB. The timeout below keeps the RP from hanging if the
- * m68k isn't emitting acks (e.g. before it boots). */
+ * m68k isn't emitting acks (e.g. before it boots). Only $FB8400 itself
+ * is a frame ack: in mono the m68k reads $FB8401 after copying the
+ * first half of a frame, which is a VBL (the audio refill takes it) but
+ * leaves half the cart FB still to be read. */
 #define FB_VBLSYNC_HIBYTE   0x8400u
+/* Display report, one read per VBL: $FB9000 + 1 when the ST is in high
+ * res on a mono monitor (VIDEO_WINDOW_BASE in userfw.s). */
+#define FB_VIDEO_HIBYTE     0x9000u
 /* Relocation heartbeat, one read per VBL from the m68k -- see
  * RELOC_WINDOW_BASE in userfw.s. Emitted only from the relocated copy
  * running in ST RAM, so it is proof that nothing is executing from the
@@ -54,6 +60,7 @@
 static volatile uint32_t s_vbl_seen;
 static volatile uint32_t s_reloc_seen;
 static uint32_t s_vbl_published;
+static volatile bool s_st_mono;
 
 /* Boot splash, painted once by fb_init (defined below). */
 static void fb_render_frame(void);
@@ -146,8 +153,11 @@ static void fb_rom3_dispatch(uint16_t sample) {
   ikbd_consume_rom3_sample(sample);
   xpadin_consume_rom3_sample(sample);
   audio_consume_rom3_sample(sample);
-  if ((sample & FB_WINDOW_HIMASK) == FB_VBLSYNC_HIBYTE) {
+  if (sample == FB_VBLSYNC_HIBYTE) {
     s_vbl_seen++;
+  }
+  if ((sample & FB_WINDOW_HIMASK) == FB_VIDEO_HIBYTE) {
+    s_st_mono = (sample & 1u) != 0u;
   }
   if ((sample & FB_WINDOW_HIMASK) == FB_RELOC_HIBYTE &&
       (sample & 0xFFu) == FB_RELOC_PROTOCOL) {
@@ -156,6 +166,8 @@ static void fb_rom3_dispatch(uint16_t sample) {
 }
 
 bool fb_st_relocated(void) { return s_reloc_seen != 0u; }
+
+bool fb_st_mono(void) { return s_st_mono; }
 
 bool fb_wait_st_reloc(uint32_t timeout_ms) {
   /* Block until the m68k says it is running from ST RAM. This is the
@@ -254,10 +266,41 @@ void fb_frame_done(void) {
   *fb_frame_counter = fb_frame_tick;
 }
 
+/* ST high res: 640x400 at one bit a pixel, and no palette, so each pen
+ * is drawn as black ink or white paper by its brightness in the cart
+ * palette slot, every pixel doubled both ways. Only the boot splash
+ * (and the test card) come this way; the game's frames are doom_video's.
+ * One core: it is not on any per-frame path that matters. */
+static void fb_chunky_to_mono(uint8_t *cart) {
+  const uint16_t *pal = (const uint16_t *)((uintptr_t)&__rom_in_ram_start__ +
+                                           CART_PALETTE_OFFSET);
+  uint32_t ink = 0;
+  for (unsigned i = 0; i < CART_PALETTE_ENTRIES; i++) {
+    const unsigned v = pal[i];
+    if (((v >> 8) & 7u) + ((v >> 4) & 7u) + (v & 7u) < 11u) ink |= 1u << i;
+  }
+  for (unsigned y = 0; y < FB_CHUNKED_H; y++) {
+    const uint8_t *src = fb_chunked_buffer + y * FB_CHUNKED_W;
+    for (unsigned w = 0; w < FB_CHUNKED_W / 8u; w++, src += 8) {
+      uint16_t bits = 0;
+      for (unsigned i = 0; i < 8u; i++) {
+        if ((ink >> (src[i] & 15u)) & 1u) bits |= (uint16_t)(3u << (14u - 2u * i));
+      }
+      const uint32_t o = y * 160u + w * 2u; /* rows 2y and 2y + 1, 80 bytes each */
+      *(uint16_t *)(cart + fb_cart_offset(o)) = bits;
+      *(uint16_t *)(cart + fb_cart_offset(o + 80u)) = bits;
+    }
+  }
+}
+
 void fb_publish(void) {
   fb_wait_blit_ack();
   /* Chunky -> planar straight into the cart FB, in the m68k's post-blit
    * slack (~1 ms on both cores against ~3 ms available). */
-  fb_chunky_to_planar((uint16_t *)fb_screen.framebuffer);
+  if (s_st_mono) {
+    fb_chunky_to_mono((uint8_t *)fb_screen.framebuffer);
+  } else {
+    fb_chunky_to_planar((uint16_t *)fb_screen.framebuffer);
+  }
   fb_frame_done();
 }

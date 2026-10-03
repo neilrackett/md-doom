@@ -25,6 +25,12 @@
 ;      match, restore vectors / MFP / VBL / screen base and rts back
 ;      to the cartridge dispatcher.
 ;
+; ST high res (640x400 on a mono monitor) takes the same 32000 bytes
+; through the same copy, but its VBLs come at 71 Hz, 14 ms apart, and the
+; copy takes ~17.6 ms. So in mono a frame is two VBLs: the first copies
+; the first half of the cart FB, the second the rest, then flips. Audio
+; and the reports to the RP still happen on every VBL. See UFW_MONO.
+;
 ; IRQ ownership: TOS's HBL ($68), Timer-A/B/C/D
 ; ($134/$120/$114/$110), and ACIA ($118) handlers are stubbed to
 ; single-rte dummies and their MFP IERA/IERB bits are cleared so no
@@ -60,6 +66,15 @@ BLIT_MARK_VSYNC       equ $000               ; black: vsync returned, copy not y
 BLIT_MARK_RUNNING     equ $777               ; white: cart->ST copy in flight
 BLIT_MARK_DONE        equ $070               ; green: FBDRV_INLINE returned
 
+; Shifter resolution: 0 = low, 1 = medium, 2 = high (mono). main.s has
+; already switched medium to low, so this tells colour from mono.
+SHIFTER_RES           equ $FFFF8260
+SHIFTER_RES_HIGH      equ 2
+; In mono only bit 0 of colour 0 counts: set, and a 0 pixel is white
+; and a 1 black, which is what the RP draws (ink bits). Written once at
+; boot; the RP's palette slot means nothing in mono and is not copied.
+MONO_PAPER_WHITE      equ $777
+
 ; FBDRV_DEBUG_MARKS = 1 paints palette-idx-0 with the three border
 ; band colours above (black/white/green) at vsync / blit-running /
 ; blit-done. Useful for timing measurement on a CRT but flickers
@@ -86,6 +101,8 @@ UFW_VBL_FLAG          equ $4C6               ; word: cleared by userfw_vbl, poll
 UFW_SND_LEN           equ $00077F00          ; word: current DMA buffer length in bytes
 UFW_SND_PREVPOS       equ $00077F02          ; word: DMA offset within its buffer, last VBL
 UFW_SND_TICK          equ $00077F04          ; byte: frame counter, steer on every 4th
+UFW_MONO              equ $00077F06          ; byte: 1 = ST high res (mono monitor)
+UFW_HALF              equ $00077F07          ; byte: $FF = mono frame half copied, rest next VBL
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -111,6 +128,10 @@ FBDRV_MAIN_ITERS      equ (FBDRV_TOTAL_BYTES / FBDRV_ITER_BYTES)
 FBDRV_MAIN_BYTES      equ (FBDRV_MAIN_ITERS * FBDRV_ITER_BYTES)
 FBDRV_TAIL_BYTES      equ (FBDRV_TOTAL_BYTES - FBDRV_MAIN_BYTES)  ; 20 bytes at FB_COPY_LINES=200 (= 5 longwords)
 FBDRV_TAIL_DISP       equ FBDRV_MAIN_BYTES                        ; tail goes at page_start + FBDRV_MAIN_BYTES (= 31980)
+; The two parts a mono frame is copied in, one per VBL (see UFW_MONO). In
+; colour the second simply follows the first.
+FBDRV_ITERS_A         equ (FBDRV_MAIN_ITERS / 2)                  ; 333
+FBDRV_ITERS_B         equ (FBDRV_MAIN_ITERS - FBDRV_ITERS_A)      ; 333
 
 ;----------------------------------------------------------------
 ; FBDRV_INLINE -- fully unrolled cart->ST screen framebuffer copy.
@@ -138,30 +159,34 @@ FBDRV_TAIL_DISP       equ FBDRV_MAIN_BYTES                        ; tail goes at
 ; natural image. See "Framebuffer chunk layout for the m68k MOVEM
 ; blit" in rp/src/include/cart_shared.h for the full spec.
 ;
-; Caller protocol (must be set up BEFORE the macro expansion):
+; The macro copies \1 chunks, so the frame can be copied in two parts
+; (FBDRV_ITERS_A then FBDRV_ITERS_B), followed by FBDRV_TAIL.
+;
+; Caller protocol (must be set up BEFORE the first part):
+;   A6 = UFW_FB_SRC
 ;   A5 = destination ST screen page END
 ;        ($70000 + 31980 or $78000 + 31980; .vbl_loop adds the
 ;        FBDRV_MAIN_ITERS * FBDRV_ITER_BYTES offset via LEA after
 ;        loading UFW_SCREEN_PAGE).
 ;
-; Clobbers: D0-D7, A1-A4, A6. A0 and A7 are PRESERVED (A0 for the
+; Clobbers: D0-D7, A1-A4. A0 and A7 are PRESERVED (A0 for the
 ; Timer-B audio pointer, A7 for IRQ-safe SP).
-; A5 IS modified: after the macro
+; A5 and A6 move \1 chunks: after both parts
 ; A5 = original SCREEN_PAGE end - (FBDRV_MAIN_ITERS * FBDRV_ITER_BYTES)
 ; = original page START, which is the value .after_copy expects in A5.
 ;
-; Code size: 8 B per unrolled iteration * FBDRV_MAIN_ITERS (615)
-; + 6 B setup = ~5 KB inline. Plus IKBD poll blocks every 40 iters
-; and the small d16(a5) tail MOVEM at the end.
+; Code size: 8 B per unrolled iteration * FBDRV_MAIN_ITERS (666)
+; = ~5 KB inline, plus the small d16(a5) tail MOVEM at the end.
 FBDRV_INLINE          macro
-    movea.l #UFW_FB_SRC, a6
     ; IKBD is serviced interrupt-driven (userfw_acia_irq), so the blit
     ; no longer polls the ACIA inline -- it's a straight MOVEM burst.
-    rept    FBDRV_MAIN_ITERS
+    rept    \1
     movem.l (a6)+, d0-d7/a1-a4
     movem.l d0-d7/a1-a4, -(a5)
     endr
-    ;
+                      endm
+
+FBDRV_TAIL            macro
     ; Tail: copy the last FBDRV_TAIL_BYTES bytes of the blitted
     ; region that the chunked main loop can't reach (FB_COPY_LINES *
     ; 160 isn't a multiple of FBDRV_ITER_BYTES=48). A6 is at
@@ -325,6 +350,17 @@ IKBD_WINDOW_BASE      equ $FB8200
 ; IKBD window ($82) so the RP can tell the two apart. The value read
 ; is irrelevant; only the address matters.
 VBLSYNC_ADDR          equ $FB8400
+; Mono only: the ack for the first half of a frame. The cart FB is not
+; free yet -- half of it has still to be copied -- so the RP must not
+; take it as a frame ack, but it is still a VBL and the audio refill
+; keys off it. The RP tells the two apart by the low byte.
+VBLSYNC_HALF_ADDR     equ (VBLSYNC_ADDR + 1)
+
+; Display report: the m68k reads (VIDEO_WINDOW_BASE + UFW_MONO) once per
+; VBL, before the sound reports, so the RP knows which picture to draw
+; and how many YM samples a 71 Hz VBL takes. Distinct from every other
+; window here.
+VIDEO_WINDOW_BASE     equ $FB9000
 
 ; --- STE/Mega STE DMA sound (auto-detected at runtime) -----------
 ; STE-class machines play 8-bit SIGNED PCM from ST RAM by DMA with no
@@ -393,11 +429,15 @@ STE_SND_BUF_MASK      equ $7D00              ; low 16 bits of either base, bit 1
 ; END is set from the length rather than the copy size.
 ; END is a byte address, so the length itself need not be a multiple of
 ; anything -- only the copy does, and that is fixed.
+;
+; Mono VBLs come at 71.47 Hz, so the chip eats about 350 bytes a VBL
+; there: the same steering, from a different starting guess. The minimum
+; covers both and keeps the report inside one byte (512 - 320 = 192).
 STE_SND_COPY          equ 512                ; bytes copied per VBL (mult of 4)
 STE_SND_LEN_INIT      equ 500                ; starting guess, steered from here
-STE_SND_LEN_MIN       equ 480
+STE_SND_LEN_INIT_MONO equ 350                ; the same at 71 Hz
+STE_SND_LEN_MIN       equ 320
 STE_SND_LEN_MAX       equ 512                ; must not exceed STE_SND_COPY
-STE_SND_A_END         equ (STE_SND_BUF_A + STE_SND_LEN_INIT)
 
 ; Cookie jar (_p_cookies) + _SND cookie for DMA-sound detection.
 COOKIE_JAR_PTR        equ $000005A0          ; longword: cookie jar base (0 = none)
@@ -512,7 +552,7 @@ FORCE_NO_DMA          equ 0
 ;   offset 28: MFP VR save (byte) -- S-bit + vector base, switched to auto-EOI under userfw
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
-UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F06..$77FCF gap
+UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F08..$77FCF gap
     ifgt  UFW_SAVE+UFW_SAVE_SIZE-$00077FD0
     fail  "userfw save area runs past the free gap at $77FD0"
     endc
@@ -544,6 +584,22 @@ userfw:
     trap    #14
     addq.l  #2, sp
     move.l  d0, UFW_PHYSBASE_SAVE    ; saved screen base lives in RAM now
+
+    ; --- Low res or high res? ---------------------------------------
+    ; main.s has switched medium to low, so the shifter is now in one of
+    ; the two modes with a picture of their own. In mono, colour 0 is
+    ; set once to white paper here, and the palette copy in the loop is
+    ; skipped: the RP draws ink bits, and nothing else in the palette
+    ; means anything to a mono monitor.
+    clr.b   UFW_MONO
+    clr.b   UFW_HALF
+    move.b  SHIFTER_RES.w, d0
+    andi.b  #3, d0
+    cmpi.b  #SHIFTER_RES_HIGH, d0
+    bne.s   .res_colour
+    move.b  #1, UFW_MONO
+    move.w  #MONO_PAPER_WHITE, PALETTE_BASE.w
+.res_colour:
 
     ; --- Detect STE DMA sound via the _SND cookie (bit 1) ---------
     ; Walk the cookie jar; a null jar or a missing _SND (plain ST /
@@ -809,15 +865,24 @@ userfw:
     clr.l   (a0)+
     dbf     d0, .ste_snd_clr_b
     move.w  #STE_SND_LEN_INIT, UFW_SND_LEN
+    tst.b   UFW_MONO
+    beq.s   .ste_snd_len_set
+    move.w  #STE_SND_LEN_INIT_MONO, UFW_SND_LEN
+.ste_snd_len_set:
     clr.w   UFW_SND_PREVPOS
     clr.b   UFW_SND_TICK
     move.b  #STE_DMA_MODE_VAL, STE_DMA_MODE.w
     move.b  #((STE_SND_BUF_A>>16)&$FF), STE_DMA_START_HI.w
     move.b  #((STE_SND_BUF_A>>8)&$FF), STE_DMA_START_MID.w
     move.b  #(STE_SND_BUF_A&$FF), STE_DMA_START_LO.w
-    move.b  #((STE_SND_A_END>>16)&$FF), STE_DMA_END_HI.w
-    move.b  #((STE_SND_A_END>>8)&$FF), STE_DMA_END_MID.w
-    move.b  #(STE_SND_A_END&$FF), STE_DMA_END_LO.w
+    ; END = buffer A + the starting length, as userfw_snd_irq computes it.
+    move.l  #STE_SND_BUF_A, d0
+    add.w   UFW_SND_LEN, d0
+    move.b  #((STE_SND_BUF_A>>16)&$FF), STE_DMA_END_HI.w
+    move.w  d0, d1
+    lsr.w   #8, d1
+    move.b  d1, STE_DMA_END_MID.w
+    move.b  d0, STE_DMA_END_LO.w
     ; Timer-A in event-count mode, one event per DMA frame end, so
     ; userfw_snd_irq re-points START/END right after every buffer switch
     ; (see the handler). Vector, data, control, then enable + unmask;
@@ -924,10 +989,34 @@ userfw:
     ; ~20 us. Apps that don't want RP-driven palette can leave the
     ; cart slot zero (= all-black screen, since the m68k still
     ; publishes it every frame) -- swap the load EA below for
-    ; their own palette source if needed.
+    ; their own palette source if needed. Not in mono, where colour 0
+    ; was set at boot and the rest mean nothing.
+    tst.b   UFW_MONO
+    bne.s   .palette_done
     lea     PALETTE_ADDR, a5
     movem.l (a5), d0-d7
     movem.l d0-d7, PALETTE_BASE.w
+.palette_done:
+
+    ; Pure 68000 CPU copy via the FBDRV_INLINE macro (defined in
+    ; the constants block). Same code path on plain ST / STE /
+    ; MegaSTE / TT / Falcon -- no _MCH cookie dispatch, no STE
+    ; blitter.
+    ;
+    ; FBDRV_INLINE clobbers D0-D7, A1-A4. A0 and A7 (SP) are
+    ; PRESERVED (not in the MOVEM list): A0 holds the Timer-B
+    ; handler's dedicated audio buffer pointer (initialised at boot,
+    ; advances + wraps inside the handler), A7 keeps the supervisor
+    ; SP valid so IRQs can fire safely. A6 is the source pointer.
+    ; D0-D7 / A1-A4 are scratch and not consumed after.
+    ifne    FBDRV_DEBUG_MARKS
+    move.w  #BLIT_MARK_RUNNING, PALETTE_IDX0.w  ; border = white (blit in flight)
+    endc
+
+    ; The second half of a mono frame is due: carry on from where the
+    ; last VBL stopped.
+    tst.b   UFW_HALF
+    bne     .blit_resume
 
     ; A5 = END of the screen page chunk-covered region. FBDRV_INLINE
     ; uses predec MOVEM (`movem.l list, -(a5)`) and walks A5 backwards
@@ -936,28 +1025,40 @@ userfw:
     ; which is the value .after_copy below expects in A5.
     movea.l UFW_SCREEN_PAGE, a5
     lea     (FBDRV_MAIN_ITERS * FBDRV_ITER_BYTES)(a5), a5
+    movea.l #UFW_FB_SRC, a6
+    FBDRV_INLINE FBDRV_ITERS_A        ; inline cart->ST screen copy, part 1
 
-    ; Pure 68000 CPU copy via the FBDRV_INLINE macro (defined in
-    ; the constants block). Same code path on plain ST / STE /
-    ; MegaSTE / TT / Falcon -- no _MCH cookie dispatch, no STE
-    ; blitter.
-    ;
-    ; FBDRV_INLINE clobbers D0-D7, A1-A4, A6. A0 and A7 (SP) are
-    ; PRESERVED (not in the MOVEM list): A0 holds the Timer-B
-    ; handler's dedicated audio buffer pointer (initialised at boot,
-    ; advances + wraps inside the handler), A7 keeps the supervisor
-    ; SP valid so IRQs can fire safely. A6 is the macro's own src
-    ; pointer (overwritten at macro entry) so no save is needed.
-    ; D0-D7 / A1-A4 are scratch and not consumed after.
-    ifne    FBDRV_DEBUG_MARKS
-    move.w  #BLIT_MARK_RUNNING, PALETTE_IDX0.w  ; border = white (blit in flight)
-    endc
-    FBDRV_INLINE                      ; inline cart->ST screen copy
+    ; In colour the rest follows straight on. In mono this VBL has done
+    ; its share: the whole copy takes ~17.6 ms against a 14 ms VBL, so
+    ; the rest waits for the next one, and the page is not flipped until
+    ; then. The resume needs nothing saved -- UFW_SCREEN_PAGE does not
+    ; change until the frame is done, and the source and destination of
+    ; part 2 follow from it.
+    tst.b   UFW_MONO
+    beq.s   .blit_part_b
+    st      UFW_HALF
+    bra     .after_copy
+
+.blit_resume:
+    sf      UFW_HALF
+    movea.l UFW_SCREEN_PAGE, a5
+    lea     (FBDRV_ITERS_B * FBDRV_ITER_BYTES)(a5), a5
+    movea.l #(UFW_FB_SRC + FBDRV_ITERS_A * FBDRV_ITER_BYTES), a6
+.blit_part_b:
+    FBDRV_INLINE FBDRV_ITERS_B        ; part 2
+    FBDRV_TAIL
     ifne    FBDRV_DEBUG_MARKS
     move.w  #BLIT_MARK_DONE, PALETTE_IDX0.w     ; border = green (copy done)
     endc
 
 .after_copy:
+
+    ; Report the display to the RP every VBL, ahead of the sound reports:
+    ; one cart-bus read at VIDEO_WINDOW_BASE + mono. A1/D1 are scratch.
+    moveq   #0, d1
+    move.b  UFW_MONO, d1
+    lea     VIDEO_WINDOW_BASE, a1
+    tst.b   (a1, d1.w)
 
     ; Report sound capability to the RP every VBL: one cart-bus read at
     ; SNDCAP_WINDOW_BASE + has_dma. The RP's commemul ring decodes the
@@ -1061,6 +1162,15 @@ userfw:
     ; which leaves time for the previous nudge to show up. A handover
     ; resets the offset and produces a large jump; those frames are
     ; ignored rather than acted on.
+    ;
+    ; In mono only the VBL that ends a frame is sampled. The two halves
+    ; reach this point a couple of hundred cycles apart, and sampling
+    ; both would put that difference into every comparison with the same
+    ; sign -- steering the length a fraction of a sample off, so the
+    ; chip's phase walks round the VBL and a buffer is replayed each
+    ; time it laps. Two VBLs at a time, it is the same point every time.
+    tst.b   UFW_HALF
+    bne.s   .snd_len_report
     addq.b  #1, UFW_SND_TICK
     move.b  UFW_SND_TICK, d2
     andi.b  #3, d2
@@ -1090,6 +1200,7 @@ userfw:
     ; Tell the RP how many samples to produce next frame. Biased by the
     ; minimum so the whole range fits a byte; it is no longer a multiple
     ; of four, so it cannot be sent as a quarter.
+.snd_len_report:
     move.w  UFW_SND_LEN, d1
     subi.w  #STE_SND_LEN_MIN, d1
     lea     SNDLEN_WINDOW_BASE, a1
@@ -1114,6 +1225,15 @@ userfw:
     dbf     d1, .ste_snd_copy
 .no_dma_refill:
 
+    ; Half a mono frame: no flip, and an ack that only says "a VBL went
+    ; by" -- the RP keys its audio refill off it, but must not take the
+    ; cart FB as free, because the rest is copied out of it next VBL.
+    tst.b   UFW_HALF
+    beq.s   .frame_done
+    tst.b   VBLSYNC_HALF_ADDR
+    bra.s   .input_check
+.frame_done:
+
     ; Flip the video base to the just-written page. A5 still holds
     ; UFW_SCREEN_PAGE (preserved by FBDRV_INLINE). Only the MID byte
     ; of the screen base differs between the two pages -- HIGH was
@@ -1133,7 +1253,8 @@ userfw:
 
     ; Frame-sync ack: one cart-bus read tells the RP the blit
     ; is finished and the cart FB is free to overwrite. Emitted every
-    ; VBL (the FB is free here -- blit done, page flipped). The RP's
+    ; VBL in colour, every other one in mono (the FB is free here --
+    ; blit done, page flipped). The RP's
     ; commemul ring captures the read; fb_publish() on the RP blocks
     ; until it sees this before running the next chunky-to-planar.
     tst.b   VBLSYNC_ADDR

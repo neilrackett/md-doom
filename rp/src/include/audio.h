@@ -35,8 +35,8 @@ extern "C" {
  * SILENT until the first report arrives. */
 typedef enum {
   AUDIO_MODE_SILENT = 0, /* zeros -- pre-report / no audio    */
-  AUDIO_MODE_YM,         /* 224 B/VBL: 112 (vA,vB) pairs      */
-  AUDIO_MODE_DMA         /* 500 B/VBL: 500 signed PCM samples */
+  AUDIO_MODE_YM,         /* 224 B/VBL: 112 (vA,vB) pairs (158 B in mono) */
+  AUDIO_MODE_DMA         /* ~500 B/VBL of signed PCM (~350 in mono)      */
 } audio_mode_t;
 
 /* Set the back-end (idempotent). Called by the cart-bus capability

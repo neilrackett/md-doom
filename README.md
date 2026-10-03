@@ -8,7 +8,7 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
-MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
+MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
 
 A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
@@ -97,6 +97,17 @@ available, because this renderer cannot draw a narrower view.
 Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
 Colour palettes: STDOOM (default), generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
 
+### Mono monitors
+
+On a mono monitor (the SM124, or anything else in ST high res) MD/DOOM
+runs in black and white at 640×400. Every Doom pixel becomes a 2×2
+block, but the dither works at the full resolution, so its pattern is
+twice as fine as the picture. Keypad \* still cycles the dither options;
+keypad / does nothing, as there are no colours to choose. A mono screen
+refreshes at 71 Hz and copying a whole screen takes longer than one of
+those, so the picture updates every other refresh: about 36 times a
+second, which is still more often than the game itself moves on (35).
+
 ### Level packs
 
 Your SidecarT has only got 1,152KB available for both code and data, and the smallest we can compress the shareware WAD to is 1,758KB, so MD/DOOM loads level packs one at a time (maximum ~768KB each), which contain just the map, sprites, textures, flats and sounds needed. We also had to drop the help and credits screens, have monsters that always face you, and sound effects at 5 kHz.
@@ -116,18 +127,19 @@ python3 tools/levelpack.py DOOM1.WAD packs --doom-src rp/src/doom/doom \
 ## Hardware requirements
 
 - [SidecarTridge Multi-device](https://sidecartridge.com) (RP2040-based ROM cartridge emulator)
-- Atari ST, STE, MegaST, or MegaSTE (low res only; high-res falls back to GEM)
+- Atari ST, STE, MegaST, or MegaSTE, with a colour monitor (low res) or a mono one such as the SM124 (high res)
 - A microSD card for the level packs
 - Raspberry Pi Debug Probe or Picoprobe for flashing/debugging (optional, for development)
 
 ## How it works
 
-The RP2040 runs Doom on Core 0 at 400 MHz, rendering 320x200 bytes of palette indices. After every frame both cores map those through a 16-colour dither lookup and pack the ST's four bitplanes straight into the cartridge framebuffer, in the m68k's slack between one blit and the next; the m68k blits that to the ST screen every VBL. Sound effects are mixed from a timer interrupt in step with the ST's VBL, so audio keeps up however long a frame takes. Input, the palette and sound ride the cartridge bus in both directions.
+The RP2040 runs Doom on Core 0 at 400 MHz, rendering 320x200 bytes of palette indices. After every frame both cores map those through a 16-colour dither lookup and pack the ST's four bitplanes straight into the cartridge framebuffer, in the m68k's slack between one blit and the next; the m68k blits that to the ST screen every VBL. On a mono monitor the same 32,000 bytes hold a 640x400 one-bit picture instead, dithered at the full resolution, and the m68k copies it in two halves over two of the mono screen's 71 Hz VBLs. Sound effects are mixed from a timer interrupt in step with the ST's VBL, so audio keeps up however long a frame takes. Input, the palette and sound ride the cartridge bus in both directions.
 
 ```
 IKBD keys + joystick       ──$FB82xx──►  demux → Doom events
 Xpad gamepad buttons       ──$FB88xx──►  hi byte, then lo at $FB8Axx
 Sound chip report (_SND)   ──$FB86xx──►  picks STE DMA or YM2149
+Display report (mono?)     ──$FB90xx──►  picks 16 colours or 640x400 mono
 Screen: blit + page flip   ◄──$FA8300──  256 → 16 colours + c2p, both cores
 Palette: 16 shifter words  ◄──$FA4040──  derived from PLAYPAL each tint
 Sound: DMA refill or YM    ◄──$FA4100──  8-channel sfx mix on Core 1
@@ -152,12 +164,15 @@ Flash and RAM are both nearly full; `AGENTS.md` has the budgets, the architectur
 
 ### Running it on your computer
 
-You can also run MD/DOOM on your Mac or Linux PC, no SidecarT required, using [EmuMD](https://github.com/neilrackett/emumd) in the `emu/emumd` submodule. It builds the firmware for your computer and runs it in a version of [Hatari](https://www.hatari-emu.org) with a Multi-device on its cartridge port, with a folder standing in for the microSD card. You'll need the tools in [EmuMD's README](https://github.com/neilrackett/emumd#getting-started), a TOS image ([EmuTOS](https://emutos.sourceforge.io/download.html) is fine) and the level packs (see above) in `emu/sd/doom`, then:
+You can also run MD/DOOM on your Mac or Linux PC, no SidecarT required, using [EmuMD](https://github.com/neilrackett/emumd) in the `emu/emumd` submodule. It builds the firmware for your computer and runs it in a version of [Hatari](https://www.hatari-emu.org) with a Multi-device on its cartridge port, with a folder standing in for the microSD card. You'll need the tools in [EmuMD's README](https://github.com/neilrackett/emumd#getting-started) and the level packs (see above) in `emu/sd/doom`, then:
 
 ```bash
-emu/emumd/tools/mdfw hatari            # once: builds EmuMD's Hatari
-make emu TOS=/path/to/etos256uk.img    # builds and runs MD/DOOM in Hatari
+emu/emumd/tools/mdfw hatari            # once: builds EmuMD's Hatari, downloads EmuTOS
+make emu                               # builds and runs MD/DOOM in Hatari
+make emu MONO=1                        # the same on a mono monitor
 ```
+
+EmuMD boots EmuTOS unless you give it another TOS image with `TOS=/path/to/tos.img`.
 
 Add `-V` to `emu/emumd/tools/mdfw run` to see the firmware's debug output, including the 64-frame timing line. It's great for testing the game and the code that talks to the ST, but the emulated Multi-device has all the speed and memory it wants, so timing, tearing and running out of memory still need real hardware.
 

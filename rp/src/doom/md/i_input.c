@@ -30,7 +30,7 @@
 
 /* Keypad * and / cycle the dither mode and the palette source at run
  * time, as the DOOM Accelerator did, and say so in the HUD. Neither key
- * means anything to Doom. */
+ * means anything to Doom, and in ST high res / means nothing at all. */
 #define SCAN_KP_MULTIPLY 0x66
 #define SCAN_KP_DIVIDE 0x65
 /* Debug builds only: keypad - cycles the audio refill interrupt off /
@@ -56,7 +56,7 @@ static void cycle_video_mode(uint8_t scancode) {
     s_pending_dither = (int8_t)((cur + 1) % DOOM_VIDEO_DITHER_COUNT);
     players[consoleplayer].message =
         doom_video_dither_name((doom_video_dither_t)s_pending_dither);
-  } else {
+  } else if (!fb_st_mono()) { /* a mono monitor has no colours to choose */
     int cur = s_pending_palette >= 0 ? s_pending_palette : (int)doom_video_get_palette_mode();
     s_pending_palette = (int8_t)((cur + 1) % DOOM_VIDEO_PAL_COUNT);
     players[consoleplayer].message =

@@ -24,6 +24,10 @@
  *     framework's asm worker uses. The bottom half of the screen runs on
  *     Core 1 through fb_core1_dispatch, straight into the cart FB in the
  *     m68k's post-blit slack (there is no planar scratch buffer).
+ *
+ * In ST high res (a mono monitor) both halves change: the reduction is
+ * to brightness alone, and the frame is 640x400 at one bit a pixel. See
+ * "ST high res" below.
  */
 
 #include "doom_video.h"
@@ -52,18 +56,25 @@ static bool s_have_playpal;
 static doom_video_palette_t s_pal_mode = DOOM_VIDEO_PAL_SUBSET;
 static doom_video_dither_t s_dither = DOOM_VIDEO_DITHER_BAYER4;
 
+static bool s_mono;               /* ST high res: 640x400, one bit a pixel */
+
 static uint8_t s_ref_rgb[16][3];  /* the 16 colours as the ST shows them */
 static int s_ref_count = 16;      /* fewer for the 4-colour CGA palette   */
 static bool s_vivid;              /* fixed palette: hue-first matching   */
 static uint16_t s_st_colors[16];  /* the same, as ST palette words       */
 
-/* [cell][index] -> pen, cell = ((y & 3) << 2) | (x & 3). 4 KB. */
-static uint8_t s_lut[16][256] __attribute__((aligned(4)));
+/* [cell][index] -> pen, cell = ((y & 3) << 2) | (x & 3). 4 KB. In ST
+ * high res the same 4 KB holds the mono table instead (build_mono). */
+static union {
+  uint8_t pen[16][256];
+  uint16_t mono[2][4][256];
+} s_lut __attribute__((aligned(4)));
 
 /* For the blue-noise mode, which cannot be a per-cell LUT (1024 cells):
  * per index, nearest pen (bits 0..3), second pen (bits 4..7) and the
  * 0..16 mix level (bits 8..12); a pixel takes the second pen where the
- * level beats the tile's threshold. */
+ * level beats the tile's threshold. In ST high res, the index's
+ * brightness level 0..16 alone. */
 static uint16_t s_pair[256];
 
 static uint32_t s_convert_us;
@@ -419,8 +430,72 @@ static void build_refs(void) {
   set_refs_from_rgb(pal, 16);
 }
 
+/* ------------------------------------------------------------------ */
+/* ST high res                                                         */
+
+/* A mono monitor shows 640x400 at one bit a pixel and has no palette: a
+ * set bit is black ink, a clear one white paper (userfw.s sets colour 0
+ * that way). Doom's 320x200 frame is doubled both ways, but the dither
+ * runs at the full 640x400, so each Doom pixel is a 2x2 block of output
+ * pixels that can take up to four different thresholds, and a flat
+ * colour gets all 17 levels of a 4x4 matrix rather than 17 levels'
+ * worth of blocks. An output pixel is white where the colour's level,
+ * 0..16, beats the threshold under it. The palette sources mean nothing
+ * here and are not consulted.
+ *
+ * The level is the colour's brightest channel, not its luminance.
+ * Saturated colours look brighter than their luminance says, and Doom
+ * leans on it: the status bar's red numerals have about the luminance
+ * of the grey bar behind them (levels 2..4 against 4..6) and vanish by
+ * luminance, where by their brightest channel they stand out at 7..13.
+ * Greys are the same either way, and the browns most of Doom is made of
+ * move only a level or two.
+ *
+ * s_lut.mono[y & 1][x & 3][index] is one Doom pixel's four output bits,
+ * placed for a group of four: the low byte is the group's 8 output
+ * pixels in the upper of its two rows (pixel x & 3 = k at bits 7-2k and
+ * 6-2k), the high byte the same in the row below. Four lookups ORed
+ * together make a group's two output bytes. */
+
+static uint8_t mono_threshold(unsigned yy, unsigned xx) {
+  if (s_dither == DOOM_VIDEO_DITHER_NEAREST) return 7;
+  return dither_threshold(s_dither, (uint8_t)(((yy & 3u) << 2) | (xx & 3u)));
+}
+
+static void build_mono(void) {
+  for (uint32_t i = 0; i < 256u; i++) {
+    const uint8_t *c = &s_playpal[i * 3u];
+    int m = c[0];
+    if (c[1] > m) m = c[1];
+    if (c[2] > m) m = c[2];
+    s_pair[i] = (uint16_t)((m * 16 + 127) / 255);
+  }
+  for (unsigned yp = 0; yp < 2u; yp++) {
+    for (unsigned k = 0; k < 4u; k++) {
+      uint8_t t[2][2]; /* [output row][output column] of this pixel */
+      for (unsigned r = 0; r < 2u; r++) {
+        for (unsigned c = 0; c < 2u; c++) t[r][c] = mono_threshold(2u * yp + r, 2u * k + c);
+      }
+      for (uint32_t i = 0; i < 256u; i++) {
+        uint16_t e = 0;
+        for (unsigned r = 0; r < 2u; r++) {
+          for (unsigned c = 0; c < 2u; c++) {
+            if (s_pair[i] <= t[r][c]) e |= (uint16_t)(1u << (8u * r + 7u - 2u * k - c));
+          }
+        }
+        s_lut.mono[yp][k][i] = e;
+      }
+    }
+  }
+}
+
 static void rebuild(void) {
+  s_mono = fb_st_mono();
   if (!s_have_playpal) return;
+  if (s_mono) {
+    build_mono(); /* no palette to publish: the m68k does not copy it */
+    return;
+  }
   build_refs();
 
   for (uint32_t i = 0; i < 256u; i++) {
@@ -451,13 +526,13 @@ static void rebuild(void) {
       }
     }
     if (s_dither == DOOM_VIDEO_DITHER_NEAREST) {
-      for (uint8_t cell = 0; cell < 16u; cell++) s_lut[cell][i] = nearest;
+      for (uint8_t cell = 0; cell < 16u; cell++) s_lut.pen[cell][i] = nearest;
       s_pair[i] = (uint16_t)(nearest | (nearest << 4));
       continue;
     }
 
     for (uint8_t cell = 0; cell < 16u; cell++) {
-      s_lut[cell][i] = (t16 > (int)dither_threshold(s_dither, cell)) ? b : a;
+      s_lut.pen[cell][i] = (t16 > (int)dither_threshold(s_dither, cell)) ? b : a;
     }
     s_pair[i] = (uint16_t)(a | (b << 4) | (t16 << 8));
   }
@@ -544,10 +619,10 @@ static uint8_t *s_cart_fb;
 
 static inline void __not_in_flash_func(doom_c2p_block)(uint32_t *dst, const uint8_t *src,
                                                        unsigned y) {
-  const uint8_t *l0 = s_lut[((y & 3u) << 2) | 0u];
-  const uint8_t *l1 = s_lut[((y & 3u) << 2) | 1u];
-  const uint8_t *l2 = s_lut[((y & 3u) << 2) | 2u];
-  const uint8_t *l3 = s_lut[((y & 3u) << 2) | 3u];
+  const uint8_t *l0 = s_lut.pen[((y & 3u) << 2) | 0u];
+  const uint8_t *l1 = s_lut.pen[((y & 3u) << 2) | 1u];
+  const uint8_t *l2 = s_lut.pen[((y & 3u) << 2) | 2u];
+  const uint8_t *l3 = s_lut.pen[((y & 3u) << 2) | 3u];
   uint32_t p01 = 0, p23 = 0; /* (plane1 << 16) | plane0, (plane3 << 16) | plane2 */
   for (unsigned g = 0; g < 4u; g++) {
     uint32_t q = (uint32_t)l0[src[0]] | ((uint32_t)l1[src[1]] << 8) |
@@ -624,7 +699,82 @@ static void __not_in_flash_func(doom_c2p_bottom_job)(void *arg) {
   doom_c2p_chunks(CART_FB_CHUNK_COUNT / 2u, CART_FB_CHUNK_COUNT);
 }
 
+/* ST high res: 16 Doom pixels on row y -> the 32 output pixels they
+ * cover in each of output rows 2y (*top) and 2y + 1 (*bot), each as a
+ * uint32 of two screen words. The cart bus presents an RP halfword as
+ * the m68k word at the same address, so the left word is the low half,
+ * and a word's leftmost pixel is its bit 15: group g of four Doom
+ * pixels lands in bits 15..8, 7..0, 31..24, 23..16 for g = 0..3.
+ *
+ * Not RAM-resident themselves: they are inlined into mono_rows, which
+ * is, and the melt's copies stay in flash with it. RAM is the zone's. */
+static inline void mono_block(uint32_t *top, uint32_t *bot, const uint8_t *src, unsigned y) {
+  const uint16_t(*t)[256] = s_lut.mono[y & 1u];
+  uint32_t a = 0, b = 0;
+  for (unsigned g = 0; g < 4u; g++) {
+    const uint32_t e = (uint32_t)t[0][src[0]] | t[1][src[1]] | t[2][src[2]] | t[3][src[3]];
+    src += 4;
+    const unsigned sh = (g ^ 1u) * 8u;
+    a |= (e & 0xFFu) << sh;
+    b |= (e >> 8) << sh;
+  }
+  *top = a;
+  *bot = b;
+}
+
+/* Blue-noise variant, per output pixel against the tile. The block's 32
+ * output pixels are one whole row of it, starting at column 0: word h
+ * of each row is tile columns 16h..16h+15, Doom pixels 8h..8h+7. Kept
+ * rolled; unrolled it was 1.5 KB of RAM. */
+static inline void mono_block_bn(uint32_t *top, uint32_t *bot, const uint8_t *src, unsigned y) {
+  const uint8_t *nt = &bluenoise[((2u * y) & (BLUENOISE_N - 1u)) * BLUENOISE_N];
+  const uint8_t *nb = nt + BLUENOISE_N; /* 2y & 31 is even, so 2y + 1 is the next row */
+  uint32_t a = 0, b = 0;
+#pragma GCC unroll 1
+  for (unsigned i = 0; i < 16u; i++) {
+    const uint16_t l = s_pair[src[i]];
+    const unsigned bit = 16u * (i >> 3) + 15u - 2u * (i & 7u); /* output pixel 2i */
+    a |= ((uint32_t)(l <= nt[2u * i]) << bit) | ((uint32_t)(l <= nt[2u * i + 1u]) << (bit - 1u));
+    b |= ((uint32_t)(l <= nb[2u * i]) << bit) | ((uint32_t)(l <= nb[2u * i + 1u]) << (bit - 1u));
+  }
+  *top = a;
+  *bot = b;
+}
+
+static inline void mono_block_any(uint32_t *top, uint32_t *bot, const uint8_t *src, unsigned y) {
+  if (s_use_bn) {
+    mono_block_bn(top, bot, src, y);
+  } else {
+    mono_block(top, bot, src, y);
+  }
+}
+
+/* Doom rows [y0, y1) into the cart FB: row y is output rows 2y and
+ * 2y + 1, 80 bytes each, so 160y and 160y + 80 bytes into the image.
+ * Every store is 4-byte aligned and so never straddles a 48-byte chunk.
+ * One copy, shared by both cores. */
+static void __attribute__((noinline)) __not_in_flash_func(mono_rows)(unsigned y0, unsigned y1) {
+  for (unsigned y = y0; y < y1; y++) {
+    const uint8_t *src = fb_chunked_buffer + y * FB_CHUNKED_W;
+    for (unsigned x = 0; x < FB_CHUNKED_W; x += 16u, src += 16) {
+      uint32_t top, bot;
+      mono_block_any(&top, &bot, src, y);
+      const uint32_t o = y * 160u + x / 4u;
+      *(uint32_t *)(s_cart_fb + fb_cart_offset(o)) = top;
+      *(uint32_t *)(s_cart_fb + fb_cart_offset(o + 80u)) = bot;
+    }
+  }
+}
+
+static void __not_in_flash_func(mono_bottom_job)(void *arg) {
+  (void)arg;
+  mono_rows(FB_CHUNKED_H / 2u, FB_CHUNKED_H);
+}
+
 void doom_video_publish(void) {
+  /* The ST says which it is long before the first frame; rebuilding on
+   * a change here just means the LUT and the layout can never disagree. */
+  if (fb_st_mono() != s_mono) rebuild();
   s_cart_fb = (uint8_t *)fb_screen.framebuffer;
   s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
 
@@ -633,13 +783,18 @@ void doom_video_publish(void) {
   fb_wait_blit_ack();
   const uint32_t t0 = time_us_32();
 
-  fb_core1_dispatch(doom_c2p_bottom_job, NULL);
-  doom_c2p_chunks(0u, CART_FB_CHUNK_COUNT / 2u);
-  /* Tail: the last 64 pixels, natural order at the end of the FB. */
-  for (unsigned b = 0; b < CART_FB_CHUNK_TAIL / 8u; b++) {
-    const unsigned pix = 2u * CART_FB_CHUNK_COVERED + b * 16u;
-    doom_c2p_block_any((uint32_t *)(s_cart_fb + CART_FB_CHUNK_COVERED + b * 8u),
-                       fb_chunked_buffer + pix, pix);
+  if (s_mono) {
+    fb_core1_dispatch(mono_bottom_job, NULL);
+    mono_rows(0u, FB_CHUNKED_H / 2u);
+  } else {
+    fb_core1_dispatch(doom_c2p_bottom_job, NULL);
+    doom_c2p_chunks(0u, CART_FB_CHUNK_COUNT / 2u);
+    /* Tail: the last 64 pixels, natural order at the end of the FB. */
+    for (unsigned b = 0; b < CART_FB_CHUNK_TAIL / 8u; b++) {
+      const unsigned pix = 2u * CART_FB_CHUNK_COVERED + b * 16u;
+      doom_c2p_block_any((uint32_t *)(s_cart_fb + CART_FB_CHUNK_COVERED + b * 8u),
+                         fb_chunked_buffer + pix, pix);
+    }
   }
   fb_core1_wait();
 
@@ -852,9 +1007,92 @@ static void __not_in_flash_func(wipe_compose_groups)(unsigned g0, unsigned g1) {
   }
 }
 
+/* The melt in ST high res: the same columns, rules and bottom-up order
+ * on the mono layout. A group is still 16 Doom pixels -- 8 columns -- but
+ * now 32 output pixels, one uint32 of two screen words per output row; a
+ * column is four output bits wide and moves two output rows for every
+ * row of Doom's. Left in flash: it only runs during the melt, and the
+ * arithmetic is simple enough to be well inside the slack from there. */
+#define WIPE_MONO_H (2 * FB_CHUNKED_H)
+
+static uint32_t wipe_mono_mask(unsigned c) {
+  return (c < 4u) ? (0xF000u >> (4u * c)) : (0xF0000000u >> (4u * (c - 4u)));
+}
+
+static inline uint32_t *wipe_mono_word(uint8_t *fb, int yy, unsigned g) {
+  return (uint32_t *)(fb + fb_cart_offset((uint32_t)yy * 80u + g * 4u));
+}
+
+static void wipe_compose_mono(unsigned g0, unsigned g1) {
+  uint8_t *const fb = s_cart_fb;
+  for (unsigned g = g0; g < g1; g++) {
+    /* As wipe_compose_groups, in output rows. */
+    int16_t on[8];
+    int ymin_static = WIPE_MONO_H;
+    int ymax = 0;
+    unsigned nd = 0;
+    int16_t dd[8], dlo[8];
+    uint32_t dm[8];
+    for (unsigned c = 0; c < 8u; c++) {
+      int v = s_wipe_y[g * 8u + c];
+      if (v < 0) v = 0;
+      if (v > FB_CHUNKED_H) v = FB_CHUNKED_H;
+      v *= 2;
+      on[c] = (int16_t)v;
+      if (v > ymax) ymax = v;
+      const int prev = 2 * s_wipe_off[g * 8u + c];
+      if (prev < ymin_static) ymin_static = prev;
+      const int16_t d = (int16_t)(v - prev);
+      if (!d) continue;
+      const uint32_t m = wipe_mono_mask(c);
+      unsigned j;
+      for (j = 0; j < nd; j++) {
+        if (dd[j] == d) {
+          dm[j] |= m;
+          if (v < dlo[j]) dlo[j] = (int16_t)v;
+          break;
+        }
+      }
+      if (j == nd) {
+        dd[nd] = d;
+        dm[nd] = m;
+        dlo[nd] = (int16_t)v;
+        nd++;
+      }
+    }
+    if (!nd) continue;
+
+    for (unsigned j = 0; j < nd; j++) {
+      const uint32_t m = dm[j];
+      for (int y = WIPE_MONO_H - 1; y >= dlo[j]; y--) {
+        uint32_t *dst = wipe_mono_word(fb, y, g);
+        *dst = (*dst & ~m) | (*wipe_mono_word(fb, y - dd[j], g) & m);
+      }
+    }
+
+    for (int y = ymax - 1; y >= ymin_static; y--) {
+      uint32_t mnew = 0;
+      for (unsigned c = 0; c < 8u; c++) {
+        if (on[c] > y) mnew |= wipe_mono_mask(c);
+      }
+      uint32_t top, bot;
+      const unsigned sy = (unsigned)y >> 1;
+      mono_block_any(&top, &bot, fb_chunked_buffer + sy * FB_CHUNKED_W + g * 16u, sy);
+      const uint32_t t = (y & 1) ? bot : top;
+      uint32_t *dst = wipe_mono_word(fb, y, g);
+      *dst = (*dst & ~mnew) | (t & mnew);
+    }
+    for (unsigned c = 0; c < 8u; c++) s_wipe_off[g * 8u + c] = (int16_t)(on[c] / 2);
+  }
+}
+
 static void __not_in_flash_func(wipe_right_job)(void *arg) {
   (void)arg;
-  wipe_compose_groups(10u, 20u);
+  if (s_mono) {
+    wipe_compose_mono(10u, 20u);
+  } else {
+    wipe_compose_groups(10u, 20u);
+  }
 }
 
 void doom_video_wipe_begin(void) {
@@ -893,7 +1131,11 @@ bool doom_video_wipe_step(int tics) {
   fb_wait_blit_ack();
   const uint32_t t0 = time_us_32();
   fb_core1_dispatch(wipe_right_job, NULL);
-  wipe_compose_groups(0u, 10u);
+  if (s_mono) {
+    wipe_compose_mono(0u, 10u);
+  } else {
+    wipe_compose_groups(0u, 10u);
+  }
   fb_core1_wait();
   const uint32_t us = time_us_32() - t0;
   if (us > s_wipe_max_us) s_wipe_max_us = us;

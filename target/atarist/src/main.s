@@ -312,21 +312,21 @@ start_rom_code:
 ; Enable bconin to return shift key status
 	or.b #%1000, _conterm.w
 
-; Get the resolution of the screen. High-res (640x400 mono) is not
-; supported by the framebuffer template; bail to GEM with a message
-; mirroring md-sprites-demo's lowres_only branch.
+; Get the resolution of the screen. Low res and high res (640x400 on a
+; mono monitor) both have a picture of their own; userfw sees which it
+; is from the shifter and the RP draws that. Anything else is switched
+; to low res.
 	get_rez
 	cmp.w #2, d0
-	beq .highres_unsupported
+	beq.s .rez_ok
 	tst.w d0
-	beq.s .rez_is_low
+	beq.s .rez_ok
 	set_lowres
-.rez_is_low:
+.rez_ok:
 
 ; Banner first, every other message underneath it. Cconws works at this
-; point in the boot -- the high-res bail-out below has always relied on
-; it -- and the text lands on the normal TOS boot console, above whatever
-; TOS prints next, until the game takes the screen.
+; point in the boot, and the text lands on the normal TOS boot console,
+; above whatever TOS prints next, until the game takes the screen.
 	print banner_txt
 
 ; The user firmware puts its two screen pages at $70000 and $78000 and
@@ -390,11 +390,6 @@ start_rom_code:
 
 .skip_autostart:
 	print msg_run_from_c
-	bra boot_gem
-
-.highres_unsupported:
-	print banner_txt
-	print msg_needs_colour
 	bra boot_gem
 
 .not_enough_ram:
@@ -477,11 +472,11 @@ cart_run:
 	blo .cart_run_no_ram
 
 	; Unlike the autostart path, this one inherits whatever resolution
-	; the desktop is in. Mono has nowhere to go; medium just needs
-	; switching.
+	; the desktop is in. Low and high (mono) run as they are; medium
+	; just needs switching.
 	get_rez
 	cmp.w #2, d0
-	beq .cart_run_highres
+	beq.s .cart_run_rez_ok
 	tst.w d0
 	beq.s .cart_run_rez_ok
 	set_lowres
@@ -512,11 +507,6 @@ cart_run:
 	bne .cart_run_bad
 	jmp UFW_RAM_DEST
 
-.cart_run_highres:
-	print banner_txt
-	print msg_needs_colour
-	bra .cart_run_return
-
 .cart_run_no_ram:
 	print banner_txt
 	print msg_no_ram
@@ -541,9 +531,6 @@ cart_run:
 ; print's pea takes an absolute address, so the block copied below the
 ; screen reaches these here in the cartridge, as it already does for the
 ; banner.
-msg_needs_colour:
-	dc.b $d,$a,"MD/DOOM: Needs a colour monitor",$d,$a,0
-	even
 msg_no_ram:
 	dc.b $d,$a,"MD/DOOM: Needs 512 KB of RAM",$d,$a,0
 	even

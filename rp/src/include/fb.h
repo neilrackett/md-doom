@@ -102,6 +102,14 @@ void fb_pump_rom3(void);
 bool fb_st_relocated(void);
 bool fb_wait_st_reloc(uint32_t timeout_ms);
 
+/* True when the ST is in high res on a mono monitor (640x400, one
+ * plane, 71 Hz), from the display report the m68k sends every VBL. The
+ * report comes before the relocation heartbeat, so it is known by the
+ * time fb_wait_st_reloc returns. The cart FB is still 32000 bytes in
+ * the same chunk-reversed layout -- 80-byte rows, 400 of them -- and a
+ * frame is two VBLs long; fb_publish draws the right one either way. */
+bool fb_st_mono(void);
+
 /* Called from fb_pump_rom3 when the heartbeat has been gone long enough
  * to mean the ST was reset. The handler does not return: the cartridge
  * image has to be put back and the RP restarted alongside the ST.

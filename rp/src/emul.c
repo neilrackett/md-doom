@@ -241,17 +241,18 @@ void emul_start() {
   // clear the request: it is for one boot, not for every reset after.
   cart_skip_autostart(false);
 
+  // Default palette for the boot splash; doom_video replaces it with the
+  // 16 colours it derives from PLAYPAL. Before fb_init, which publishes
+  // the splash -- in mono it picks ink and paper by these colours.
+  palette_init();
+
   // 320x200 4bpp framebuffer + fb_screen for the draw primitives.
   // (This launches Core 1 for the chunky->planar worker.)
   if (fb_init(&fb_mode_320x200) < 0) {
     panic("fb_init failed");
   }
-  DPRINTF("fb_init OK\n");
+  DPRINTF("fb_init OK (%s)\n", fb_st_mono() ? "ST high res, mono" : "ST low res");
   cart_check("post-fb");
-
-  // Default palette for the boot splash; doom_video replaces it with the
-  // 16 colours it derives from PLAYPAL.
-  palette_init();
 
   // Cart audio buffer producer. The back-end (STE DMA or YM2149) is
   // reported by the m68k over the cart bus; audio.c decodes that report
