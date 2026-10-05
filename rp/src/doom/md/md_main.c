@@ -109,7 +109,9 @@ static void loading_screen(const char *map, uint32_t done, uint32_t total) {
   }
   if (s_music_missing) {
     font_move(160, BAND_TOP + 36);
-    font_print("Download latest level pack for music");
+    font_print("Download latest level pack");
+    font_move(160, BAND_TOP + 48);
+    font_print("to add music");
   }
   doom_video_publish();
 }
