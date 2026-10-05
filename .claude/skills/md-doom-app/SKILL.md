@@ -108,8 +108,10 @@ framework loop in `emul.c`.
   Timer-A frame-end handler (`userfw_snd_irq`), never from the VBL loop.
 - **The cart FB is written in place** by `doom_video_publish` between
   `fb_wait_blit_ack` and `fb_frame_done`; keep that window short.
-- **Music** is YM2149 register streams read from the SD card, DMA-sound
-  machines only (on a plain ST the YM is the sfx DAC). The SD card is
+- **Music** is YM2149 register streams read from the SD card. With DMA
+  sound it plays alongside the effects; without it the YM is the sfx DAC,
+  and keypad ) gives it to the music instead (saved as `YMMUSIC`; the
+  m68k switches Timer-B off and on, `CART_YM_MUSIC_OFFSET`). The SD card is
   read only from `I_MD_MusicPump` (end of frame, between melt steps),
   never from the renderer's mid-frame `Poll` or `PlaySong`; registers go
   to the m68k through the audio buffer's last 32 bytes, R0..R10 in full

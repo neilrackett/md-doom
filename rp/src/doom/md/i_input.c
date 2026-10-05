@@ -33,6 +33,10 @@
  * means anything to Doom, and in ST high res / means nothing at all. */
 #define SCAN_KP_MULTIPLY 0x66
 #define SCAN_KP_DIVIDE 0x65
+/* Keypad ), on an ST without DMA sound, gives the YM2149 to the music
+ * instead of the sound effects, or back (both play anyway with DMA
+ * sound, which leaves the YM free). Saved with the video options. */
+#define SCAN_KP_RPAREN 0x64
 /* Debug builds only: keypad - cycles the audio refill interrupt off /
  * Core 0 / Core 1 for A/B tests. Core 0 stalls the renderer, so a
  * release build must not offer it one key away from * and /. */
@@ -49,6 +53,10 @@ extern void I_MD_SaveVideoSettings(void);
  * frames, with Core 1 idle. */
 static int8_t s_pending_dither = -1;
 static int8_t s_pending_palette = -1;
+static int8_t s_pending_ym_music = -1; /* keypad ): 1 music, 0 sound effects */
+
+extern bool I_MD_MusicSetYm(bool music);
+extern bool I_MD_MusicGetYm(void);
 
 static void cycle_video_mode(uint8_t scancode) {
   if (scancode == SCAN_KP_MULTIPLY) {
@@ -64,9 +72,19 @@ static void cycle_video_mode(uint8_t scancode) {
   }
 }
 
-/* Apply a dither / palette change asked for since the last frame.
- * Called from I_MD_PresentFrame. */
+/* Apply a dither / palette / sound change asked for since the last
+ * frame. Called from I_MD_PresentFrame, where the music module may also
+ * read the SD card: switching to the music opens the song, so the HUD
+ * can say if there is none. */
 void I_MD_ApplyVideoMode(void) {
+  if (s_pending_ym_music >= 0) {
+    const bool want = s_pending_ym_music != 0;
+    s_pending_ym_music = -1;
+    const bool got = I_MD_MusicSetYm(want);
+    players[consoleplayer].message =
+        got ? "MUSIC" : want ? "NO MUSIC FILES, SOUND EFFECTS" : "SOUND EFFECTS";
+    I_MD_SaveVideoSettings();
+  }
   if (s_pending_dither < 0 && s_pending_palette < 0) return;
   if (s_pending_dither >= 0) {
     doom_video_set_dither((doom_video_dither_t)s_pending_dither);
@@ -198,6 +216,13 @@ void I_GetEvent(void) {
   while (ikbd_pop_key(&k)) {
     if (k.scancode == SCAN_KP_MULTIPLY || k.scancode == SCAN_KP_DIVIDE) {
       if (k.is_press) cycle_video_mode(k.scancode);
+      continue;
+    }
+    if (k.scancode == SCAN_KP_RPAREN) {
+      if (k.is_press && audio_get_mode() == AUDIO_MODE_YM) {
+        const bool cur = s_pending_ym_music >= 0 ? s_pending_ym_music != 0 : I_MD_MusicGetYm();
+        s_pending_ym_music = cur ? 0 : 1; /* applied, and announced, between frames */
+      }
       continue;
     }
 #if defined(_DEBUG) && (_DEBUG != 0)

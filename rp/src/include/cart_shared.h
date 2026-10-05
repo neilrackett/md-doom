@@ -74,6 +74,12 @@
 #define CART_SKIP_AUTOSTART_OFFSET       CART_SHARED_VARIABLES_OFFSET
 #define CART_SKIP_AUTOSTART_MAGIC        0x534B4950u /* 'SKIP' */      /* 240 bytes total */
 
+/* Slot 1: on a machine without DMA sound, a non-zero word here hands
+ * the YM2149 from the sound effects (its Timer-B DAC) to the music
+ * (keypad ), doom/md/i_mdmusic.c). The m68k switches over in its next
+ * VBL. Mirrored as YM_MUSIC_ADDR in userfw.s. */
+#define CART_YM_MUSIC_OFFSET             (CART_SHARED_VARIABLES_OFFSET + 4)
+
 /* 16-entry ST palette published by the RP, applied by the m68k VBL
  * handler to $FFFF8240..$FFFF825E each frame. Format: 16 contiguous
  * 16-bit words. Each word is the standard ST 9-bit palette format
@@ -107,9 +113,10 @@
  * of DMA samples or 224 of YM pairs). 16 words: a sequence number that
  * changes when there is something new, a mask of the registers to write
  * (bit n = R n, never R14/R15), then R0..R13, one per word in the low
- * byte. Written by the RP after each VBL ack; on DMA-sound machines the
- * m68k writes the masked registers to the YM in its next VBL. Mirrored
- * as YM_PKT_ADDR in userfw.s. */
+ * byte. Written by the RP after each VBL ack; on DMA-sound machines, or
+ * when CART_YM_MUSIC_OFFSET has given the YM to the music, the m68k
+ * writes the masked registers to the YM in its next VBL. Mirrored as
+ * YM_PKT_ADDR in userfw.s. */
 #define CART_YM_PACKET_SIZE              32
 #define CART_YM_PACKET_OFFSET                                                 \
   (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_BUFFER_SIZE - CART_YM_PACKET_SIZE)

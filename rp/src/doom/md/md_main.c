@@ -212,9 +212,9 @@ void doomgame_start(const char *folder) {
     program_pack("E1M1");
   }
 
-  /* The dither, palette and screen size chosen last time (keypad * and
-   * /, and - and +). The size has to be in before R_Init, which sizes
-   * the view from it. */
+  /* The dither, palette, screen size and sound chosen last time (keypad
+   * * and /, - and +, and keypad )). The size has to be in before
+   * R_Init, which sizes the view from it. */
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DITHER);
     int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
@@ -225,6 +225,10 @@ void doomgame_start(const char *folder) {
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
     v = e ? atoi(e->value) : 10;
     screenblocks = (v >= 11) ? 11 : 10;
+    /* Without DMA sound: music or sound effects on the YM (keypad )). */
+    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);
+    extern bool I_MD_MusicSetYm(bool music);
+    I_MD_MusicSetYm(e && atoi(e->value) != 0);
   }
 
   DPRINTF("D_DoomMain\n");
@@ -248,6 +252,8 @@ void I_MD_FlushVideoSettings(void) {
   settings_put_integer(ctx, ACONFIG_PARAM_DITHER, (int)doom_video_get_dither());
   settings_put_integer(ctx, ACONFIG_PARAM_PALETTE, (int)doom_video_get_palette_mode());
   settings_put_integer(ctx, ACONFIG_PARAM_SCRNSIZE, (int)screenblocks);
+  extern bool I_MD_MusicGetYm(void);
+  settings_put_integer(ctx, ACONFIG_PARAM_YMMUSIC, I_MD_MusicGetYm() ? 1 : 0);
   fb_core1_park();
   settings_save(ctx, true);
   fb_core1_unpark();

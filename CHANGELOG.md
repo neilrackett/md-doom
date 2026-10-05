@@ -13,9 +13,10 @@
   plays as before, just without music. `tools/levelpack.py` now writes
   them along with the packs, and `tools/ymmusic.py` writes just the
   music for packs you already have. The music volume in the sound menu
-  works, and pausing silences it. A plain ST still has no music: its
-  YM2149 is busy playing the sound effects. Tried in Hatari, not yet on
-  real hardware.
+  works, and pausing silences it. A plain ST has no DMA sound, so its
+  YM2149 plays the sound effects; keypad ) gives it to the music
+  instead, and back, and the choice is remembered like the dither and
+  palette. Tried in Hatari, not yet on real hardware.
 
 ## v0.8.0 (2026-10-03)
 

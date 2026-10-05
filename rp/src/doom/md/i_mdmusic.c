@@ -3,9 +3,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * File: i_mdmusic.c
- * Description: Doom's music on the YM2149, for machines with STE DMA
- *              sound (the sound effects use the DMA, so the YM is free).
- *              The songs are register streams in STDL's STM format,
+ * Description: Doom's music on the YM2149. With STE DMA sound the
+ *              sound effects use the DMA, so the YM is free; without it
+ *              the YM plays the sound effects, unless keypad ) gives it
+ *              to the music instead (I_MD_MusicSetYm, saved with the
+ *              video options), which the m68k picks up from
+ *              CART_YM_MUSIC_OFFSET. The songs are register streams in
+ *              STDL's STM format,
  *              made offline from the MUS lumps by tools/ymmusic.py and
  *              read from the pack folder on the SD card (D_E1M1.STM and
  *              so on); a song that is not there is simply not played.
@@ -74,7 +78,13 @@ static uint16_t s_changed;               /* since the last publish */
 static uint16_t s_seq;
 static bool s_silent = true;             /* last publish was silence (or none yet) */
 
+/* No DMA sound: the YM is the music's (the player asked for it, and the
+ * song is there), as the m68k is told through CART_YM_MUSIC_OFFSET.
+ * Written by the game core, read by the interrupt. */
+static volatile bool s_ym_owned;
+
 /* Game core only. */
+static bool s_ym_music;                  /* keypad ): music rather than effects */
 static FIL s_file;
 static bool s_file_open;
 static bool s_looping;
@@ -89,6 +99,27 @@ static const char *s_folder = "/doom";
 static const uint8_t k_volume_atten[16] = {16, 8, 6, 5, 4, 3, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0};
 
 void I_MD_MusicSetFolder(const char *folder) { s_folder = folder; }
+
+/* Whether the music has the YM: always with DMA sound, and without it
+ * only once the YM has been handed over. */
+static bool ym_is_ours(void) {
+  const audio_mode_t mode = audio_get_mode();
+  return mode == AUDIO_MODE_DMA || (mode == AUDIO_MODE_YM && s_ym_owned);
+}
+
+/* Whether a song may be started at all. */
+static bool may_play(void) {
+  const audio_mode_t mode = audio_get_mode();
+  return mode == AUDIO_MODE_DMA || (mode == AUDIO_MODE_YM && s_ym_music);
+}
+
+/* Hand the YM to the music or back to the sound effects (no DMA sound;
+ * the m68k does the switching). */
+static void set_ym_owner(bool music) {
+  if (s_ym_owned == music) return;
+  s_ym_owned = music;
+  *(volatile uint16_t *)((uint8_t *)&__rom_in_ram_start__ + CART_YM_MUSIC_OFFSET) = music ? 1u : 0u;
+}
 
 /* The registers as the m68k should write them. R0..R10 go every time,
  * so a lost or repeated packet cannot leave a wrong value behind; the
@@ -136,7 +167,7 @@ static bool step_frame(void) {
 /* Once per VBL from the audio interrupt (I_MD_SoundFill), just after
  * the m68k's ack: it writes what this publishes in its next VBL. */
 void I_MD_MusicTick(void) {
-  if (!s_lock || audio_get_mode() != AUDIO_MODE_DMA) return;
+  if (!s_lock || !ym_is_ours()) return;
   const uint32_t ints = spin_lock_blocking(s_lock);
   const uint32_t now = time_us_32();
   bool silent = s_state != MUSIC_PLAYING || s_paused || s_atten >= 16u;
@@ -233,6 +264,7 @@ void I_MD_MusicPump(void) {
   }
   s_pending = false;
   const uint32_t hz = open_song();
+  if (audio_get_mode() == AUDIO_MODE_YM) set_ym_owner(hz != 0); /* no song: the effects keep it */
   if (hz == 0) {
     DPRINTF("music: no %s\n", s_path); /* or not an STM file */
     return;
@@ -273,7 +305,7 @@ void I_MD_MusicWaitSilent(void) {
   if (!s_lock) return;
   const bool sounding = !s_silent;
   stop_song();
-  if (!sounding || audio_get_mode() != AUDIO_MODE_DMA) return;
+  if (!sounding || !ym_is_ours()) return;
   const absolute_time_t until = make_timeout_time_ms(200);
   for (;;) {
     const uint32_t ints = spin_lock_blocking(s_lock);
@@ -327,17 +359,45 @@ static void *MD_RegisterSong(should_be_const void *data, int len) {
 
 static void MD_UnRegisterSong(void *handle) { (void)handle; }
 
-static void MD_PlaySong(void *handle, boolean looping) {
-  (void)handle;
-  stop_song();
-  if (audio_get_mode() != AUDIO_MODE_DMA) return; /* the YM is playing the sound effects */
+/* Ask for s_name to be opened by the next I_MD_MusicPump. */
+static void request_song(void) {
   snprintf(s_path, sizeof(s_path), "%s/%s.STM", s_folder, s_name);
   for (char *p = s_path + strlen(s_folder); *p; p++) {
     if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
   }
-  s_looping = looping;
-  s_pending = true; /* opened by the next I_MD_MusicPump */
+  s_pending = true;
 }
+
+static void MD_PlaySong(void *handle, boolean looping) {
+  (void)handle;
+  stop_song();
+  s_looping = looping; /* kept for keypad ), should the YM be given to the music later */
+  if (may_play()) request_song(); /* else the YM is playing the sound effects */
+}
+
+/* Keypad ), without DMA sound: the YM to the music (true) or back to the
+ * sound effects. Game core only, between frames (it opens the song).
+ * Returns whether the music has the YM now: false for the effects, and
+ * also if there is no song to play, which leaves the effects with it.
+ * With DMA sound both play anyway, and this only records the choice. */
+bool I_MD_MusicSetYm(bool music) {
+  s_ym_music = music;
+  if (!s_lock || audio_get_mode() != AUDIO_MODE_YM) return music; /* at boot, or DMA sound */
+  if (!music) {
+    stop_song();
+    set_ym_owner(false);
+    return false;
+  }
+  if (s_name[0]) {
+    stop_song();
+    request_song();
+    I_MD_MusicPump();
+  }
+  if (!s_ym_owned && s_name[0]) s_ym_music = false; /* no song files: keep the effects */
+  return s_ym_music;
+}
+
+bool I_MD_MusicGetYm(void) { return s_ym_music; }
 
 static void MD_StopSong(void) { stop_song(); }
 

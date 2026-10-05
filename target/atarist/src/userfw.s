@@ -104,6 +104,7 @@ UFW_SND_TICK          equ $00077F04          ; byte: frame counter, steer on eve
 UFW_MONO              equ $00077F06          ; byte: 1 = ST high res (mono monitor)
 UFW_HALF              equ $00077F07          ; byte: $FF = mono frame half copied, rest next VBL
 UFW_YM_SEQ            equ $00077F08          ; word: last music packet written to the YM
+UFW_YM_MUSIC          equ $00077F0A          ; byte: $FF = no DMA, and the YM is the music's
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -283,10 +284,15 @@ AUDIO_BUFFER_END      equ (AUDIO_BUFFER_ADDR + AUDIO_BUFFER_SIZE)
 ; (CART_YM_PACKET_OFFSET in cart_shared.h, written by the RP's
 ; i_mdmusic.c). Words: a sequence number that changes when there is
 ; something new, a mask of the registers to write (bit n = R n), then
-; R0..R13, each in the low byte of its word. DMA-sound machines only:
-; there the YM is free, since the sound effects are DMA samples.
+; R0..R13, each in the low byte of its word. Written on DMA-sound
+; machines, where the sound effects are DMA samples and the YM is free,
+; and without DMA sound when YM_MUSIC_ADDR gives the YM to the music.
 YM_PKT_SIZE           equ 32
 YM_PKT_ADDR           equ (AUDIO_BUFFER_END - YM_PKT_SIZE)
+; Without DMA sound the YM is the sound effects' DAC, unless this word
+; (shared-variable slot 1, CART_YM_MUSIC_OFFSET) is non-zero: then the
+; RP has given it to the music (keypad ), saved with the video options).
+YM_MUSIC_ADDR         equ $00FA4014
 
 ; Number of 320-px lines the cart->ST blit covers per frame. Full ST
 ; low-res is 200; copying fewer leaves the bottom band of the
@@ -565,7 +571,7 @@ FORCE_NO_DMA          equ 0
 ;   offset 28: MFP VR save (byte) -- S-bit + vector base, switched to auto-EOI under userfw
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
-UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F0A..$77FCF gap
+UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F0B..$77FCF gap
     ifgt  UFW_SAVE+UFW_SAVE_SIZE-$00077FD0
     fail  "userfw save area runs past the free gap at $77FD0"
     endc
@@ -606,6 +612,7 @@ userfw:
     ; means anything to a mono monitor.
     clr.b   UFW_MONO
     clr.b   UFW_HALF
+    clr.b   UFW_YM_MUSIC                 ; the YM starts as the sound effects' DAC
     ; Music: only packets published from now on -- one left from before
     ; an ST reset could hold a note.
     move.w  YM_PKT_ADDR, UFW_YM_SEQ
@@ -823,21 +830,9 @@ userfw:
     ;
     ; Reg 8 (ch A volume) is latched LAST so the first Timer-B fire
     ; can write ch A immediately; the handler toggles to reg 9
-    ; (ch B) mid-fire and back to reg 8 at the end.
-    move.b  #YM_REG_MIXER, YM_SELECT.w
-    move.b  #YM_MIXER_DAC_AB, YM_DATA.w   ; $FC: tones A+B on, tone C off, all noise off, ports out
-    move.b  #0, YM_SELECT.w
-    move.b  #0, YM_DATA.w                 ; R0 = ch A fine period
-    move.b  #1, YM_SELECT.w
-    move.b  #0, YM_DATA.w                 ; R1 = ch A coarse period
-    move.b  #2, YM_SELECT.w
-    move.b  #0, YM_DATA.w                 ; R2 = ch B fine period
-    move.b  #3, YM_SELECT.w
-    move.b  #0, YM_DATA.w                 ; R3 = ch B coarse period
-    move.b  #YM_REG_CHB_VOL, YM_SELECT.w  ; latch reg 9 to zero ch B
-    move.b  #0, YM_DATA.w                 ; ch B vol = 0 (silence)
-    move.b  #YM_REG_CHA_VOL, YM_SELECT.w  ; latch reg 8 (next YM_DATA writes hit ch A volume)
-    move.b  #0, YM_DATA.w                 ; ch A vol = 0 (silence)
+    ; (ch B) mid-fire and back to reg 8 at the end. A subroutine, as
+    ; the loop redoes it when the music hands the YM back (keypad )).
+    bsr     ym_dac_init
 
     ; --- Timer-B setup (audio @ ~6.27 kHz, STE-low-like) ---------
     ; Install our handler at $120 (overrides the dummy installed
@@ -1277,16 +1272,47 @@ userfw:
     tst.b   VBLSYNC_ADDR
 
 .input_check:
-    ; Music on the YM, which the DMA sound leaves free: write the
-    ; registers the RP published after the previous ack, if it published
-    ; anything new (YM_PKT_ADDR). After this VBL's ack rather than
-    ; before it, so it costs the RP none of its window for the next
-    ; frame; a packet caught mid-write mixes two frames for one VBL, and
-    ; each carries R0..R10 in full, so the next one puts that right. At
-    ; most 14 writes, the mask cut to R0..R13 here too, so nothing can
-    ; reach the floppy and printer ports in R14/R15.
+    ; Music on the YM: write the registers the RP published after the
+    ; previous ack, if it published anything new (YM_PKT_ADDR). After
+    ; this VBL's ack rather than before it, so it costs the RP none of
+    ; its window for the next frame; a packet caught mid-write mixes two
+    ; frames for one VBL, and each carries R0..R10 in full, so the next
+    ; one puts that right. At most 14 writes, the mask cut to R0..R13
+    ; here too, so nothing can reach the floppy and printer ports in
+    ; R14/R15.
+    ;
+    ; With DMA sound the YM is always free. Without it the YM is the
+    ; sound effects' DAC unless the RP has given it to the music
+    ; (YM_MUSIC_ADDR, keypad )): switch over when that changes, with
+    ; interrupts masked so no Timer-B fire lands mid-switch.
     tst.b   UFW_HAS_DMA
+    bne.s   .ym_write
+    tst.w   YM_MUSIC_ADDR
+    sne     d0
+    cmp.b   UFW_YM_MUSIC, d0
+    beq.s   .ym_owner_same
+    move.b  d0, UFW_YM_MUSIC
+    move.w  sr, -(sp)
+    ori.w   #$0700, sr
+    tst.b   d0
+    beq.s   .ym_to_sfx
+    bclr    #0, MFP_IERA.w               ; to the music: Timer-B's samples stop
+    move.b  #8, YM_SELECT.w
+    move.b  #0, YM_DATA.w                ; and A, B and C fall silent until
+    move.b  #9, YM_SELECT.w              ; the first music packet
+    move.b  #0, YM_DATA.w
+    move.b  #10, YM_SELECT.w
+    move.b  #0, YM_DATA.w
+    bra.s   .ym_switched
+.ym_to_sfx:
+    bsr     ym_dac_init                  ; to the sound effects: the DAC again
+    bset    #0, MFP_IERA.w               ; and Timer-B back on
+.ym_switched:
+    move.w  (sp)+, sr
+.ym_owner_same:
+    tst.b   UFW_YM_MUSIC
     beq.s   .ym_done
+.ym_write:
     lea     YM_PKT_ADDR, a1
     move.w  (a1)+, d0                    ; sequence number
     cmp.w   UFW_YM_SEQ, d0
@@ -1332,13 +1358,13 @@ userfw:
     tst.b   UFW_HAS_DMA
     beq.s   .no_dma_stop
     move.b  #$00, STE_DMA_CTRL.w
+.no_dma_stop:
     move.b  #8, YM_SELECT.w
     move.b  #0, YM_DATA.w                ; ch A volume
     move.b  #9, YM_SELECT.w
     move.b  #0, YM_DATA.w                ; ch B volume
     move.b  #10, YM_SELECT.w
     move.b  #0, YM_DATA.w                ; ch C volume
-.no_dma_stop:
 
     ; Reload the save-area pointer in case anything clobbered A5
     ; during the run.
@@ -1394,6 +1420,33 @@ userfw:
     move.w  #5, -(sp)                 ; XBIOS Setscreen
     trap    #14
     lea     12(sp), sp
+    rts
+
+; -------------------------------------------------------------------
+; ym_dac_init -- the YM as the sound effects' DAC (no DMA sound): tones
+; A and B on at period 0, so the counters run far above the audio band
+; and the volume registers alone shape the output; tone C and all the
+; noise off; all three volumes 0; and R8 (ch A volume) latched last, as
+; the Timer-B handler expects. At boot, and when the music hands the YM
+; back (keypad ), YM_MUSIC_ADDR), with interrupts masked. Touches no
+; registers.
+ym_dac_init:
+    move.b  #YM_REG_MIXER, YM_SELECT.w
+    move.b  #YM_MIXER_DAC_AB, YM_DATA.w   ; $FC: tones A+B on, tone C off, all noise off, ports out
+    move.b  #0, YM_SELECT.w
+    move.b  #0, YM_DATA.w                 ; R0 = ch A fine period
+    move.b  #1, YM_SELECT.w
+    move.b  #0, YM_DATA.w                 ; R1 = ch A coarse period
+    move.b  #2, YM_SELECT.w
+    move.b  #0, YM_DATA.w                 ; R2 = ch B fine period
+    move.b  #3, YM_SELECT.w
+    move.b  #0, YM_DATA.w                 ; R3 = ch B coarse period
+    move.b  #10, YM_SELECT.w
+    move.b  #0, YM_DATA.w                 ; ch C vol = 0 (the music may have left it up)
+    move.b  #YM_REG_CHB_VOL, YM_SELECT.w  ; latch reg 9 to zero ch B
+    move.b  #0, YM_DATA.w                 ; ch B vol = 0 (silence)
+    move.b  #YM_REG_CHA_VOL, YM_SELECT.w  ; latch reg 8 (next YM_DATA writes hit ch A volume)
+    move.b  #0, YM_DATA.w                 ; ch A vol = 0 (silence)
     rts
 
 ; -------------------------------------------------------------------

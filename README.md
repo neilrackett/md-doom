@@ -8,7 +8,7 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
-MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too.
+MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too (without it, you choose music or sound effects).
 
 A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
@@ -61,6 +61,7 @@ Controls match the original PC Doom:
 | Undo            | Pause                                                                              |
 | - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
+| Keypad )        | On an ST without DMA sound: music or sound effects (see Music below); remembered   |
 
 **Gamepad support is off in this release.** MD/DOOM can read an
 [Xpad](https://github.com/neilrackett/atarist-xpad) gamepad, but only a
@@ -112,7 +113,7 @@ second, which is still more often than the game itself moves on (35).
 
 On an STE, or any other ST with DMA sound, the sound effects play through the DMA chip, which leaves the YM2149 free for Doom's music: the level's own song, the intermission tune and the title. The songs are Doom's own, converted to the YM2149's three voices and noise by the MIDI synth from [STDL](https://github.com/neilrackett/atarist-stdl), and they sit on your SD card next to the level packs (`D_E1M1.STM` and so on), so they cost the game no flash. Without them there's simply no music. The music volume in Doom's sound menu works as usual.
 
-A plain ST has no DMA sound, so its YM2149 is busy playing the sound effects and there's no music.
+A plain ST has no DMA sound, so its YM2149 is busy playing the sound effects. Press keypad ) to give it to the music instead, and again to have the sound effects back; your choice is remembered. If the music files aren't on your SD card, MD/DOOM says so and keeps the sound effects.
 
 ### Level packs
 
