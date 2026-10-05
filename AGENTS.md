@@ -37,8 +37,12 @@ here and builds:
   joystick + Xpad gamepad folded into a Doom-shaped joystick state.
 - `doom_sound.c` — the framework-era 8-channel PCM mixer (test card only;
   the game mixes in `doom/md/i_mdsound.c`) and the Ghostbusters YM LUT.
+- `doom/md/i_mdmusic.c` — Doom's music on the YM2149 on DMA-sound
+  machines: songs streamed from the SD card, stepped from the audio
+  interrupt (see "Music" under the audio pipeline).
 - `pack.c` — SD card → `PACK_FLASH` programmer for per-level asset packs.
 - `tools/levelpack.py` + `tools/whd_gen/` — the offline pack builder;
+  `tools/ymmusic.py` (with `tools/stdl_ym.py`, STDL's synth) — the songs;
   `tools/png_to_mono.py` — the backdrop converter; `tools/gen_bluenoise.py`
   — the blue-noise tile.
 - `doomapp.c` — a pipeline **test card** (build with `MDDOOM_TEST_CARD=1`
@@ -111,7 +115,7 @@ Build flow (orchestrated by `build.sh`):
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests
-There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. The mono path (`mono_rows`, `mono_block*`, `wipe_compose_mono`) was checked the same way: every output bit of a random frame through a random PLAYPAL for all five dither modes, and every step of a whole melt, against a per-pixel 640×400 reference that simulates the m68k's chunk reversal and the cart bus's word order. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host.
+There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. The mono path (`mono_rows`, `mono_block*`, `wipe_compose_mono`) was checked the same way: every output bit of a random frame through a random PLAYPAL for all five dither modes, and every step of a whole melt, against a per-pixel 640×400 reference that simulates the m68k's chunk reversal and the cart bus's word order. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host. The music was checked there by recording a scripted run (`mdfw run --record`) and lining the recording's 20 ms loudness and pitch up against an offline square-wave rendering of the same STM file: the right tempo at 50 and 71 Hz VBLs (the match collapses at ±5%), and the strongest pitch the same in most 0.1 s windows.
 
 ### EmuMD: the game in Hatari, on the host
 [EmuMD](https://github.com/neilrackett/emumd) (the `emu/emumd` submodule; its skill is `emu/emumd/skills/emumd/SKILL.md`) builds the firmware's C and C++ for the host as `build/md-doom.mdfw` and runs it in a patched Hatari, with the real m68k cartridge (`target_firmware.h`, so whatever the last hardware build made) on the cartridge port and `emu/sd` as the microSD card. `make emu` runs it in a window (EmuTOS, which `mdfw hatari` downloads, unless `TOS=` names another image; `MONO=1` for a mono monitor; `RECORD=FILE.avi` records it). For a check without one:
@@ -174,6 +178,7 @@ asks for; the fill callback keys off `audio_get_mode()`.
 3. **STE DMA path (preferred).** Mono, 8-bit **signed** PCM at 25,033 Hz = ~500 bytes per PAL VBL. The DMA runs in loop mode over a double buffer parked in the unused tails of the two ST screen pages (`$77D00` / `$7FD00`). Each VBL the m68k reads which buffer the DMA is playing and copies the fresh bytes from the cart audio buffer into the *other* one. **The loop's START/END registers are re-pointed from `userfw_snd_irq`**, an MFP Timer-A event-count interrupt that fires at the DMA's own frame end: the chip has just latched START/END and switched buffers, and the handler points them at the buffer it left, a full frame before the next latch. They must not be written from the VBL loop: the chip latches them whenever it reaches END, the six byte writes are not atomic, and a latch landing between the START and END writes plays from one buffer's start to the other's end, i.e. 32 KB of screen memory as ~1.3 s of noise, which happened every few minutes as the chip's phase drifted through the window.
 4. **YM2149 fallback.** MFP Timer-B in /4 delay mode with TBDR=110 → 5,585.45 Hz, ~112 fires per PAL VBL = **224 bytes per VBL** of (vA, vB) volume pairs (~78 fires at 71 Hz in mono, so 158 bytes: `audio.c` reads the display report too). Pairing two channels through the 1988 Ghostbusters demo's 64-entry LUT extracts ~6 effective bits from the YM's logarithmic volume curve where one channel would give 4. A0 is the dedicated Timer-B read cursor, reset to the buffer base by `userfw_vbl` every vsync.
 5. **RP side.** The fill callback is asked for exactly the current mode's byte count and writes into the 1 KB cart buffer at `CART_AUDIO_BUFFER_OFFSET` (`$FA4100`). **MD/DOOM drives it from a 1 ms timer interrupt on Core 1** (`audio_start_vbl_timer(1)`, an alarm pool created on Core 1 so its IRQ is bound there): the handler peeks at the ROM3 ring (`commemul_scan`, non-consuming) for the m68k's end-of-blit ack at `$FB8400` and fills right after it, i.e. just after the m68k has copied the previous buffer and before it will copy the next. That keeps the refill on every VBL however long a frame takes, and it can never tear under the m68k's copy. The engine's sfx module (`i_mdsound.c`) is the callback; a spinlock (`PICO_SPINLOCK_ID_OS1`) guards the channel state between the game on Core 0 and the mixer's interrupt. **The interrupt must not run on Core 0**: measured on hardware, the same 1 ms timer on Core 0 (`audio_start_vbl_timer(0)`) makes the renderer's pure-compute phases stall for 100–200 ms every second or two, although the handler itself costs under 1 ms per VBL and fires at the expected rate; the mechanism was not identified. In debug builds keypad `-` cycles off / Core 0 / Core 1 at run time for A/B tests. Core 1's park job (`fb_core1_park`) masks interrupts while parked so the refill cannot execute flash code while a pack is being programmed.
+6. **Music (DMA machines only).** With the sound effects on the DMA, the YM2149 is free, and `md/i_mdmusic.c` plays Doom's songs on it. They are not in the packs, which have no room (E1M2's has 2 KB, against 67 KB for its song and the intermission's): `tools/ymmusic.py` renders each MUS lump offline into a register stream in STDL's STM format (`tools/stdl_ym.py` is STDL's MIDI synth, copied; three square voices and noise, voices given by General MIDI program, drums as noise bursts), written as `D_E1M1.STM` etc. into the pack folder, and the game streams them from there: ~200 B/s, so a block of 512 B every couple of seconds into a 1 KB ring in the first, otherwise unused, KB of the USB controller's RAM. An STM file is a 12-byte header (`STM1`, then big-endian frame rate, frame count, loop frame, reserved) and per 50 Hz frame a 16-bit mask of the registers that change plus a byte each; the first frame sets all fourteen, so a song loops by reopening the file (cheaper in flash than `f_lseek`). **The SD card is only read from `I_MD_MusicPump`**, at the end of `I_MD_PresentFrame` and between melt steps, Core 0 in the clear: the engine's own music `Poll` is called from the renderer mid-frame, and `PlaySong` can be too (the IDMUS cheat comes in through the input poll), so it only records the song for the pump to open. `I_MD_MusicTick`, called from `I_MD_SoundFill` after the mix, steps frames by elapsed time (so the tempo holds at 50, 60 or 71 Hz VBLs) and publishes the registers to `CART_YM_PACKET_OFFSET` (`$FA44E0`, the last 32 bytes of the audio buffer, which neither sound path reaches): a sequence word, a mask, then R0..R13 one per word. Every packet carries R0..R10 in full, so a packet lost or caught mid-write is put right by the next; R11..R13 go only when they change (a write to R13 restarts the envelope; STDL's streams never use it), never R14/R15 (the floppy and printer ports), and R7 always has its port bits set. The music slider attenuates in YM steps of ~3 dB. `userfw.s` writes the packet's registers after the frame ack (not before it, so as not to delay the ack and the RP's next frame), on DMA machines only, when the sequence word has changed, and silences the three volumes on exit. Before a pack is programmed `I_MD_LoadLevelPack` stops the music and waits for the m68k to have the silence (`I_MD_MusicWaitSilent`), or Core 1's parked interrupt would leave the last notes sounding through the load. A song that is not on the card is not played (one `DPRINTF`); neither is any on a plain ST, where the YM is the sound effects' DAC.
 
 **The STE buffer length is measured, not assumed.** The sound DMA and the video run off different oscillators, so the samples the chip eats per frame is about 501.5 and machine-dependent (about 350 at mono's 71 Hz: the same loop starts from `STE_SND_LEN_INIT_MONO`, and `STE_SND_LEN_MIN` is 320 to cover both). `userfw.s` steers the length ±1 byte every fourth frame from the drift of the DMA's frame counter and sends it to the RP each VBL through `SNDLEN_WINDOW_BASE` (`$FB8C00`), biased by `STE_SND_LEN_MIN`; `audio_set_fill_bytes()` applies it. **This is why the mixer must produce however many samples it is asked for**, which `doom_sound_fill` does by resampling every channel onto the requested count. `AUDIO_SNDLEN_BIAS` in `audio.c` must match `STE_SND_LEN_MIN` in `userfw.s`; `TIMERB_COUNT` must stay in step with `AUDIO_FILL_BYTES_YM` and `AUDIO_FILL_BYTES_YM_MONO`. In mono the length is only steered on the VBL that ends a frame: the two halves reach the sampling point a couple of hundred cycles apart, and comparing across them would bias every measurement the same way, so the chip's phase would walk round the VBL and replay a buffer each time it lapped.
 
@@ -195,7 +200,7 @@ The Atari ST sees a 64 KB window at `$FA0000`–`$FAFFFF` (mirrored RP-side at `
 | `$FA400C` | `FB_FRAME_COUNTER_ADDR` | 4 B | RP-incremented dirty-frame counter; `userfw.s` only blits when this changes. |
 | `$FA4010` | `SHARED_VARIABLES` | 240 B | 60 × 4 B indexed slots. **Slots 12–19 are the palette below — not free.** |
 | `$FA4040` | `PALETTE` (`CART_PALETTE_OFFSET`) | 32 B | 16 ST colour words (`0000.0RRR.0GGG.0BBB`, STE low bit in bit 3 of each nibble). The m68k VBL handler copies these to `$FFFF8240..$FFFF825E` every frame; `doom_video.c` writes them via `palette_set()`. |
-| `$FA4100` | `AUDIO_BUFFER_ADDR` | 1024 B | Audio buffer, refilled by the RP once per VBL in whichever format the detected back-end wants. |
+| `$FA4100` | `AUDIO_BUFFER_ADDR` | 1024 B | Audio buffer, refilled by the RP once per VBL in whichever format the detected back-end wants. Its last 32 bytes (`$FA44E0`, `CART_YM_PACKET_OFFSET`) are the YM music registers. |
 | `$FA4500` | `APP_FREE_ADDR` | ~15.5 KB | Contiguous arena, ends at FRAMEBUFFER. The ST never reads it, so the `CART_APP_FREE` linker region overlays it and RP-side buffers are parked there (`__cart_app_free`) — see "Memory layout". |
 | `$FA8300` | `FRAMEBUFFER_ADDR` | 32000 B | 320×200×4bpp planar framebuffer, chunk-reversed. Read by `FBDRV_INLINE` every VBL. |
 
@@ -488,7 +493,8 @@ decoder, eight channels), resampled onto however many output samples the
 m68k asks for each VBL — signed 8-bit at 25,033 Hz on the STE path,
 Ghostbusters (vA, vB) pairs at 5,585 Hz on the YM path — from the
 VBL-synced timer interrupt on Core 1 (see "Audio pipeline"). Volume 0..127
-and stereo separation fold to a mono gain. No music. `doom_sound.c` is the
+and stereo separation fold to a mono gain. The music is `md/i_mdmusic.c`
+(see "Music" in the audio pipeline). `doom_sound.c` is the
 framework-era PCM mixer the test card uses; the game only takes its
 Ghostbusters LUT (`doom_sound_ghost_lut`) from it.
 
@@ -509,7 +515,7 @@ define list is in `rp/src/CMakeLists.txt`, mirroring upstream's
 `small_doom_common` / `add_doom_tiny` / `tiny_settings` / `render_newhope`).
 Layout: `rp/src/doom/` holds the shared engine files, `rp/src/doom/doom/`
 the game, `rp/src/doom/md/` the MD platform layer that replaces upstream's
-`pico/`. Not compiled: scanvideo, I2S, OPL/emu8950 and the music modules,
+`pico/`. Not compiled: scanvideo, I2S, OPL/emu8950 and upstream's music modules (`md/i_mdmusic.c` is the one music module; `S_ChangeMusic` hands it the song's name, as there is no lump),
 piconet, TinyUSB, `picoflash`, the flash save slots, `blit.S`. Every
 vendored file altered for the port carries `MD/DOOM:` comments at the
 change; the platform files under `md/` say which upstream file they derive
@@ -571,7 +577,9 @@ from.
   I2S pool replaced by `I_MD_SoundFill`, the framework fill callback: mono,
   resampled onto whatever count the m68k asks for, DMA PCM or YM pairs. Runs
   from the VBL-synced timer interrupt on Core 1; the mix buffer lives in
-  scratch X.
+  scratch X. It steps the music (`I_MD_MusicTick`) after each mix.
+- `md/i_mdmusic.c` — the music module: STM songs from the SD card on the
+  YM2149, DMA machines only (see "Music" in the audio pipeline).
 - `md/md_main.c` — `doomgame_start()` (boot palette, E1M1 pack, `I_Init`,
   `D_DoomMain`), the firmware's own screens (the 1-bit backdrop from
   `desc/bg-mono.png`, converted by `tools/png_to_mono.py` into
@@ -629,8 +637,17 @@ revisited in order of visible payoff.
   offline (`palette-opt`, `mix_weights_lorez` in `atari_c2p.c`); porting
   those tables gives smoother gradients for the default palette. A
   per-level generated palette could be precomputed offline too.
-- **No music.** The YM2149 is free on STE-class machines while DMA sound
-  plays; STDOOM's `atari_ym.c` MUS player is a template.
+- **Music is DMA-machines only, and from the SD card.** On a plain ST the
+  YM's channels A and B are the sound effects' DAC, which leaves C: one
+  voice of music would be possible, but the VBL's register writes would
+  have to mask Timer-B (its handler assumes R8 is latched) and re-latch
+  R8 after. The songs are STDL's synth's rendering, tuned there (keep
+  `tools/stdl_ym.py` in step with STDL rather than tuning it here).
+  Streaming from the SD card during play is new and untested on
+  hardware; the
+  debug log says which songs were found. The title's intro plays once
+  per visit to the title (Doom ignores a request for the song already
+  current, and with no demos the title page is all the loop shows).
 - **Save games** go nowhere at first; the SD card is the place.
 - **Demos and the finale cast** are skipped; they need lumps the packs
   leave out.

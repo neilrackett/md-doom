@@ -163,6 +163,8 @@ static void apply_palette(int pal) {
 
 /* Called at the end of pd_end_frame, once the renderer has released the
  * frame: composite the overlays, apply any palette change, publish. */
+void I_MD_MusicPump(void);
+
 void I_MD_PresentFrame(void) {
   /* A dither / palette change asked for by keypad * or / since the last
    * frame. Done here, not where the key was seen: the renderer polls
@@ -217,6 +219,7 @@ void I_MD_PresentFrame(void) {
       } while (tics <= 0);
       last = now;
       if (doom_video_wipe_step(tics)) break;
+      I_MD_MusicPump();
     }
   } else {
     doom_video_publish();
@@ -227,6 +230,9 @@ void I_MD_PresentFrame(void) {
    * where anything that needs to park it (a flash write) can run. */
   extern void I_MD_FlushVideoSettings(void);
   I_MD_FlushVideoSettings();
+
+  /* The next stretch of the song from the SD card (i_mdmusic.c). */
+  I_MD_MusicPump();
 }
 
 void I_InitGraphics(void) {

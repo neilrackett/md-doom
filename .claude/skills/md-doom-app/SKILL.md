@@ -39,6 +39,8 @@ colours travel with the frame. `doom_video_set_playpal()` is Doom's
 - `rp/src/doom_video.c` -- palette sources, dither modes, the fused LUT +
   c2p. `rp/src/doom_input.c` -- scancode -> Doom key, joystick + Xpad.
   `rp/src/doom_sound.c` -- the sfx mixer. `rp/src/pack.c` -- SD -> flash.
+  `rp/src/doom/md/i_mdmusic.c` -- YM2149 music from `D_*.STM` files on
+  the SD card (`tools/ymmusic.py` makes them).
 - `rp/src/emul.c` -- boot sequence and the main loop.
 - `rp/src/memmap_rp.ld` -- the `FLASH` / `PACK_FLASH` split (372 K / 780 K).
 - `target/atarist/src/userfw.s` -- the m68k side (per-VBL blit, palette,
@@ -106,6 +108,13 @@ framework loop in `emul.c`.
   Timer-A frame-end handler (`userfw_snd_irq`), never from the VBL loop.
 - **The cart FB is written in place** by `doom_video_publish` between
   `fb_wait_blit_ack` and `fb_frame_done`; keep that window short.
+- **Music** is YM2149 register streams read from the SD card, DMA-sound
+  machines only (on a plain ST the YM is the sfx DAC). The SD card is
+  read only from `I_MD_MusicPump` (end of frame, between melt steps),
+  never from the renderer's mid-frame `Poll` or `PlaySong`; registers go
+  to the m68k through the audio buffer's last 32 bytes, R0..R10 in full
+  every packet, never R14/R15. Stop the music and wait for silence
+  before parking Core 1 (`I_MD_MusicWaitSilent`).
 - **ST high res** (a mono monitor, `fb_st_mono()`): the same 32000-byte
   cart FB holds a 640x400 one-bit picture (80-byte rows, same chunk
   reversal), dithered at full resolution from each colour's brightest

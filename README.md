@@ -8,7 +8,7 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
-MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't. No music at the moment.
+MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too.
 
 A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
@@ -21,7 +21,7 @@ See below if you'd prefer to build alternative level packs yourself.
 ### Manual installation
 
 1. Download the latest `.uf2`, `.json` and shareware level packs from the [releases page](https://github.com/neilrackett/md-doom/releases).
-2. Copy both the `.uf2` and `.json` into the `/apps` folder of your SidecarT's microSD card, and extract all of the E1M\*.whx files into a `/doom` folder.
+2. Copy both the `.uf2` and `.json` into the `/apps` folder of your SidecarT's microSD card, and extract all of the E1M\*.whx and D\_\*.STM files into a `/doom` folder. The `.STM` files are the music: leave them out and the game just plays without it.
 3. On the Booster screen, press ESC for the app list and select MD/DOOM.
 4. To return to Booster, power on your ST while holding the SELECT button on your SidecarT.
 
@@ -108,6 +108,12 @@ refreshes at 71 Hz and copying a whole screen takes longer than one of
 those, so the picture updates every other refresh: about 36 times a
 second, which is still more often than the game itself moves on (35).
 
+### Music
+
+On an STE, or any other ST with DMA sound, the sound effects play through the DMA chip, which leaves the YM2149 free for Doom's music: the level's own song, the intermission tune and the title. The songs are Doom's own, converted to the YM2149's three voices and noise by the MIDI synth from [STDL](https://github.com/neilrackett/atarist-stdl), and they sit on your SD card next to the level packs (`D_E1M1.STM` and so on), so they cost the game no flash. Without them there's simply no music. The music volume in Doom's sound menu works as usual.
+
+A plain ST has no DMA sound, so its YM2149 is busy playing the sound effects and there's no music.
+
 ### Level packs
 
 Your SidecarT has only got 1,152KB available for both code and data, and the smallest we can compress the shareware WAD to is 1,758KB, so MD/DOOM loads level packs one at a time (maximum ~768KB each), which contain just the map, sprites, textures, flats and sounds needed. We also had to drop the help and credits screens, have monsters that always face you, and sound effects at 5 kHz.
@@ -122,18 +128,24 @@ python3 tools/levelpack.py DOOM1.WAD packs --doom-src rp/src/doom/doom \
     --whd-gen build/whd_gen/whd_gen --no-ui --no-rotations --sfx-rate 5000
 ```
 
-`levelpack.py` will report every pack's size against the budget.
+`levelpack.py` will report every pack's size against the budget, and writes the music files as well (`--no-music` leaves them out). To make just the music, for level packs you already have:
+
+```bash
+python3 tools/ymmusic.py DOOM1.WAD packs
+```
+
+Copy the `.whx` and `.STM` files into the `/doom` folder of your SD card.
 
 ## Hardware requirements
 
 - [SidecarTridge Multi-device](https://sidecartridge.com) (RP2040-based ROM cartridge emulator)
 - Atari ST, STE, MegaST, or MegaSTE, with a colour monitor (low res) or a mono one such as the SM124 (high res)
-- A microSD card for the level packs
+- A microSD card for the level packs (and the music)
 - Raspberry Pi Debug Probe or Picoprobe for flashing/debugging (optional, for development)
 
 ## How it works
 
-The RP2040 runs Doom on Core 0 at 400 MHz, rendering 320x200 bytes of palette indices. After every frame both cores map those through a 16-colour dither lookup and pack the ST's four bitplanes straight into the cartridge framebuffer, in the m68k's slack between one blit and the next; the m68k blits that to the ST screen every VBL. On a mono monitor the same 32,000 bytes hold a 640x400 one-bit picture instead, dithered at the full resolution, and the m68k copies it in two halves over two of the mono screen's 71 Hz VBLs. Sound effects are mixed from a timer interrupt in step with the ST's VBL, so audio keeps up however long a frame takes. Input, the palette and sound ride the cartridge bus in both directions.
+The RP2040 runs Doom on Core 0 at 400 MHz, rendering 320x200 bytes of palette indices. After every frame both cores map those through a 16-colour dither lookup and pack the ST's four bitplanes straight into the cartridge framebuffer, in the m68k's slack between one blit and the next; the m68k blits that to the ST screen every VBL. On a mono monitor the same 32,000 bytes hold a 640x400 one-bit picture instead, dithered at the full resolution, and the m68k copies it in two halves over two of the mono screen's 71 Hz VBLs. Sound effects are mixed from a timer interrupt in step with the ST's VBL, so audio keeps up however long a frame takes. The same interrupt steps the music, read from the SD card a block at a time, and hands the m68k the YM2149's registers to write each VBL. Input, the palette and sound ride the cartridge bus in both directions.
 
 ```
 IKBD keys + joystick       ──$FB82xx──►  demux → Doom events
@@ -143,6 +155,7 @@ Display report (mono?)     ──$FB90xx──►  picks 16 colours or 640x400 m
 Screen: blit + page flip   ◄──$FA8300──  256 → 16 colours + c2p, both cores
 Palette: 16 shifter words  ◄──$FA4040──  derived from PLAYPAL each tint
 Sound: DMA refill or YM    ◄──$FA4100──  8-channel sfx mix on Core 1
+Music: YM2149 registers    ◄──$FA44E0──  STM songs from the SD card
 ```
 
 ## Building

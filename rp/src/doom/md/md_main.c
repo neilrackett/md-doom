@@ -24,6 +24,7 @@
 #include "doom/doomstat.h"
 #include "doom/m_menu.h"
 #include "doom/r_data.h"
+#include "doom/s_sound.h"
 #include "doom/sounds.h"
 #include "doomtype.h"
 #include "i_system.h"
@@ -166,6 +167,11 @@ void I_MD_LoadLevelPack(int ep, int mp) {
 
   DPRINTF("level pack: %s -> %s\n", s_pack_map, map);
   I_MD_SoundStopAll();
+  /* The intermission's song too, and silenced before Core 1 is held
+   * still for the programming; S_Start starts the level's after. */
+  S_StopMusic();
+  extern void I_MD_MusicWaitSilent(void);
+  I_MD_MusicWaitSilent();
   doom_video_set_playpal(s_boot_pal); /* plain black and white for the loading screen */
   program_pack(map);
 
@@ -185,6 +191,8 @@ void I_MD_LoadLevelPack(int ep, int mp) {
 
 void doomgame_start(const char *folder) {
   if (folder && folder[0]) s_folder = folder;
+  extern void I_MD_MusicSetFolder(const char *folder);
+  I_MD_MusicSetFolder(s_folder); /* the songs live beside the packs */
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
    * makes the firmware's screens legible: 0 black, 1..15 white, then

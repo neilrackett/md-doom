@@ -21,4 +21,5 @@ python3 tools/levelpack.py DOOM1.WAD packs \
     --no-ui --no-rotations --sfx-rate 5000
 ```
 
-and copy `packs/E1M*.whx` into the `/doom` folder of the SD card.
+and copy `packs/E1M*.whx` and the music, `packs/D_*.STM`, into the `/doom`
+folder of the SD card.

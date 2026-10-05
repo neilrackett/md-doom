@@ -103,6 +103,7 @@ UFW_SND_PREVPOS       equ $00077F02          ; word: DMA offset within its buffe
 UFW_SND_TICK          equ $00077F04          ; byte: frame counter, steer on every 4th
 UFW_MONO              equ $00077F06          ; byte: 1 = ST high res (mono monitor)
 UFW_HALF              equ $00077F07          ; byte: $FF = mono frame half copied, rest next VBL
+UFW_YM_SEQ            equ $00077F08          ; word: last music packet written to the YM
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -278,6 +279,15 @@ AUDIO_BUFFER_ADDR     equ $00FA4100
 AUDIO_BUFFER_SIZE     equ 1024
 AUDIO_BUFFER_END      equ (AUDIO_BUFFER_ADDR + AUDIO_BUFFER_SIZE)
 
+; YM2149 music registers, in the last 32 bytes of the audio buffer
+; (CART_YM_PACKET_OFFSET in cart_shared.h, written by the RP's
+; i_mdmusic.c). Words: a sequence number that changes when there is
+; something new, a mask of the registers to write (bit n = R n), then
+; R0..R13, each in the low byte of its word. DMA-sound machines only:
+; there the YM is free, since the sound effects are DMA samples.
+YM_PKT_SIZE           equ 32
+YM_PKT_ADDR           equ (AUDIO_BUFFER_END - YM_PKT_SIZE)
+
 ; Number of 320-px lines the cart->ST blit covers per frame. Full ST
 ; low-res is 200; copying fewer leaves the bottom band of the
 ; destination ST page untouched (useful for a status row or to bound
@@ -434,6 +444,9 @@ STE_SND_BUF_MASK      equ $7D00              ; low 16 bits of either base, bit 1
 ; there: the same steering, from a different starting guess. The minimum
 ; covers both and keeps the report inside one byte (512 - 320 = 192).
 STE_SND_COPY          equ 512                ; bytes copied per VBL (mult of 4)
+    ifgt  STE_SND_COPY-(YM_PKT_ADDR-AUDIO_BUFFER_ADDR)
+    fail  "the DMA sample copy would reach the YM music packet"
+    endc
 STE_SND_LEN_INIT      equ 500                ; starting guess, steered from here
 STE_SND_LEN_INIT_MONO equ 350                ; the same at 71 Hz
 STE_SND_LEN_MIN       equ 320
@@ -552,7 +565,7 @@ FORCE_NO_DMA          equ 0
 ;   offset 28: MFP VR save (byte) -- S-bit + vector base, switched to auto-EOI under userfw
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
-UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F08..$77FCF gap
+UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F0A..$77FCF gap
     ifgt  UFW_SAVE+UFW_SAVE_SIZE-$00077FD0
     fail  "userfw save area runs past the free gap at $77FD0"
     endc
@@ -593,6 +606,9 @@ userfw:
     ; means anything to a mono monitor.
     clr.b   UFW_MONO
     clr.b   UFW_HALF
+    ; Music: only packets published from now on -- one left from before
+    ; an ST reset could hold a note.
+    move.w  YM_PKT_ADDR, UFW_YM_SEQ
     move.b  SHIFTER_RES.w, d0
     andi.b  #3, d0
     cmpi.b  #SHIFTER_RES_HIGH, d0
@@ -1223,6 +1239,7 @@ userfw:
 .ste_snd_copy:
     move.l  (a1)+, (a2)+
     dbf     d1, .ste_snd_copy
+
 .no_dma_refill:
 
     ; Half a mono frame: no flip, and an ack that only says "a VBL went
@@ -1260,6 +1277,36 @@ userfw:
     tst.b   VBLSYNC_ADDR
 
 .input_check:
+    ; Music on the YM, which the DMA sound leaves free: write the
+    ; registers the RP published after the previous ack, if it published
+    ; anything new (YM_PKT_ADDR). After this VBL's ack rather than
+    ; before it, so it costs the RP none of its window for the next
+    ; frame; a packet caught mid-write mixes two frames for one VBL, and
+    ; each carries R0..R10 in full, so the next one puts that right. At
+    ; most 14 writes, the mask cut to R0..R13 here too, so nothing can
+    ; reach the floppy and printer ports in R14/R15.
+    tst.b   UFW_HAS_DMA
+    beq.s   .ym_done
+    lea     YM_PKT_ADDR, a1
+    move.w  (a1)+, d0                    ; sequence number
+    cmp.w   UFW_YM_SEQ, d0
+    beq.s   .ym_done
+    move.w  d0, UFW_YM_SEQ
+    move.w  (a1)+, d1                    ; registers to write
+    andi.w  #$3FFF, d1
+    moveq   #0, d0
+.ym_reg:
+    lsr.w   #1, d1
+    bcc.s   .ym_next
+    move.b  d0, YM_SELECT.w
+    move.b  1(a1), YM_DATA.w             ; the value is the word's low byte
+.ym_next:
+    addq.l  #2, a1
+    addq.b  #1, d0
+    tst.w   d1
+    bne.s   .ym_reg
+.ym_done:
+
     ; The RP writes CMD_BOOT_GEM into CMD_MAGIC_SENTINEL to be handed
     ; the machine back (ESC, or Quit from the game's menu), and
     ; CMD_RESET to have the ST restarted -- which is how it leaves for
@@ -1280,10 +1327,17 @@ userfw:
     ; Mask interrupts before touching MFP / vectors.
     ori.w   #$0700, sr
 
-    ; Stop DMA sound (if it was running) before GEM returns.
+    ; Stop DMA sound (if it was running) before GEM returns, and any
+    ; note the music left on the YM.
     tst.b   UFW_HAS_DMA
     beq.s   .no_dma_stop
     move.b  #$00, STE_DMA_CTRL.w
+    move.b  #8, YM_SELECT.w
+    move.b  #0, YM_DATA.w                ; ch A volume
+    move.b  #9, YM_SELECT.w
+    move.b  #0, YM_DATA.w                ; ch B volume
+    move.b  #10, YM_SELECT.w
+    move.b  #0, YM_DATA.w                ; ch C volume
 .no_dma_stop:
 
     ; Reload the save-area pointer in case anything clobbered A5

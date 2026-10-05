@@ -102,6 +102,18 @@
   (CART_SHARED_VARIABLES_OFFSET + (CART_SHARED_VARIABLES_SLOTS * 4))
 #define CART_AUDIO_BUFFER_SIZE           1024
 
+/* YM2149 music registers (doom/md/i_mdmusic.c), in the last 32 bytes of
+ * the audio buffer, which neither sound path reaches (at most 512 bytes
+ * of DMA samples or 224 of YM pairs). 16 words: a sequence number that
+ * changes when there is something new, a mask of the registers to write
+ * (bit n = R n, never R14/R15), then R0..R13, one per word in the low
+ * byte. Written by the RP after each VBL ack; on DMA-sound machines the
+ * m68k writes the masked registers to the YM in its next VBL. Mirrored
+ * as YM_PKT_ADDR in userfw.s. */
+#define CART_YM_PACKET_SIZE              32
+#define CART_YM_PACKET_OFFSET                                                 \
+  (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_BUFFER_SIZE - CART_YM_PACKET_SIZE)
+
 /* APP_FREE arena starts after the audio buffer. */
 #define CART_APP_FREE_OFFSET                                                  \
   (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_BUFFER_SIZE)

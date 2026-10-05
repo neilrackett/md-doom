@@ -683,10 +683,7 @@ void S_ChangeMusic(int musicnum, int looping)
     char namebuf[9];
     void *handle;
 
-    /* MD/DOOM: no music module and no music lumps in the level packs, so
-     * there is nothing to look up. */
-    return;
-
+#if !MDDOOM
     // The Doom IWAD file has two versions of the intro music: d_intro
     // and d_introa.  The latter is used for OPL playback.
 
@@ -695,6 +692,7 @@ void S_ChangeMusic(int musicnum, int looping)
     {
         musicnum = mus_introa;
     }
+#endif
 
     if (musicnum <= mus_None || musicnum >= NUMMUSIC)
     {
@@ -713,6 +711,13 @@ void S_ChangeMusic(int musicnum, int looping)
     // shutdown old music
     S_StopMusic();
 
+#if MDDOOM
+    /* MD/DOOM: the level packs carry no music lumps. The music module
+     * (md/i_mdmusic.c) finds each song on the SD card by name instead,
+     * so it is handed the lump's name where it would get its data. */
+    M_snprintf(namebuf, sizeof(namebuf), "d_%s", DEH_String(music->name));
+    handle = I_RegisterSong(namebuf, 0);
+#else
     // get lumpnum if neccessary
     if (!music->lumpnum)
     {
@@ -725,6 +730,7 @@ void S_ChangeMusic(int musicnum, int looping)
     handle = I_RegisterSong(music->data, W_LumpLength(music->lumpnum));
 #else
     handle = I_RegisterSong(W_CacheLumpNum(music->lumpnum, PU_STATIC), W_LumpLength(music->lumpnum));
+#endif
 #endif
     music->handle = handle;
     I_PlaySong(handle, looping);
@@ -748,7 +754,9 @@ void S_StopMusic(void)
 
         I_StopSong();
         I_UnRegisterSong(mus_playing->handle);
+#if !MDDOOM /* MD/DOOM: no lump (see S_ChangeMusic) */
         W_ReleaseLumpNum(mus_playing->lumpnum);
+#endif
 #if !DOOM_SMALL
         mus_playing->data = NULL;
 #endif

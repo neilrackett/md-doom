@@ -89,6 +89,7 @@ extern sound_module_t sound_pcsound_module;
 extern music_module_t music_sdl_module;
 extern const music_module_t music_opl_module;
 extern music_module_t music_pack_module;
+extern const music_module_t music_md_module; /* MD/DOOM */
 #if PICO_BUILD
 extern sound_module_t sound_pico_module;
 #endif
@@ -141,7 +142,8 @@ static const music_module_t *music_modules[] =
 #if !PICO_BUILD
     &music_sdl_module,
 #endif
-    /* MD/DOOM: no music module */
+    /* MD/DOOM: YM2149 register streams from the SD card (md/i_mdmusic.c) */
+    &music_md_module,
     NULL,
 };
 

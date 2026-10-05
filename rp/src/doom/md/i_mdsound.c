@@ -17,7 +17,8 @@
  *              length the m68k asks for (STE DMA PCM or YM volume pairs).
  *              Mixing runs from the VBL-synced timer interrupt on Core 1
  *              (audio_start_vbl_timer), so it keeps up regardless of the
- *              frame rate. No music.
+ *              frame rate. Music is i_mdmusic.c, stepped from the same
+ *              interrupt.
  */
 #include "config.h"
 
@@ -338,6 +339,9 @@ void I_MD_SoundFill(uint8_t *buf, uint32_t bytes)
     uint32_t ints = spin_lock_blocking(s_mix_lock);
     I_MD_SoundFillLocked(buf, bytes);
     spin_unlock(s_mix_lock, ints);
+    /* MD/DOOM: the YM's music registers, on the same VBL (i_mdmusic.c) */
+    extern void I_MD_MusicTick(void);
+    I_MD_MusicTick();
 }
 
 static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes)
@@ -464,7 +468,8 @@ sound_module_t sound_md_module =
 
 
 /* MD/DOOM: the renderer toggles this around calls that must not restart a
- * song; with no music module it is just a flag nobody reads. */
+ * song; upstream's OPL player read it, and i_mdmusic.c (which never runs
+ * from the renderer) has no need to, so it is just a flag nobody reads. */
 uint8_t restart_song_state;
 
 /* MD/DOOM: OPL driver selection is meaningless without the OPL. */

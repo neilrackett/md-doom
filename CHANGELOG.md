@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.9.0 (2026-10-05)
+
+- Music! On an STE, or any other ST with DMA sound, the YM2149 now
+  plays Doom's music: each level's own song, the intermission tune and
+  the title. The songs are Doom's own, converted to the YM2149's three
+  voices and noise by the MIDI synth from
+  [STDL](https://github.com/neilrackett/atarist-stdl), and they live on
+  the SD card next to the level packs as `D_E1M1.STM` and so on, read a
+  little at a time as they play, so they cost the game no flash. Copy
+  them into your `/doom` folder to hear them; without them the game
+  plays as before, just without music. `tools/levelpack.py` now writes
+  them along with the packs, and `tools/ymmusic.py` writes just the
+  music for packs you already have. The music volume in the sound menu
+  works, and pausing silences it. A plain ST still has no music: its
+  YM2149 is busy playing the sound effects. Tried in Hatari, not yet on
+  real hardware.
+
 ## v0.8.0 (2026-10-03)
 
 - MD/DOOM now runs on a mono monitor (the SM124, or any ST in high res)

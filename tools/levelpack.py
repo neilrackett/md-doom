@@ -21,6 +21,7 @@ against the flash budget.
     levelpack.py DOOM1.WAD OUTDIR --doom-src rp2040-doom/src/doom \\
         [--whd-gen path/to/whd_gen] [--maps E1M1,E1M2] [--budget 786432]
         [--no-ui] [--no-rotations] [--sfx-rate 5000] [--keep-player]
+        [--no-music]
 
 Levers, largest first (sizes measured on the shareware WAD):
   --no-ui         leave out HELP1/2 and CREDIT (a title pack can bring
@@ -29,6 +30,10 @@ Levers, largest first (sizes measured on the shareware WAD):
                   rotation 0, so monsters always face the player  ~-120 KB
   --sfx-rate N    resample sound effects down to N Hz (Doom's are 11025;
                   5000 is what fits the shareware episode)   ~-130 KB
+
+It also writes the music, D_*.STM (see ymmusic.py), unless given
+--no-music. The songs are not part of the packs: they stay on the SD
+card, next to them, and are read from there as they play.
 
 `--doom-src` points at the engine's doom/ directory (info.c and info.h
 are parsed for the state and mobj tables, so the mapping follows the
@@ -337,6 +342,8 @@ def main():
     ap.add_argument('--sfx-rate', type=int, default=0)
     ap.add_argument('--keep-player', action='store_true',
                     help='keep the PLAY sprite (only visible in multiplayer)')
+    ap.add_argument('--no-music', action='store_true',
+                    help='do not write the songs (D_*.STM)')
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -367,6 +374,10 @@ def main():
     if args.whd_gen and maps:
         print(f'largest pack {worst:,} B against a budget of {args.budget:,} B'
               + (' -- all fit' if worst <= args.budget else ' -- DOES NOT FIT'))
+    if not args.no_music:
+        import ymmusic
+        total = ymmusic.write_songs(lumps, args.outdir)
+        print(f'{total:,} B of music, for the SD card beside the packs')
 
 
 if __name__ == '__main__':
