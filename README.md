@@ -170,9 +170,12 @@ You can also run MD/DOOM on your Mac or Linux PC, no SidecarT required, using [E
 emu/emumd/tools/mdfw hatari            # once: builds EmuMD's Hatari, downloads EmuTOS
 make emu                               # builds and runs MD/DOOM in Hatari
 make emu MONO=1                        # the same on a mono monitor
+make emu RECORD=doom.avi               # records picture and sound until you quit
 ```
 
 EmuMD boots EmuTOS unless you give it another TOS image with `TOS=/path/to/tos.img`.
+
+To record only part of a session, press Cmd+A (AltGr+A on Linux) to start and stop instead. QuickTime can't play the AVI that Hatari makes, but VLC can, and `ffmpeg -i doom.avi doom.mp4` converts it.
 
 Add `-V` to `emu/emumd/tools/mdfw run` to see the firmware's debug output, including the 64-frame timing line. It's great for testing the game and the code that talks to the ST, but the emulated Multi-device has all the speed and memory it wants, so timing, tearing and running out of memory still need real hardware.
 

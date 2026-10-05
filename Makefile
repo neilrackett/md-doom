@@ -24,11 +24,13 @@ debug:
 
 ## Build MD/DOOM for this computer and run it in Hatari with EmuMD (see
 ## README.md). TOS= a TOS image (default: EmuMD's EmuTOS); MONO=1 a mono
-## monitor (ST high res); EMUMD= another EmuMD checkout.
+## monitor (ST high res); RECORD=FILE.avi records picture and sound until
+## you quit; EMUMD= another EmuMD checkout.
 EMUMD ?= emu/emumd
 .PHONY: emu
 emu:
-	$(EMUMD)/tools/mdfw run $(if $(TOS),--tos $(TOS)) $(if $(MONO),-- --monitor mono)
+	$(EMUMD)/tools/mdfw run $(if $(TOS),--tos $(TOS)) $(if $(RECORD),--record $(RECORD)) \
+	    $(if $(MONO),-- --monitor mono)
 
 ## Tag this version
 .PHONY: tag
