@@ -107,7 +107,7 @@ Build flow (orchestrated by `build.sh`):
 ### CI / release
 - **Every push to `main` is a release** (`.github/workflows/release.yml`): `make` with the `APP_UUID_KEY` secret, a tag named from `version.txt` (left alone if it already exists), the `latest` tag moved to the commit, and the UF2 + JSON replaced on the `latest` GitHub Release. It can also be run by hand, from `main` only.
 - `.github/workflows/pr.yml` builds pull requests to `main` and publishes nothing.
-- Both skip a change that touches nothing but documentation (`**.md`) or the EmuMD build (`emu/**`, which includes the submodule, and `mdfw.ini`); the two `paths-ignore` lists must match. Run the release by hand to publish one of those anyway. The `Makefile` is not on the list: the release builds with it.
+- Both skip a change that touches nothing but documentation (`**.md`) or the EmuMD build (`emu/**`, which includes the submodule, and `mdfw.ini`); the two `paths-ignore` lists must match. Run the release by hand to publish one of those anyway. The `Makefile` is not on the list, as the release builds with it, which is why `make emu` lives in `emu/emu.mk`.
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests

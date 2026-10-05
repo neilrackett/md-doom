@@ -22,15 +22,8 @@ debug:
 	@echo "Using APP_UUID_KEY: $(APP_UUID_KEY_RESOLVED)"
 	./build.sh pico_w debug "$(APP_UUID_KEY_RESOLVED)"
 
-## Build MD/DOOM for this computer and run it in Hatari with EmuMD (see
-## README.md). TOS= a TOS image (default: EmuMD's EmuTOS); MONO=1 a mono
-## monitor (ST high res); RECORD=FILE.avi records picture and sound until
-## you quit; EMUMD= another EmuMD checkout.
-EMUMD ?= emu/emumd
-.PHONY: emu
-emu:
-	$(EMUMD)/tools/mdfw run $(if $(TOS),--tos $(TOS)) $(if $(RECORD),--record $(RECORD)) \
-	    $(if $(MONO),-- --monitor mono)
+## make emu: run it in Hatari on this computer (emu/emu.mk)
+include emu/emu.mk
 
 ## Tag this version
 .PHONY: tag
