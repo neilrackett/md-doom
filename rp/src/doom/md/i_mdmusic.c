@@ -399,6 +399,16 @@ bool I_MD_MusicSetYm(bool music) {
 
 bool I_MD_MusicGetYm(void) { return s_ym_music; }
 
+/* For the loading screen: whether this machine would play music but the
+ * map's song (D_E1M2.STM for "E1M2") is not on the card -- level data
+ * from before there was music. Game core only. */
+bool I_MD_MusicFileMissing(const char *map) {
+  if (!may_play()) return false;
+  char path[48];
+  snprintf(path, sizeof(path), "%s/D_%s.STM", s_folder, map);
+  return f_stat(path, NULL) != FR_OK;
+}
+
 static void MD_StopSong(void) { stop_song(); }
 
 static boolean MD_MusicIsPlaying(void) { return s_pending || s_state == MUSIC_PLAYING; }

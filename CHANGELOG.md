@@ -10,7 +10,8 @@
   the SD card next to the level packs as `D_E1M1.STM` and so on, read a
   little at a time as they play, so they cost the game no flash. Copy
   them into your `/doom` folder to hear them; without them the game
-  plays as before, just without music. `tools/levelpack.py` now writes
+  plays as before, just without music, and the loading screen suggests
+  downloading the latest level pack. `tools/levelpack.py` now writes
   them along with the packs, and `tools/ymmusic.py` writes just the
   music for packs you already have. The music volume in the sound menu
   works, and pausing silences it. A plain ST has no DMA sound, so its

@@ -111,7 +111,7 @@ second, which is still more often than the game itself moves on (35).
 
 ### Music
 
-On an STE, or any other ST with DMA sound, the sound effects play through the DMA chip, which leaves the YM2149 free for Doom's music: the level's own song, the intermission tune and the title. The songs are Doom's own, converted to the YM2149's three voices and noise by the MIDI synth from [STDL](https://github.com/neilrackett/atarist-stdl), and they sit on your SD card next to the level packs (`D_E1M1.STM` and so on), so they cost the game no flash. Without them there's simply no music. The music volume in Doom's sound menu works as usual.
+On an STE, or any other ST with DMA sound, the sound effects play through the DMA chip, which leaves the YM2149 free for Doom's music: the level's own song, the intermission tune and the title. The songs are Doom's own, converted to the YM2149's three voices and noise by the MIDI synth from [STDL](https://github.com/neilrackett/atarist-stdl), and they sit on your SD card next to the level packs (`D_E1M1.STM` and so on), so they cost the game no flash. Without them there's simply no music, and the loading screen suggests downloading the latest level pack. The music volume in Doom's sound menu works as usual.
 
 A plain ST has no DMA sound, so its YM2149 is busy playing the sound effects. Press keypad ) to give it to the music instead, and again to have the sound effects back; your choice is remembered. If the music files aren't on your SD card, MD/DOOM says so and keeps the sound effects.
 

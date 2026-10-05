@@ -90,6 +90,10 @@ static void draw_backdrop(void) {
   font_align(FONT_ALIGN_CENTER);
 }
 
+/* Set by program_pack: the level's song is not on the card, though this
+ * machine would play it, so the loading screen suggests the download. */
+static bool s_music_missing;
+
 static void loading_screen(const char *map, uint32_t done, uint32_t total) {
   char line[24];
   draw_backdrop();
@@ -102,6 +106,10 @@ static void loading_screen(const char *map, uint32_t done, uint32_t total) {
     for (int y = BAND_TOP + 16; y < BAND_TOP + 22; y++) {
       memset(fb_chunked_buffer + y * FB_CHUNKED_W + 20, PEN_WHITE, (size_t)w);
     }
+  }
+  if (s_music_missing) {
+    font_move(160, BAND_TOP + 36);
+    font_print("Download latest level pack for music");
   }
   doom_video_publish();
 }
@@ -138,6 +146,8 @@ static void program_pack(const char *map) {
   char path[96];
   snprintf(path, sizeof(path), "%s/%s.whx", s_folder, map);
   s_loading_map = map;
+  extern bool I_MD_MusicFileMissing(const char *map);
+  s_music_missing = I_MD_MusicFileMissing(map);
   loading_screen(map, 0, 0);
 
   /* Silence for the duration, and not only for quiet's sake. The mixer
@@ -193,6 +203,13 @@ void doomgame_start(const char *folder) {
   if (folder && folder[0]) s_folder = folder;
   extern void I_MD_MusicSetFolder(const char *folder);
   I_MD_MusicSetFolder(s_folder); /* the songs live beside the packs */
+  /* Without DMA sound: music or sound effects on the YM (keypad )).
+   * Read before the first pack loads, whose screen depends on it. */
+  extern bool I_MD_MusicSetYm(bool music);
+  {
+    SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);
+    I_MD_MusicSetYm(e && atoi(e->value) != 0);
+  }
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
    * makes the firmware's screens legible: 0 black, 1..15 white, then
@@ -212,9 +229,9 @@ void doomgame_start(const char *folder) {
     program_pack("E1M1");
   }
 
-  /* The dither, palette, screen size and sound chosen last time (keypad
-   * * and /, - and +, and keypad )). The size has to be in before
-   * R_Init, which sizes the view from it. */
+  /* The dither, palette and screen size chosen last time (keypad * and
+   * /, and - and +). The size has to be in before R_Init, which sizes
+   * the view from it. */
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DITHER);
     int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
@@ -225,10 +242,6 @@ void doomgame_start(const char *folder) {
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
     v = e ? atoi(e->value) : 10;
     screenblocks = (v >= 11) ? 11 : 10;
-    /* Without DMA sound: music or sound effects on the YM (keypad )). */
-    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);
-    extern bool I_MD_MusicSetYm(bool music);
-    I_MD_MusicSetYm(e && atoi(e->value) != 0);
   }
 
   DPRINTF("D_DoomMain\n");
