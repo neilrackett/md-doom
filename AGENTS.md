@@ -105,8 +105,9 @@ Build flow (orchestrated by `build.sh`):
 | Test card's `F3` says `PACK FAILED` | No `/doom/E1M1.whx` on the card, or it is larger than the 780 KB window. Build packs with `tools/levelpack.py` (see `tools/whd_gen/README.md`). |
 
 ### CI / release
-- `.github/workflows/build.yml` builds `pico_w` Release on manual dispatch.
-- `.github/workflows/release.yml` (manual dispatch; uncomment the `v*` tag trigger to automate): builds, attaches UF2 + JSON to the GitHub Release, uploads to `s3://atarist.sidecartridge.com/` when the `APP_UUID` secret is set.
+- **Every push to `main` is a release** (`.github/workflows/release.yml`): `make` with the `APP_UUID_KEY` secret, a tag named from `version.txt` (left alone if it already exists), the `latest` tag moved to the commit, and the UF2 + JSON replaced on the `latest` GitHub Release. It can also be run by hand, from `main` only.
+- `.github/workflows/pr.yml` builds pull requests to `main` and publishes nothing.
+- Both skip a change that touches nothing but documentation (`**.md`) or the EmuMD build (`emu/**`, which includes the submodule, and `mdfw.ini`); the two `paths-ignore` lists must match. Run the release by hand to publish one of those anyway. The `Makefile` is not on the list: the release builds with it.
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests
