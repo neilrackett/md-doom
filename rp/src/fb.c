@@ -38,10 +38,13 @@
  * fb_publish() blocks until s_vbl_seen advances before overwriting
  * the cart FB. The timeout below keeps the RP from hanging if the
  * m68k isn't emitting acks (e.g. before it boots). Only $FB8400 itself
- * is a frame ack: in mono the m68k reads $FB8401 after copying the
- * first half of a frame, which is a VBL (the audio refill takes it) but
- * leaves half the cart FB still to be read. */
+ * is a frame ack: when a frame takes two VBLs (mono, or no DMA sound)
+ * the m68k reads $FB8401 after copying the first half, which is a VBL
+ * (the audio refill takes it) but leaves half the cart FB still to be
+ * read. Either ack has 2 added when YM sample bank 1 is playing
+ * (VBLSYNC_BANK in userfw.s), which only the audio refill cares about. */
 #define FB_VBLSYNC_HIBYTE   0x8400u
+#define FB_VBLSYNC_BANK     0x0002u
 /* Display report, the first read of every VBL: $FB9000 + 1 when the ST
  * is in high res on a mono monitor (VIDEO_WINDOW_BASE in userfw.s). It
  * also closes the window a frame ack opens: the m68k is about to read
@@ -161,7 +164,7 @@ static void fb_rom3_dispatch(uint16_t sample) {
   ikbd_consume_rom3_sample(sample);
   xpadin_consume_rom3_sample(sample);
   audio_consume_rom3_sample(sample);
-  if (sample == FB_VBLSYNC_HIBYTE) {
+  if ((sample & ~FB_VBLSYNC_BANK) == FB_VBLSYNC_HIBYTE) {
     s_vbl_seen++;
     s_in_window = true;
   }

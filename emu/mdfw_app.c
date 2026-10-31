@@ -91,13 +91,14 @@ int init_romemul(bool copyFlashToRAM) {
   return 0;
 }
 
-/* commemul.c's MD/DOOM addition: has a read of `window_hi` arrived since
- * *cursor, without taking anything from the ring? */
-bool commemul_scan(uint32_t *cursor, uint16_t window_hi) {
+/* commemul.c's MD/DOOM addition: the low byte of the last read of
+ * `window_hi` since *cursor, or -1, without taking anything from the
+ * ring. */
+int commemul_scan(uint32_t *cursor, uint16_t window_hi) {
   uint16_t sample;
-  bool seen = false;
+  int seen = -1;
   while (mdfw_rom3_peek(cursor, &sample)) {
-    if ((sample & 0xFF00u) == window_hi) seen = true;
+    if ((sample & 0xFF00u) == window_hi) seen = sample & 0xFFu;
   }
   return seen;
 }

@@ -109,7 +109,10 @@ UFW_MONO              equ $00077F06          ; byte: 1 = ST high res (mono monit
 UFW_HALF              equ $00077F07          ; byte: $FF = mono frame half copied, rest next VBL
 UFW_YM_SEQ            equ $00077F08          ; word: last music packet written to the YM
 UFW_YM_MUSIC          equ $00077F0A          ; byte: $FF = no DMA, and the YM is the music's
-UFW_PAL_LATCH         equ $00077F20          ; 32 B: the palette of the page on screen
+UFW_TWO_VBL           equ $00077F0B          ; byte: $FF = a frame is two VBLs (mono, or no DMA sound)
+UFW_YM_BANK           equ $00077F0C          ; longword: the YM sample bank this VBL plays
+UFW_PAL_LATCH         equ $00077F20          ; 32 B: the palette of the page being copied
+UFW_PAL_SHOW          equ $0007FF00          ; 32 B: and of the page on screen (page B's tail)
 UFW_HUD_NEXT          equ $00077F40          ; 32 B: status bar palette of the page being copied
 UFW_HUD_SHOW          equ $00077F60          ; 32 B: and of the page on screen
 UFW_SPLIT_NEXT        equ $00077F80          ; word: non-zero = that page has one
@@ -315,6 +318,18 @@ AUDIO_BUFFER_END      equ (AUDIO_BUFFER_ADDR + AUDIO_BUFFER_SIZE)
 ; and without DMA sound when YM_MUSIC_ADDR gives the YM to the music.
 YM_PKT_SIZE           equ 32
 YM_PKT_ADDR           equ (AUDIO_BUFFER_END - YM_PKT_SIZE)
+
+; The YM sound effects' samples come from two banks, one a VBL:
+; userfw_vbl points A0 at the other bank every vsync, and the VBL's ack
+; says which one is playing (+VBLSYNC_BANK), so the RP refills the one
+; that is not. With a single buffer the refill, which follows the ack,
+; overwrote the samples still to play in that VBL with the next VBL's.
+; The bank is bit 9 of the address, so the ack's bit is the address's
+; mid byte masked (CART_AUDIO_YM_BANK_BYTES in cart_shared.h).
+YM_BANK_BYTES         equ $200
+    ifne  AUDIO_BUFFER_ADDR&YM_BANK_BYTES
+    fail  "AUDIO_BUFFER_ADDR must have bit 9 clear: it names the YM bank"
+    endc
 ; Without DMA sound the YM is the sound effects' DAC, unless this word
 ; (shared-variable slot 1, CART_YM_MUSIC_OFFSET) is non-zero: then the
 ; RP has given it to the music (keypad ), saved with the video options).
@@ -405,11 +420,14 @@ IKBD_WINDOW_BASE      equ $FB8200
 ; IKBD window ($82) so the RP can tell the two apart. The value read
 ; is irrelevant; only the address matters.
 VBLSYNC_ADDR          equ $FB8400
-; Mono only: the ack for the first half of a frame. The cart FB is not
-; free yet -- half of it has still to be copied -- so the RP must not
-; take it as a frame ack, but it is still a VBL and the audio refill
-; keys off it. The RP tells the two apart by the low byte.
+; Two-VBL frames only (UFW_TWO_VBL): the ack for the first half of a
+; frame. The cart FB is not free yet -- half of it has still to be
+; copied -- so the RP must not take it as a frame ack, but it is still
+; a VBL and the audio refill keys off it. The RP tells the two apart by
+; the low byte.
 VBLSYNC_HALF_ADDR     equ (VBLSYNC_ADDR + 1)
+; Added to either ack when YM bank 1 is the one playing this VBL.
+VBLSYNC_BANK          equ (YM_BANK_BYTES >> 8)
 
 ; Display report: the m68k reads (VIDEO_WINDOW_BASE + UFW_MONO) first
 ; thing every VBL, before it touches the cart FB or the palette slots,
@@ -652,6 +670,7 @@ userfw:
     ; means anything to a mono monitor.
     clr.b   UFW_MONO
     clr.b   UFW_HALF
+    move.l  #AUDIO_BUFFER_ADDR, UFW_YM_BANK
     clr.b   UFW_YM_MUSIC                 ; the YM starts as the sound effects' DAC
     ; Music: only packets published from now on -- one left from before
     ; an ST reset could hold a note.
@@ -695,6 +714,18 @@ userfw:
     endc
 .snd_detect_done:
     move.b  d0, UFW_HAS_DMA
+
+    ; A frame is two VBLs in mono, where the copy is longer than a VBL,
+    ; and without DMA sound, where the copy (~17.6 ms) and the YM sample
+    ; interrupt (~2 ms) all but fill one on their own, so that anything
+    ; more ran past the next VBL. See UFW_TWO_VBL in the VBL loop.
+    st      UFW_TWO_VBL
+    tst.b   UFW_MONO
+    bne.s   .two_vbl_done
+    tst.b   d0
+    beq.s   .two_vbl_done
+    sf      UFW_TWO_VBL
+.two_vbl_done:
 
     ; --- Locate an Xpad provider (optional) -----------------------
     ; Walk the jar for 'XPAD', then validate the block the way
@@ -1068,11 +1099,19 @@ userfw:
     ; (a new 16 every frame) would turn into a flash on every change.
     ; Cost: two MOVEM pairs, ~330 cyc / VBL. Not in mono, where colour
     ; 0 was set at boot and the rest mean nothing.
+    ;
+    ; In a two-VBL frame the second VBL shows the same page, so nothing
+    ; is latched then; the page's colours are written again all the
+    ; same (UFW_PAL_SHOW), as the split has left the status bar's in
+    ; the registers.
     tst.b   UFW_MONO
     bne     .palette_done
+    tst.b   UFW_HALF
+    bne.s   .palette_again
     lea     UFW_PAL_LATCH, a5
     movem.l (a5), d0-d7
     movem.l d0-d7, PALETTE_BASE.w
+    movem.l d0-d7, UFW_PAL_SHOW
     lea     PALETTE_ADDR, a6
     movem.l (a6), d0-d7
     movem.l d0-d7, (a5)
@@ -1090,7 +1129,12 @@ userfw:
     movem.l (a6), d0-d7
     movem.l d0-d7, (a5)
     move.w  SPLIT_ADDR, UFW_SPLIT_NEXT
-    clr.b   MFP_TBCR.w                    ; stopped; armed afresh each frame
+    bra.s   .palette_split
+.palette_again:
+    movem.l UFW_PAL_SHOW, d0-d7
+    movem.l d0-d7, PALETTE_BASE.w
+.palette_split:
+    clr.b   MFP_TBCR.w                    ; stopped; armed afresh each VBL
     tst.w   UFW_SPLIT_SHOW
     beq.s   .palette_done
     ; Where the video counter will be at the split: the page on screen
@@ -1118,7 +1162,7 @@ userfw:
     move.w  #BLIT_MARK_RUNNING, PALETTE_IDX0.w  ; border = white (blit in flight)
     endc
 
-    ; The second half of a mono frame is due: carry on from where the
+    ; The second half of a two-VBL frame is due: carry on from where the
     ; last VBL stopped.
     tst.b   UFW_HALF
     bne     .blit_resume
@@ -1133,13 +1177,14 @@ userfw:
     movea.l #UFW_FB_SRC, a6
     FBDRV_INLINE FBDRV_ITERS_A        ; inline cart->ST screen copy, part 1
 
-    ; In colour the rest follows straight on. In mono this VBL has done
-    ; its share: the whole copy takes ~17.6 ms against a 14 ms VBL, so
-    ; the rest waits for the next one, and the page is not flipped until
-    ; then. The resume needs nothing saved -- UFW_SCREEN_PAGE does not
-    ; change until the frame is done, and the source and destination of
-    ; part 2 follow from it.
-    tst.b   UFW_MONO
+    ; With DMA sound in colour the rest follows straight on. Otherwise
+    ; this VBL has done its share (UFW_TWO_VBL): in mono the whole copy
+    ; takes ~17.6 ms against a 14 ms VBL, and without DMA sound the YM
+    ; samples leave too little of a 20 ms one. The rest waits for the
+    ; next VBL, and the page is not flipped until then. The resume needs
+    ; nothing saved -- UFW_SCREEN_PAGE does not change until the frame
+    ; is done, and the source and destination of part 2 follow from it.
+    tst.b   UFW_TWO_VBL
     beq.s   .blit_part_b
     st      UFW_HALF
     bra     .after_copy
@@ -1324,12 +1369,20 @@ userfw:
 
 .no_dma_refill:
 
-    ; Half a mono frame: no flip, and an ack that only says "a VBL went
-    ; by" -- the RP keys its audio refill off it, but must not take the
-    ; cart FB as free, because the rest is copied out of it next VBL.
+    ; Both acks carry the YM bank playing this VBL (VBLSYNC_BANK), so the
+    ; refill that follows them goes to the other one. D1/A1 are scratch;
+    ; the flip below uses A5/D0.
+    moveq   #0, d1
+    move.b  UFW_YM_BANK+2, d1
+    andi.b  #VBLSYNC_BANK, d1
+    lea     VBLSYNC_ADDR, a1
+
+    ; Half a two-VBL frame: no flip, and an ack that only says "a VBL
+    ; went by" -- the RP keys its audio refill off it, but must not take
+    ; the cart FB as free, because the rest is copied out of it next VBL.
     tst.b   UFW_HALF
     beq.s   .frame_done
-    tst.b   VBLSYNC_HALF_ADDR
+    tst.b   (VBLSYNC_HALF_ADDR-VBLSYNC_ADDR)(a1, d1.w)
     bra.s   .input_check
 .frame_done:
 
@@ -1352,11 +1405,11 @@ userfw:
 
     ; Frame-sync ack: one cart-bus read tells the RP the blit
     ; is finished and the cart FB is free to overwrite. Emitted every
-    ; VBL in colour, every other one in mono (the FB is free here --
-    ; blit done, page flipped). The RP's
+    ; VBL with DMA sound in colour, every other one otherwise (the FB is
+    ; free here -- blit done, page flipped). The RP's
     ; commemul ring captures the read; fb_publish() on the RP blocks
     ; until it sees this before running the next chunky-to-planar.
-    tst.b   VBLSYNC_ADDR
+    tst.b   (a1, d1.w)
 
 .input_check:
     ; Music on the YM: write the registers the RP published after the
@@ -1538,14 +1591,15 @@ ym_dac_init:
 
 ; -------------------------------------------------------------------
 ; userfw_vbl -- VBL interrupt handler. Two jobs:
-;   1. Reset A0 to AUDIO_BUFFER_ADDR. This is the cart-buffer base,
-;      and the sample handler will start from offset 0 on
-;      the next IRQ. Pinning A0 = base once per VBL eliminates the
+;   1. Point A0 at the start of the other YM sample bank
+;      (YM_BANK_BYTES), and the sample handler will start from there
+;      on the next IRQ. Pinning A0 = base once per VBL eliminates the
 ;      explicit `cmpa.l + bcs.s` wrap in the sample hot path, so
 ;      that handler shrinks to a single `move.b (a0)+, YM_DATA.w`
 ;      + rte. A0 is dedicated to audio (excluded from the
 ;      FBDRV_INLINE MOVEM list and from the IKBD poll), so it's
-;      safe to overwrite here from IRQ context.
+;      safe to overwrite here from IRQ context. The banks alternate
+;      on every machine; only the YM path reads them.
 ;   2. Clear UFW_VBL_FLAG so .vbl_loop's `stop`-then-check wait can
 ;      distinguish a VBL wake from an MFP wake.
 ;
@@ -1555,7 +1609,8 @@ ym_dac_init:
 ; buffer is no longer filled; ESC detection runs through the inline
 ; IKBD poll in FBDRV_INLINE.
 userfw_vbl:
-    movea.l #AUDIO_BUFFER_ADDR, a0
+    eori.w  #YM_BANK_BYTES, UFW_YM_BANK+2
+    movea.l UFW_YM_BANK, a0
     clr.w   UFW_VBL_FLAG.w
     rte
 

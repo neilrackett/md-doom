@@ -3,6 +3,8 @@
  * Author: Diego Parrilla Santamaría
  * Date: March 2026
  * Copyright: 2026 - GOODDATA LABS SL
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
  * Description: ROM3 communication emulator backed by a DMA ring buffer.
  */
 
@@ -25,10 +27,11 @@ void __not_in_flash_func(commemul_poll)(CommEmulSampleCallback callback);
 
 /* MD/DOOM: look at the ring WITHOUT consuming it. Advances `*cursor` (an
  * index the caller owns, start it at 0) to the DMA's current write index
- * and returns true if any sample written since the last call had
- * `window_hi` as its high byte. Lets an interrupt handler watch for one
- * kind of cart-bus read (the m68k's end-of-blit ack) independently of
- * the main loop's commemul_poll drain. */
-bool __not_in_flash_func(commemul_scan)(uint32_t *cursor, uint16_t window_hi);
+ * and returns the low byte of the last sample written since the last
+ * call that had `window_hi` as its high byte, or -1 if there was none.
+ * Lets an interrupt handler watch for one kind of cart-bus read (the
+ * m68k's end-of-blit ack) independently of the main loop's commemul_poll
+ * drain. */
+int __not_in_flash_func(commemul_scan)(uint32_t *cursor, uint16_t window_hi);
 
 #endif  // COMMEMUL_H

@@ -119,15 +119,18 @@
  * of signed 8-bit PCM at 25,033 Hz, the exact count steered by the
  * m68k each frame; on the YM2149 fallback 224 bytes of (vA, vB)
  * volume pairs, one per Timer-A fire at ~5,585 Hz (YM_TIMER_COUNT=110
- * in userfw.s), the read cursor A0 reset to the buffer base every
- * vsync. */
+ * in userfw.s), played in place from two banks, one a VBL: the read
+ * cursor A0 is pointed at the other bank every vsync, and the m68k's
+ * acks say which is playing so the RP refills the one that is not. */
 #define CART_AUDIO_BUFFER_OFFSET                                              \
   (CART_SHARED_VARIABLES_OFFSET + (CART_SHARED_VARIABLES_SLOTS * 4))
 #define CART_AUDIO_BUFFER_SIZE           1024
+/* YM bank 1's offset in the audio buffer (YM_BANK_BYTES in userfw.s). */
+#define CART_AUDIO_YM_BANK_BYTES         0x200
 
 /* YM2149 music registers (doom/md/i_mdmusic.c), in the last 32 bytes of
  * the audio buffer, which neither sound path reaches (at most 512 bytes
- * of DMA samples or 224 of YM pairs). 16 words: a sequence number that
+ * of DMA samples, or two banks of 224 bytes of YM pairs 512 apart). 16 words: a sequence number that
  * changes when there is something new, a mask of the registers to write
  * (bit n = R n, never R14/R15), then R0..R13, one per word in the low
  * byte. Written by the RP after each VBL ack; on DMA-sound machines, or

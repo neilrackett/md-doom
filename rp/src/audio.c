@@ -1,5 +1,7 @@
 /**
  * File: audio.c
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
  * Description: Cart-shared audio buffer producer.
  *
  * The m68k reads sample bytes from the cart buffer at
@@ -149,10 +151,18 @@ void audio_set_fill_callback(audio_fill_cb_t cb) {
 /* VBL-synced refill (see audio.h). The scan cursor is the timer's own,
  * separate from commemul_poll's read index. A fill is never repeated
  * within 5 ms, in case an ack is seen twice across a scan boundary. The
- * whole window counts, so in mono the half-frame ack ($FB8401) refills
- * too: the m68k copies a buffer every VBL, not every frame. */
+ * whole window counts, so the half-frame ack ($FB8401) of a two-VBL
+ * frame refills too: the m68k plays a buffer every VBL, not every frame.
+ * The YM samples are played in place from two banks, one a VBL, and the
+ * ack says which is playing (+2 for bank 1), so the refill goes to the
+ * other; the DMA path copies its buffer out before the ack, from the
+ * start. */
 #define AUDIO_VBLSYNC_HIBYTE 0x8400u
+#define AUDIO_VBLSYNC_BANK   0x02u
 #define AUDIO_MIN_FILL_GAP_US 5000u
+_Static_assert(CART_AUDIO_YM_BANK_BYTES + AUDIO_FILL_BYTES_YM <=
+                   CART_YM_PACKET_OFFSET - CART_AUDIO_BUFFER_OFFSET,
+               "the second YM bank runs into the music packet");
 
 static repeating_timer_t s_vbl_timer;
 static uint32_t s_scan_cursor;
@@ -162,10 +172,15 @@ static bool __not_in_flash_func(audio_vbl_timer_cb)(repeating_timer_t *rt) {
   (void)rt;
   s_dbg_cbs++;
   const uint32_t t0 = time_us_32();
-  if (commemul_scan(&s_scan_cursor, AUDIO_VBLSYNC_HIBYTE) && s_fill_cb) {
+  const int ack = commemul_scan(&s_scan_cursor, AUDIO_VBLSYNC_HIBYTE);
+  if (ack >= 0 && s_fill_cb) {
     if (t0 - s_last_frame_us >= AUDIO_MIN_FILL_GAP_US) {
       s_last_frame_us = t0;
-      s_fill_cb(s_audio_buf, s_fill_bytes);
+      uint8_t *buf = s_audio_buf;
+      if (s_audio_mode == AUDIO_MODE_YM && !(ack & AUDIO_VBLSYNC_BANK)) {
+        buf += CART_AUDIO_YM_BANK_BYTES;
+      }
+      s_fill_cb(buf, s_fill_bytes);
       const uint32_t dt = time_us_32() - t0;
       if (dt > s_dbg_fill_max_us) s_dbg_fill_max_us = dt;
       s_dbg_fills++;

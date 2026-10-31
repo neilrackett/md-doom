@@ -3,6 +3,8 @@
  * Author: Diego Parrilla Santamaría
  * Date: March 2026
  * Copyright: 2026 - GOODDATA LABS SL
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
  * Description: ROM3 communication emulator backed by a DMA ring buffer.
  */
 
@@ -93,18 +95,18 @@ int commemul_init(void) {
   return 0;
 }
 
-bool __not_in_flash_func(commemul_scan)(uint32_t *cursor, uint16_t window_hi) {
+int __not_in_flash_func(commemul_scan)(uint32_t *cursor, uint16_t window_hi) {
   if (!commInitialized) {
-    return false;
+    return -1;
   }
   uint32_t transfersWritten =
       COMM_DMA_TRANSFER_COUNT - dma_hw->ch[commDmaChannel].transfer_count;
   uint32_t writeIdx = transfersWritten & COMM_RING_MASK;
   uint32_t idx = *cursor & COMM_RING_MASK;
-  bool seen = false;
+  int seen = -1;
   while (idx != writeIdx) {
     if ((commRing[idx] & 0xFF00u) == window_hi) {
-      seen = true;
+      seen = commRing[idx] & 0xFFu;
     }
     idx = (idx + 1u) & COMM_RING_MASK;
   }
