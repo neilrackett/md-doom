@@ -1002,9 +1002,16 @@ static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const 
 
 /* Chunk k: 96 pixels = 6 blocks; block b of chunk k starts at pixel
  * k*96 + b*16, on row (that / 320). Its 8 planar bytes land at
- * fb_cart_offset(k*48 + b*8). */
+ * fb_cart_offset(k*48 + b*8).
+ *
+ * Last chunk first: that is the cart FB's order, which is the order the
+ * m68k copies it in from the next VBL. Core 1's half starts at the cart
+ * FB's first byte and stays ahead of the copy (a chunk in ~6 us against
+ * the m68k's ~26), and Core 0's half is not reached until ~9 ms into
+ * the copy, so a conversion only has to start before the VBL, not
+ * finish by it. */
 static void __not_in_flash_func(doom_c2p_chunks)(unsigned k0, unsigned k1) {
-  for (unsigned k = k0; k < k1; k++) {
+  for (unsigned k = k1; k-- > k0;) {
     const unsigned pix0 = k * 96u;
     const uint32_t cart0 = fb_cart_offset(k * (uint32_t)CART_FB_CHUNK_BYTES);
     for (unsigned b = 0; b < 6u; b++) {
@@ -1073,9 +1080,10 @@ static inline void mono_block_any(uint32_t *top, uint32_t *bot, const uint8_t *s
 /* Doom rows [y0, y1) into the cart FB: row y is output rows 2y and
  * 2y + 1, 80 bytes each, so 160y and 160y + 80 bytes into the image.
  * Every store is 4-byte aligned and so never straddles a 48-byte chunk.
- * One copy, shared by both cores. */
+ * One copy, shared by both cores. Bottom row first, the cart FB's
+ * order (see doom_c2p_chunks). */
 static void __attribute__((noinline)) __not_in_flash_func(mono_rows)(unsigned y0, unsigned y1) {
-  for (unsigned y = y0; y < y1; y++) {
+  for (unsigned y = y1; y-- > y0;) {
     const uint8_t *src = fb_chunked_buffer + y * FB_CHUNKED_W;
     for (unsigned x = 0; x < FB_CHUNKED_W; x += 16u, src += 16) {
       uint32_t top, bot;

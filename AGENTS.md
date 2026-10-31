@@ -704,7 +704,13 @@ revisited in order of visible payoff.
 - **Direct c2p tearing.** The frame is written into the cart FB in the
   m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
   ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
-  A faster blue-noise path (a per-row LUT slice) would close it. Worse:
+  A faster blue-noise path (a per-row LUT slice) would close it. Each
+  core now writes its half in the cart FB's own order, the order the
+  m68k copies it in (`doom_c2p_chunks` and `mono_rows` count down), so
+  Core 1 starts at the cart FB's first byte and stays ahead of the next
+  copy, and Core 0's half is not reached until ~9 ms into it: a
+  conversion only has to *start* before the VBL, which covers blue
+  noise too. Before, cart chunk 0 was the last one written. Worse:
   `fb_wait_blit_ack` accepts any ack since the last publish, however
   old, so a frame finished late in a VBL is written while the m68k is
   copying ("ack wait max 0 us") and tears. With one buffer the publish
