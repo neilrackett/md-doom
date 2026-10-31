@@ -1,5 +1,15 @@
 #!/bin/bash
 
+#
+# Copyright (C) 2026 Neil Rackett
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Stop at the first failure. Without this a failed RP build carried on,
+# and the copy below found the previous build's UF2 still in rp/dist and
+# published it under the new version number.
+set -e
+
 # Get the absolute path of the current script
 SCRIPT_DIR=$(dirname "$(realpath "$0")") 
 
