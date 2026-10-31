@@ -417,6 +417,10 @@ with blue noise, against the m68k's ~3 ms post-blit slack — blue noise is
 over, and no tearing has been reported yet, but it is the first suspect if
 any is. Keypad `*` and `/` cycle the modes in-game and the choice is saved
 in the app config (`DITHER` / `PALETTE`, `aconfig.c`) and restored at boot.
+`CFGVER` counts one-off changes a firmware makes to saved settings: a
+key missing from flash reads as its default, so it is 0 on any config
+from before it. CFGVER 1 switched every install to the adaptive palette
+once (`doomgame_start`); a later choice stands.
 A colour is drawn as its nearest
 reference on some cells and its second-nearest on the others, split by where
 it falls on the line between them (`t` in 0..16 against the cell threshold).

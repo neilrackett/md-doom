@@ -3,6 +3,8 @@
  * Author: Diego Parrilla Santamaría
  * Date: February 2025, February 2026
  * Copyright: 2025-2026 - GOODDATA LABS SL
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
  * Description: Header file for the app configuration manager
  */
 
@@ -24,6 +26,10 @@ extern "C" {
 #define ACONFIG_PARAM_PALETTE "PALETTE" /* doom_video_palette_t, saved on change */
 #define ACONFIG_PARAM_SCRNSIZE "SCRNSIZE" /* view blocks, 10 or 11, saved on change */
 #define ACONFIG_PARAM_YMMUSIC "YMMUSIC"   /* no DMA sound: 1 = the YM plays music, saved on change */
+/* The one-off settings changes a firmware has made (md_main.c): 0 for a
+ * config from before any, which is what flash without the key reads as. */
+#define ACONFIG_PARAM_CFGVER "CFGVER"
+#define ACONFIG_CFGVER 1 /* 1: the adaptive palette, once, for every install */
 
 #define ACONFIG_SUCCESS 0
 #define ACONFIG_INIT_ERROR -1

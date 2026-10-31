@@ -240,6 +240,15 @@ void doomgame_start(const char *folder) {
     if (v >= 0 && v < (int)DOOM_VIDEO_DITHER_COUNT) doom_video_set_dither((doom_video_dither_t)v);
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_PALETTE);
     v = e ? atoi(e->value) : (int)DOOM_VIDEO_PAL_ADAPTIVE;
+    /* The adaptive palette became the default with CFGVER 1, and every
+     * install gets it once, whatever it had saved; from then on its own
+     * choice stands. Saved with the CFGVER at the first frame. */
+    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_CFGVER);
+    if (!e || atoi(e->value) < 1) {
+      extern void I_MD_SaveVideoSettings(void);
+      v = (int)DOOM_VIDEO_PAL_ADAPTIVE;
+      I_MD_SaveVideoSettings();
+    }
     if (v >= 0 && v < (int)DOOM_VIDEO_PAL_COUNT) doom_video_set_palette_mode((doom_video_palette_t)v);
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
     v = e ? atoi(e->value) : 10;
@@ -269,6 +278,7 @@ void I_MD_FlushVideoSettings(void) {
   settings_put_integer(ctx, ACONFIG_PARAM_SCRNSIZE, (int)screenblocks);
   extern bool I_MD_MusicGetYm(void);
   settings_put_integer(ctx, ACONFIG_PARAM_YMMUSIC, I_MD_MusicGetYm() ? 1 : 0);
+  settings_put_integer(ctx, ACONFIG_PARAM_CFGVER, ACONFIG_CFGVER);
   fb_core1_park();
   settings_save(ctx, true);
   fb_core1_unpark();
