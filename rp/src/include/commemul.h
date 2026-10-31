@@ -32,6 +32,6 @@ void __not_in_flash_func(commemul_poll)(CommEmulSampleCallback callback);
  * Lets an interrupt handler watch for one kind of cart-bus read (the
  * m68k's end-of-blit ack) independently of the main loop's commemul_poll
  * drain. */
-int __not_in_flash_func(commemul_scan)(uint32_t *cursor, uint16_t window_hi);
+int __not_in_flash_func(commemul_scan_last)(uint32_t *cursor, uint16_t window_hi);
 
 #endif  // COMMEMUL_H

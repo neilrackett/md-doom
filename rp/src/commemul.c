@@ -95,7 +95,7 @@ int commemul_init(void) {
   return 0;
 }
 
-int __not_in_flash_func(commemul_scan)(uint32_t *cursor, uint16_t window_hi) {
+int __not_in_flash_func(commemul_scan_last)(uint32_t *cursor, uint16_t window_hi) {
   if (!commInitialized) {
     return -1;
   }

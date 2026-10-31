@@ -93,8 +93,9 @@ int init_romemul(bool copyFlashToRAM) {
 
 /* commemul.c's MD/DOOM addition: the low byte of the last read of
  * `window_hi` since *cursor, or -1, without taking anything from the
- * ring. */
-int commemul_scan(uint32_t *cursor, uint16_t window_hi) {
+ * ring. EmuMD has the template's commemul_scan, which only says whether
+ * there was one; the YM bank is in the low byte. */
+int commemul_scan_last(uint32_t *cursor, uint16_t window_hi) {
   uint16_t sample;
   int seen = -1;
   while (mdfw_rom3_peek(cursor, &sample)) {

@@ -172,7 +172,7 @@ static bool __not_in_flash_func(audio_vbl_timer_cb)(repeating_timer_t *rt) {
   (void)rt;
   s_dbg_cbs++;
   const uint32_t t0 = time_us_32();
-  const int ack = commemul_scan(&s_scan_cursor, AUDIO_VBLSYNC_HIBYTE);
+  const int ack = commemul_scan_last(&s_scan_cursor, AUDIO_VBLSYNC_HIBYTE);
   if (ack >= 0 && s_fill_cb) {
     if (t0 - s_last_frame_us >= AUDIO_MIN_FILL_GAP_US) {
       s_last_frame_us = t0;
