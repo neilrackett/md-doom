@@ -58,7 +58,7 @@
  *                                        words, applied to
  *                                        $FFFF8240.. by the m68k VBL
  *                                        handler every frame)
- *   $FA4100  AUDIO_BUFFER       1024 B  (Timer-B (vA,vB) YM volume
+ *   $FA4100  AUDIO_BUFFER       1024 B  (Timer-A (vA,vB) YM volume
  *                                        pairs; see below)
  *   $FA4500  APP_FREE          15872 B  (~15.5 KB free arena, ends at
  *                                        FRAMEBUFFER)
@@ -80,7 +80,7 @@
 #define CART_SKIP_AUTOSTART_MAGIC        0x534B4950u /* 'SKIP' */      /* 240 bytes total */
 
 /* Slot 1: on a machine without DMA sound, a non-zero word here hands
- * the YM2149 from the sound effects (its Timer-B DAC) to the music
+ * the YM2149 from the sound effects (its Timer-A DAC) to the music
  * (keypad ), doom/md/i_mdmusic.c). The m68k switches over in its next
  * VBL. Mirrored as YM_MUSIC_ADDR in userfw.s. */
 #define CART_YM_MUSIC_OFFSET             (CART_SHARED_VARIABLES_OFFSET + 4)
@@ -102,8 +102,8 @@
 #define CART_PALETTE_ENTRIES             16
 #define CART_PALETTE_SIZE                (CART_PALETTE_ENTRIES * 2)  /* 32 B */
 
-/* The status bar's own palette (doom_video.c's adaptive source, on
- * machines with DMA sound, whose Timer-B is free). Slot 2 non-zero says
+/* The status bar's own palette (doom_video.c's adaptive source).
+ * Slot 2 non-zero says
  * this frame has one: the m68k switches to the 16 words in slots 20..27
  * at the end of line CART_SPLIT_LINE - 1, from a Timer-B event-count
  * interrupt, and back at the next VBL. Both are latched with the frame,
@@ -118,7 +118,7 @@
  * the detected back-end wants (audio.c): on STE DMA sound ~500 bytes
  * of signed 8-bit PCM at 25,033 Hz, the exact count steered by the
  * m68k each frame; on the YM2149 fallback 224 bytes of (vA, vB)
- * volume pairs, one per Timer-B fire at ~5,585 Hz (TIMERB_COUNT=110
+ * volume pairs, one per Timer-A fire at ~5,585 Hz (YM_TIMER_COUNT=110
  * in userfw.s), the read cursor A0 reset to the buffer base every
  * vsync. */
 #define CART_AUDIO_BUFFER_OFFSET                                              \
@@ -160,7 +160,7 @@
  *     movem.l d0-d7/a1-a4, -(a5)        ; predec store, reverse-order
  *
  * pair per iteration (A0 and A7 omitted from the list: A0 is the
- * dedicated Timer-B audio buffer pointer, A7 keeps the supervisor
+ * dedicated YM sample buffer pointer, A7 keeps the supervisor
  * SP valid so IRQs may fire during the macro). The predec store
  * mode is 4 cycles per iter faster than `d16(a5)` displacement mode
  * (8+8n vs 12+8n on 68000), but it writes each 12-longword group in
@@ -196,7 +196,7 @@
  * framework path, doom_video.c for the game) converts one chunk at a
  * time straight into the cart FB at its reversed position, with no
  * scratch buffer in between; fb_cart_offset() is the mapping. */
-#define CART_FB_CHUNK_BYTES           48   /* size of one m68k MOVEM-burst group (12 longwords; A0 and A7 omitted -- A0 is the dedicated Timer-B audio pointer, A7 is the SP) */
+#define CART_FB_CHUNK_BYTES           48   /* size of one m68k MOVEM-burst group (12 longwords; A0 and A7 omitted -- A0 is the dedicated YM sample pointer, A7 is the SP) */
 #define CART_FB_BLIT_LINES            200  /* must match FB_COPY_LINES in target/atarist/src/userfw.s */
 #define CART_FB_BLIT_BYTES            (CART_FB_BLIT_LINES * 160)  /* total bytes the m68k blits per VBL (160 = ST 4bpp scanline) */
 #define CART_FB_CHUNK_COUNT           (CART_FB_BLIT_BYTES / CART_FB_CHUNK_BYTES)  /* iterations of the unrolled MOVEM-pair */

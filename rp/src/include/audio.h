@@ -51,7 +51,7 @@ uint32_t audio_get_fill_bytes(void); /* bytes per VBL currently asked of the fil
  * the m68k measures what the chip actually consumes per frame and sends
  * it back -- that figure is near 501, not 500, and differs between
  * machines because the sound DMA and the video are clocked separately.
- * Ignored in YM mode, whose rate is fixed by the Timer-B divider, and
+ * Ignored in YM mode, whose rate is fixed by the Timer-A divider, and
  * for values outside the cart buffer. */
 void audio_set_fill_bytes(uint32_t bytes);
 

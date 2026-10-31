@@ -90,7 +90,7 @@ FBDRV_DEBUG_MARKS     equ 0
 ; Scratch word in TOS's _dskbufp ($4C6..$4C9). userfw does no disk
 ; I/O, so the slot is fair game while userfw owns the machine.
 ; .vbl_loop arms this to -1 then `stop`s; userfw_vbl clears it. The
-; m68k re-stops on any non-VBL IRQ (Timer-B etc.) and only exits the
+; m68k re-stops on any non-VBL IRQ (the MFP's) and only exits the
 ; wait when the VBL handler has cleared the flag.
 UFW_VBL_FLAG          equ $4C6               ; word: cleared by userfw_vbl, polled after each `stop`
 
@@ -155,7 +155,7 @@ FBDRV_ITERS_B         equ (FBDRV_MAIN_ITERS - FBDRV_ITERS_A)      ; 333
 ; A7 (SP) and A0 are intentionally NOT in the MOVEM list:
 ;   - A7: keeps the supervisor SP valid so IRQs can fire safely
 ;     during the macro.
-;   - A0: dedicated to the Timer-B audio handler's read pointer.
+;   - A0: dedicated to the YM sample handler's read pointer.
 ;     With A0 stable across the macro, the IRQ handler doesn't have
 ;     to save/restore it (-24 cyc/IRQ * ~125 IRQ/VBL = ~3000 cyc/VBL).
 ;     The inline IKBD poll uses A1 (which IS in the MOVEM list and
@@ -182,7 +182,7 @@ FBDRV_ITERS_B         equ (FBDRV_MAIN_ITERS - FBDRV_ITERS_A)      ; 333
 ;        loading UFW_SCREEN_PAGE).
 ;
 ; Clobbers: D0-D7, A1-A4. A0 and A7 are PRESERVED (A0 for the
-; Timer-B audio pointer, A7 for IRQ-safe SP).
+; YM sample pointer, A7 for IRQ-safe SP).
 ; A5 and A6 move \1 chunks: after both parts
 ; A5 = original SCREEN_PAGE end - (FBDRV_MAIN_ITERS * FBDRV_ITER_BYTES)
 ; = original page START, which is the value .after_copy expects in A5.
@@ -251,8 +251,8 @@ PALETTE_SIZE          equ 32
 
 ; The status bar's own palette (cart_shared.h, CART_SPLIT_OFFSET): a
 ; word, non-zero when the frame has one, and its 16 colours, switched in
-; at SPLIT_LINE by userfw_hud_irq. Only with DMA sound, where Timer-B is
-; free; latched with the frame like the palette.
+; at SPLIT_LINE by userfw_hud_irq; latched with the frame like the
+; palette.
 SPLIT_ADDR            equ $00FA4018          ; shared-variable slot 2
 HUD_PALETTE_ADDR      equ $00FA4060          ; slots 20..27
 SPLIT_LINE            equ 168                ; CART_SPLIT_LINE: the bar's first line
@@ -289,7 +289,7 @@ UFW_FB_SRC            equ $00FA8300           ; FRAMEBUFFER_ADDR
 ; configure ch A as a "fake DAC": tone enabled, period = 0 (DC
 ; clamp above the audio band so the volume register is the only
 ; thing driving the output). Reg 8 stays latched after boot, so the
-; Timer-B handler just writes a single byte to YM_DATA per fire.
+; sample handler just writes a single byte to YM_DATA per fire.
 YM_SELECT             equ $FFFF8800
 YM_DATA               equ $FFFF8802
 YM_REG_MIXER          equ 7                  ; tone+noise enables
@@ -301,7 +301,7 @@ YM_MIXER_DAC_AB       equ $FC                ; tones A AND B enabled, tone C off
 ; Cart-shared audio sample buffer (mirrors AUDIO_BUFFER_ADDR /
 ; AUDIO_BUFFER_SIZE in main.s and CART_AUDIO_BUFFER_OFFSET in
 ; rp/src/include/cart_shared.h). 256 bytes of YM ch A volume
-; nibbles, filled by the RP and read by the Timer-B handler.
+; nibbles, filled by the RP and read by the YM sample handler.
 AUDIO_BUFFER_ADDR     equ $00FA4100
 AUDIO_BUFFER_SIZE     equ 1024
 AUDIO_BUFFER_END      equ (AUDIO_BUFFER_ADDR + AUDIO_BUFFER_SIZE)
@@ -353,7 +353,20 @@ MFP_TIMERC_BIT        equ 5                  ; IERB/IMRB bit for Timer-C
 MFP_TBCR              equ $FFFFFA1B          ; Timer-B control register (delay-mode + prescaler)
 MFP_TBDR              equ $FFFFFA21          ; Timer-B data register (8-bit countdown)
 
-; Timer-B audio rate. MFP master clock = 2.4576 MHz. We pick a /4
+; MFP timers, highest priority first, the same on every machine:
+;   Timer-A  audio: the DMA frame end (event count; the STE wires the
+;            DMA sound's frame-end signal to Timer-A's input), or the
+;            YM sample clock without DMA sound (delay mode)
+;   Timer-B  the status bar's palette split (event count; Timer-B's
+;            input is display enable, so only it can count lines)
+;   ACIA     keyboard, joystick and mouse bytes
+; Priority only decides which of two pending interrupts goes first --
+; they all run at IPL 6 and never nest. Audio goes first because a late
+; sample is heard and every audio handler is a few dozen cycles; the
+; split can start late and still land in the blank (userfw_hud_irq);
+; an IKBD byte has 1.28 ms before the next arrives.
+;
+; YM sample rate. MFP master clock = 2.4576 MHz. We pick a /4
 ; prescaler with count 110:
 ;   f = 2.4576 MHz / (4 * 110) = 5,585.45 Hz
 ; (~10.9% slower than STE-low's 6,258 Hz). The count was raised from
@@ -365,8 +378,8 @@ MFP_TBDR              equ $FFFFFA21          ; Timer-B data register (8-bit coun
 ; ~111.71 samples/VBL. At 2 bytes per sample (dual-ghost LUT) that's
 ; ~223 bytes/VBL in the cart buffer (audio.c's AUDIO_BYTES_PER_VBL
 ; = 224 matches this).
-TIMERB_PRESCALER      equ 1                  ; /4 (delay mode)
-TIMERB_COUNT          equ 110                ; ~5,585 Hz (~112 samples/PAL VBL)
+YM_TIMER_PRESCALER    equ 1                  ; /4 (delay mode)
+YM_TIMER_COUNT        equ 110                ; ~5,585 Hz (~112 samples/PAL VBL)
 
 ; IRQ vector slots we take over. $70 (VBL) already handled by the
 ; original userfw code path (D3 holds the save).
@@ -412,7 +425,7 @@ VIDEO_WINDOW_BASE     equ $FB9000
 ; scratch slots ($77FE0+), never displayed nor touched by the blit --
 ; no separately-allocated ST RAM. Presence is detected at boot via
 ; the _SND cookie (bit 1), stored in UFW_HAS_DMA; both the DMA and
-; the YM/Timer-B paths compile in and are chosen at runtime, and the
+; the YM paths compile in and are chosen at runtime, and the
 ; result is reported to the RP each VBL so it produces the matching
 ; audio format (signed PCM for DMA, (vA,vB) YM pairs otherwise).
 ; Byte registers live at ODD addresses in the $FFFF89xx block.
@@ -821,8 +834,8 @@ userfw:
     clr.b   MFP_TBCR.w
     clr.b   MFP_TACR.w
 
-    ; Disable + mask everything in MFP A/B. We re-enable Timer-B
-    ; explicitly below; everything else stays off.
+    ; Disable + mask everything in MFP A/B. Timer-A, Timer-B and the
+    ; ACIA are re-enabled explicitly below; everything else stays off.
     clr.b   MFP_IERA.w
     clr.b   MFP_IERB.w
     clr.b   MFP_IMRA.w
@@ -832,15 +845,16 @@ userfw:
     ; VR bit 3) for BOTH audio paths: the interrupt-driven ACIA/IKBD
     ; handler relies on auto-EOI (it never writes an in-service ack),
     ; so unlike md-mjpeg -- which polls the ACIA and only needs
-    ; auto-EOI for Timer-B -- this must happen before the audio-mode
-    ; branch, or the first key event on a DMA-sound machine would wedge
-    ; the MFP. (For Timer-B it additionally saves ~12 cyc per fire.)
+    ; auto-EOI for its audio timer -- this must happen before the
+    ; audio-mode branch, or the first key event on a DMA-sound machine
+    ; would wedge the MFP. (For the YM sample clock it additionally
+    ; saves ~12 cyc per fire.)
     move.b  28(a5), d0                    ; copy TOS's VR (saved above)
     andi.b  #$F7, d0                      ; clear bit 3 (S) -> auto-EOI
     move.b  d0, MFP_VR.w
 
     ; Audio back-end chosen at runtime from UFW_HAS_DMA (detected
-    ; above). Both the YM/Timer-B and STE DMA paths are compiled in.
+    ; above). Both the YM and STE DMA paths are compiled in.
     tst.b   UFW_HAS_DMA
     bne     .boot_audio_dma          ; DMA sound present -> STE path
 
@@ -849,48 +863,49 @@ userfw:
     ; periods all 0 so the counters run at max -- effectively DC
     ; clamp above the audio band, so the volume registers alone
     ; shape each channel's output. The two channels sum
-    ; acoustically; the Timer-B handler writes a (vA, vB) pair per
+    ; acoustically; the sample handler writes a (vA, vB) pair per
     ; fire, and the Ghostbusters 64-entry hand-tuned LUT picks the
     ; pair that best approximates the desired linear amplitude on
     ; the YM's logarithmic volume curve.
     ;
-    ; Reg 8 (ch A volume) is latched LAST so the first Timer-B fire
+    ; Reg 8 (ch A volume) is latched LAST so the first sample fire
     ; can write ch A immediately; the handler toggles to reg 9
     ; (ch B) mid-fire and back to reg 8 at the end. A subroutine, as
     ; the loop redoes it when the music hands the YM back (keypad )).
     bsr     ym_dac_init
 
-    ; --- Timer-B setup (audio @ ~6.27 kHz, STE-low-like) ---------
-    ; Install our handler at $120 (overrides the dummy installed
-    ; above). Load count -> TBDR, then prescaler -> TBCR starts
-    ; the countdown. Enable + unmask Timer-B at the MFP. SR is
+    ; --- Timer-A setup: the YM sample clock (~5,585 Hz) ----------
+    ; Install our handler at $134 (overrides the dummy installed
+    ; above). Load count -> TADR, then prescaler -> TACR starts
+    ; the countdown. Enable + unmask Timer-A at the MFP. SR is
     ; still IPL=7 at this point (set by `ori.w #$0700, sr` at the
     ; very top of userfw), so no IRQ fires until SR is dropped to
-    ; $2300 below.
+    ; $2300 below. (It was Timer-B until the status bar's palette
+    ; split needed that one: see the timer list above YM_TIMER_COUNT.)
     ;
     ; (The MFP is already in auto-EOI mode -- set before the audio
-    ; branch above -- so the Timer-B handler needs no in-service ack.)
-    lea     userfw_timerb_audio(pc), a0
-    move.l  a0, VEC_TIMERB.w
-    move.b  #TIMERB_COUNT, MFP_TBDR.w
-    move.b  #TIMERB_PRESCALER, MFP_TBCR.w
+    ; branch above -- so the handler needs no in-service ack.)
+    lea     userfw_ym_irq(pc), a0
+    move.l  a0, VEC_TIMERA.w
+    move.b  #YM_TIMER_COUNT, MFP_TADR.w
+    move.b  #YM_TIMER_PRESCALER, MFP_TACR.w
 
-    ; Initialise A0 to the audio buffer base for the Timer-B handler.
+    ; Initialise A0 to the audio buffer base for the sample handler.
     ; A0 is NOT in the FBDRV_INLINE MOVEM list and no other code in
     ; userfw touches it after this point, so the handler can rely on
     ; A0 holding a valid cart-buffer pointer at all times -- saves
     ; the push/pop around it in the hot IRQ path (-24 cyc/fire).
     movea.l #AUDIO_BUFFER_ADDR, a0
 
-    bset    #0, MFP_IERA.w                ; Timer-B IRQ enable (IERA bit 0)
-    bset    #0, MFP_IMRA.w                ; Timer-B IRQ unmask (IMRA bit 0)
+    bset    #MFP_TIMERA_BIT, MFP_IERA.w   ; Timer-A IRQ enable
+    bset    #MFP_TIMERA_BIT, MFP_IMRA.w   ; Timer-A IRQ unmask
     bra     .boot_audio_done
 
 .boot_audio_dma:
     ; --- STE DMA sound init: mono 25033 Hz, loop mode, double-buffered.
     ; Silence both buffers, program start/end to buffer A, start the
     ; loop. The DMA free-runs; .after_copy refills whichever buffer the
-    ; DMA isn't reading and points the loop at it. No Timer-B, no YM.
+    ; DMA isn't reading and points the loop at it. No YM.
     lea     STE_SND_BUF_A, a0
     move.w  #(STE_SND_COPY/4)-1, d0
 .ste_snd_clr_a:
@@ -933,16 +948,17 @@ userfw:
     bset    #MFP_TIMERA_BIT, MFP_IMRA.w
     move.b  #$03, STE_DMA_CTRL.w          ; play + loop
 
-    ; Timer-B is free here: the status bar's palette (userfw_hud_irq).
+.boot_audio_done:
+
+    ; Timer-B on either path: the status bar's palette (userfw_hud_irq).
     ; Left stopped; the VBL loop arms it for each frame that has one.
+    ; A1, not A0: on the YM path A0 is the sample cursor from here on.
     clr.w   UFW_SPLIT_NEXT
     clr.w   UFW_SPLIT_SHOW
-    lea     userfw_hud_irq(pc), a0
-    move.l  a0, VEC_TIMERB.w
+    lea     userfw_hud_irq(pc), a1
+    move.l  a1, VEC_TIMERB.w
     bset    #0, MFP_IERA.w                ; Timer-B IRQ enable (IERA bit 0)
     bset    #0, MFP_IMRA.w                ; Timer-B IRQ unmask (IMRA bit 0)
-
-.boot_audio_done:
 
     bset    #MFP_ACIA_BIT, MFP_IERB.w     ; enable keyboard/MIDI ACIA IRQ
     bset    #MFP_ACIA_BIT, MFP_IMRB.w     ;         and unmask it
@@ -1010,16 +1026,16 @@ userfw:
 
     ; Pin IRQ state for the duration of .vbl_loop:
     ;   SR = $2300: supervisor mode, IPL=3. Blocks levels 1-3 (HBL
-    ;   at IPL 2), allows VBL at IPL 4 and MFP at IPL 6. The only
-    ;   MFP source enabled is Timer-B (IERA/IMRA bit 0), so the
-    ;   m68k sees VBL + Timer-B IRQs.
+    ;   at IPL 2), allows VBL at IPL 4 and MFP at IPL 6: Timer-A,
+    ;   Timer-B and the ACIA (see the timer list above
+    ;   YM_TIMER_COUNT).
     move.w  #$2300, sr
 
     ; --- Per-VBL loop ---
 .vbl_loop:
     ; CPU-halt wait for the next vsync. The m68k `stop #$2300` halts
     ; until an IRQ at level > 3 fires (VBL at IPL=4, MFP at IPL=6).
-    ; Because Timer-B (MFP) can be re-enabled for audio/IKBD work,
+    ; MFP interrupts (audio, the split, the IKBD) wake it too, so
     ; we can't assume the next wake is the VBL -- the userfw_vbl
     ; handler clears UFW_VBL_FLAG, but the dummy MFP handlers do
     ; not. After each wake we check the flag; if it's still set the
@@ -1054,10 +1070,7 @@ userfw:
     ; The status bar's palette, the same way: the page going on screen
     ; takes the one latched with it, the slot is latched for the next.
     ; Timer-B then counts display lines and fires at the end of the
-    ; line before the split; userfw_hud_irq does the rest. Only with
-    ; DMA sound: without it Timer-B is the YM's sample clock.
-    tst.b   UFW_HAS_DMA
-    beq.s   .palette_done
+    ; line before the split; userfw_hud_irq does the rest.
     lea     UFW_HUD_NEXT, a5
     lea     UFW_HUD_SHOW, a6
     movem.l (a5), d0-d7
@@ -1086,7 +1099,7 @@ userfw:
     ; blitter.
     ;
     ; FBDRV_INLINE clobbers D0-D7, A1-A4. A0 and A7 (SP) are
-    ; PRESERVED (not in the MOVEM list): A0 holds the Timer-B
+    ; PRESERVED (not in the MOVEM list): A0 holds the YM sample
     ; handler's dedicated audio buffer pointer (initialised at boot,
     ; advances + wraps inside the handler), A7 keeps the supervisor
     ; SP valid so IRQs can fire safely. A6 is the source pointer.
@@ -1212,7 +1225,7 @@ userfw:
     ; move.l (a1)+,(a2)+ / dbf, which is 30 cycles an iteration =
     ; ~3,750 cycles, ~0.47 ms of the ST's ~3 ms post-blit slack. A MOVEM
     ; burst the way FBDRV_INLINE does it would cut that to ~0.3 ms, and
-    ; A0 is free here on the DMA path (Timer-B isn't running) -- worth
+    ; A0 is free here on the DMA path (no YM samples) -- worth
     ; doing if the slack ever gets tight.
     tst.b   UFW_HAS_DMA
     beq     .no_dma_refill
@@ -1355,7 +1368,7 @@ userfw:
     ; With DMA sound the YM is always free. Without it the YM is the
     ; sound effects' DAC unless the RP has given it to the music
     ; (YM_MUSIC_ADDR, keypad )): switch over when that changes, with
-    ; interrupts masked so no Timer-B fire lands mid-switch.
+    ; interrupts masked so no sample (Timer-A) lands mid-switch.
     tst.b   UFW_HAS_DMA
     bne.s   .ym_write
     tst.w   YM_MUSIC_ADDR
@@ -1367,7 +1380,7 @@ userfw:
     ori.w   #$0700, sr
     tst.b   d0
     beq.s   .ym_to_sfx
-    bclr    #0, MFP_IERA.w               ; to the music: Timer-B's samples stop
+    bclr    #MFP_TIMERA_BIT, MFP_IERA.w  ; to the music: the samples stop
     move.b  #8, YM_SELECT.w
     move.b  #0, YM_DATA.w                ; and A, B and C fall silent until
     move.b  #9, YM_SELECT.w              ; the first music packet
@@ -1377,7 +1390,7 @@ userfw:
     bra.s   .ym_switched
 .ym_to_sfx:
     bsr     ym_dac_init                  ; to the sound effects: the DAC again
-    bset    #0, MFP_IERA.w               ; and Timer-B back on
+    bset    #MFP_TIMERA_BIT, MFP_IERA.w  ; and the sample clock back on
 .ym_switched:
     move.w  (sp)+, sr
 .ym_owner_same:
@@ -1498,7 +1511,7 @@ userfw:
 ; A and B on at period 0, so the counters run far above the audio band
 ; and the volume registers alone shape the output; tone C and all the
 ; noise off; all three volumes 0; and R8 (ch A volume) latched last, as
-; the Timer-B handler expects. At boot, and when the music hands the YM
+; the sample handler expects. At boot, and when the music hands the YM
 ; back (keypad ), YM_MUSIC_ADDR), with interrupts masked. Touches no
 ; registers.
 ym_dac_init:
@@ -1523,15 +1536,15 @@ ym_dac_init:
 ; -------------------------------------------------------------------
 ; userfw_vbl -- VBL interrupt handler. Two jobs:
 ;   1. Reset A0 to AUDIO_BUFFER_ADDR. This is the cart-buffer base,
-;      and Timer-B will start consuming samples from offset 0 on
+;      and the sample handler will start from offset 0 on
 ;      the next IRQ. Pinning A0 = base once per VBL eliminates the
-;      explicit `cmpa.l + bcs.s` wrap in the Timer-B hot path, so
+;      explicit `cmpa.l + bcs.s` wrap in the sample hot path, so
 ;      that handler shrinks to a single `move.b (a0)+, YM_DATA.w`
 ;      + rte. A0 is dedicated to audio (excluded from the
 ;      FBDRV_INLINE MOVEM list and from the IKBD poll), so it's
 ;      safe to overwrite here from IRQ context.
 ;   2. Clear UFW_VBL_FLAG so .vbl_loop's `stop`-then-check wait can
-;      distinguish a VBL wake from a Timer-B (or other MFP) wake.
+;      distinguish a VBL wake from an MFP wake.
 ;
 ; This replaces TOS's VBL handler entirely while userfw is running,
 ; so mouse / cursor-blink / keyboard-repeat / _vblqueue all stop
@@ -1544,8 +1557,8 @@ userfw_vbl:
     rte
 
 ; -------------------------------------------------------------------
-; userfw_timerb_audio -- Timer-B IRQ handler. Fires at ~12.5 kHz
-; when Timer-B is running in /4 delay mode with TBDR=49.
+; userfw_ym_irq -- the YM sample clock, Timer-A in /4 delay mode
+; (YM_TIMER_COUNT), ~5,585 Hz, on machines without DMA sound.
 ;
 ; Dual-channel Ghostbusters-LUT mode: each sample in the cart buffer
 ; is 2 bytes = (vA, vB), pre-resolved at build time by running the
@@ -1572,7 +1585,7 @@ userfw_vbl:
 ; At 12,539 Hz: 68 * 251 = ~17.1 k cyc/VBL = 2.1 ms = 10.7% CPU.
 ; Combined with FB_COPY_LINES=100 macro (~8.8 ms / VBL = 44%),
 ; total VBL load ~55%, leaving ~9.1 ms slack.
-userfw_timerb_audio:
+userfw_ym_irq:
     move.b  (a0)+, YM_DATA.w               ; vA -> ch A vol
     move.b  #YM_REG_CHB_VOL, YM_SELECT.w   ; latch ch B vol reg
     move.b  (a0)+, YM_DATA.w               ; vB -> ch B vol
@@ -1647,16 +1660,19 @@ userfw_snd_irq:
 ; Timer-C $114, Timer-D $110, ACIA $118). Stopping TOS's handlers cuts the per-frame jitter they
 ; impose on the blit; we don't need their behaviour because the
 ; framebuffer template owns the screen + IKBD until ESC exit.
-; userfw_hud_irq -- Timer-B in event-count mode, DMA-sound machines
-; only: the status bar's 16 colours, from line SPLIT_LINE. Fires at the
-; end of the line before; the colours are loaded into registers, the
-; video address counter tells when the shifter has fetched the view's
-; last line, and one MOVEM writes them in the blank that follows, so no
-; visible pixel of either side changes colour. The wait is about a
-; line (~64 us) a frame, at IPL 6: ACIA bytes are 128 us apart at the
-; fastest and the 6850 holds one, and the DMA frame-end handler has a
-; frame to spare. The bound only matters if the counter never gets
-; there (it always should).
+; userfw_hud_irq -- Timer-B in event-count mode: the status bar's 16
+; colours, from line SPLIT_LINE. Fires at the end of the line before;
+; the colours are loaded into registers, the video address counter
+; tells when the shifter has fetched the view's last line, and one
+; MOVEM writes them in the blank that follows, so no visible pixel of
+; either side changes colour. Starting up to a few hundred cycles late
+; (an audio interrupt first, a MOVEM in the copy) still makes the
+; blank. The wait is about a line (~64 us) a frame, at IPL 6: the
+; 6850s hold a byte each and IKBD bytes are 1.28 ms apart (MIDI's
+; 320 us), the DMA frame-end handler has a frame to spare, and without
+; DMA sound one YM sample a frame may play up to that much late. The
+; bound only matters if the counter never gets there (it always
+; should).
 userfw_hud_irq:
     movem.l d0-d7/a1-a3, -(sp)
     lea     UFW_HUD_SHOW, a1

@@ -405,9 +405,9 @@ static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
  * sixteenths of a level past the halfway mark. A still picture settles
  * and stays put.
  *
- * With DMA sound, Timer-B is free and the status bar gets a palette of
- * its own (the "split", see CART_SPLIT_OFFSET): the view's pens move
- * with the view, and the bar, sharing them, would shimmer. Its rows are
+ * The status bar gets a palette of its own (the "split", see
+ * CART_SPLIT_OFFSET): the view's pens move with the view, and the bar,
+ * sharing them, would shimmer. Its rows are
  * drawn nearest-pen through s_hud_pen, as 16 pens chosen for a few
  * dozen flat colours leave nothing worth dithering, and a second 4 KB
  * LUT is more RAM than the bar deserves.
@@ -1112,7 +1112,7 @@ void doom_video_publish(void) {
    * and the bar each get their own. */
   s_split = false;
   if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
-    s_split = s_status_bar && audio_get_mode() == AUDIO_MODE_DMA;
+    s_split = s_status_bar;
     const unsigned view_h = s_split ? SPLIT_ROW : FB_CHUNKED_H;
     if (adapt_update(&s_view, 0u, view_h, 0u, ADAPT_ITERS) || s_lut_dirty) {
       adapt_install_view();

@@ -90,8 +90,8 @@ const char *doom_video_palette_name(doom_video_palette_t mode);
 const char *doom_video_dither_name(doom_video_dither_t mode);
 
 /* Whether this frame has the status bar in rows 168..199. With the
- * adaptive palette, on a machine with DMA sound, the bar then gets 16
- * colours of its own, switched in by the m68k at line 168. */
+ * adaptive palette the bar then gets 16 colours of its own, switched in
+ * by the m68k at line 168. */
 void doom_video_set_status_bar(bool shown);
 
 /* Doom's screen melt. doom_video_wipe_begin() takes the last published

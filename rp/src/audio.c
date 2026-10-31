@@ -28,7 +28,7 @@
  * switches the per-VBL refill size, and the fill callback keys off
  * audio_get_mode() to produce the matching format:
  *  - AUDIO_MODE_YM: 5,585 Hz, 112 samples/VBL x 2 B (vA,vB) = 224 B
- *    (m68k Timer-B, TBDR=110 /4 prescaler; ~800 B of the cart buffer
+ *    (m68k Timer-A, TADR=110 /4 prescaler; ~800 B of the cart buffer
  *    stays as overrun headroom). In ST high res the VBL is 71.47 Hz,
  *    so 79 samples = 158 B.
  *  - AUDIO_MODE_DMA: 25,033 Hz, 500 samples/VBL x 1 B (signed) = 500 B
@@ -88,7 +88,7 @@ uint32_t audio_get_fill_bytes(void) { return s_fill_bytes; }
 
 /* Display report (VIDEO_WINDOW_BASE in userfw.s): $FB9000 + 1 in ST high
  * res. fb.c reads it for the picture; here it sets how many YM samples
- * a VBL takes, the Timer-B rate being fixed. */
+ * a VBL takes, the Timer-A rate being fixed. */
 #define AUDIO_VIDEO_HIBYTE 0x9000u
 
 /* Guard rails on a value that arrives over a bus. The m68k steers
@@ -100,7 +100,7 @@ uint32_t audio_get_fill_bytes(void) { return s_fill_bytes; }
 
 void audio_set_fill_bytes(uint32_t bytes) {
   if (s_audio_mode != AUDIO_MODE_DMA) {
-    return; /* the YM rate is fixed by the Timer-B divider */
+    return; /* the YM rate is fixed by the Timer-A divider */
   }
   if (bytes < AUDIO_FILL_BYTES_MIN || bytes > AUDIO_FILL_BYTES_MAX ||
       bytes > CART_AUDIO_BUFFER_SIZE) {
