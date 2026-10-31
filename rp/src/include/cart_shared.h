@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 /**
  * File: cart_shared.h
  * Description: Cart 64 KB shared-region layout + cart-bus helpers.
@@ -96,6 +101,18 @@
   (CART_SHARED_VARIABLES_OFFSET + (12 * 4))      /* $4040 */
 #define CART_PALETTE_ENTRIES             16
 #define CART_PALETTE_SIZE                (CART_PALETTE_ENTRIES * 2)  /* 32 B */
+
+/* The status bar's own palette (doom_video.c's adaptive source, on
+ * machines with DMA sound, whose Timer-B is free). Slot 2 non-zero says
+ * this frame has one: the m68k switches to the 16 words in slots 20..27
+ * at the end of line CART_SPLIT_LINE - 1, from a Timer-B event-count
+ * interrupt, and back at the next VBL. Both are latched with the frame,
+ * like the palette. Mirrored as SPLIT_ADDR / HUD_PALETTE_ADDR and
+ * SPLIT_LINE in userfw.s. */
+#define CART_SPLIT_OFFSET                (CART_SHARED_VARIABLES_OFFSET + 8)
+#define CART_HUD_PALETTE_OFFSET                                               \
+  (CART_SHARED_VARIABLES_OFFSET + (20 * 4))      /* $4060 */
+#define CART_SPLIT_LINE                  168 /* STATUS_BAR_TOP */
 
 /* Audio sample buffer, refilled by the RP once per VBL in the format
  * the detected back-end wants (audio.c): on STE DMA sound ~500 bytes

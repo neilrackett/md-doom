@@ -57,6 +57,7 @@
 ; $78000.
 VIDEO_BASE_ADDR_HIGH  equ $FFFF8201
 VIDEO_BASE_ADDR_MID   equ $FFFF8203
+VIDEO_COUNT_MID       equ $FFFF8207          ; video address counter, bits 8..15
 
 ; Palette index 0 doubles as the border colour. We poke it at three
 ; points in the VBL loop so the ST border visualises blit timing
@@ -109,6 +110,11 @@ UFW_HALF              equ $00077F07          ; byte: $FF = mono frame half copie
 UFW_YM_SEQ            equ $00077F08          ; word: last music packet written to the YM
 UFW_YM_MUSIC          equ $00077F0A          ; byte: $FF = no DMA, and the YM is the music's
 UFW_PAL_LATCH         equ $00077F20          ; 32 B: the palette of the page on screen
+UFW_HUD_NEXT          equ $00077F40          ; 32 B: status bar palette of the page being copied
+UFW_HUD_SHOW          equ $00077F60          ; 32 B: and of the page on screen
+UFW_SPLIT_NEXT        equ $00077F80          ; word: non-zero = that page has one
+UFW_SPLIT_SHOW        equ $00077F82          ; word: as UFW_SPLIT_NEXT, for the page on screen
+UFW_SPLIT_MID         equ $00077F84          ; byte: video counter bits 8..15 at the split
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -242,6 +248,21 @@ CMD_RESET             equ 1
 ; when that page goes on screen. Mirrors main.s PALETTE_ADDR.
 PALETTE_ADDR          equ $00FA4040
 PALETTE_SIZE          equ 32
+
+; The status bar's own palette (cart_shared.h, CART_SPLIT_OFFSET): a
+; word, non-zero when the frame has one, and its 16 colours, switched in
+; at SPLIT_LINE by userfw_hud_irq. Only with DMA sound, where Timer-B is
+; free; latched with the frame like the palette.
+SPLIT_ADDR            equ $00FA4018          ; shared-variable slot 2
+HUD_PALETTE_ADDR      equ $00FA4060          ; slots 20..27
+SPLIT_LINE            equ 168                ; CART_SPLIT_LINE: the bar's first line
+; Cycles to wait after the video counter reaches the split line before
+; writing the bar's colours: the counter runs a little ahead of the
+; picture, and the last pixels of the line above must not change. The
+; blank that follows is ~190 cycles; the wait, the detection loop (up
+; to ~20) and the MOVEM (~76) must fit in it.
+HUD_SPLIT_NOPS        equ 4
+HUD_SPIN_MAX          equ 1000               ; detection loop bound (~2.5 ms)
 
 ; Screen pages live just below TOS RAM top (TT-style 256 KB ST RAM
 ; assumption -- screens land at $70000/$78000, matching md-sprites-demo).
@@ -576,7 +597,7 @@ FORCE_NO_DMA          equ 0
 ;   offset 28: MFP VR save (byte) -- S-bit + vector base, switched to auto-EOI under userfw
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
-UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F40..$77FCF gap
+UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F86..$77FCF gap
     ifgt  UFW_SAVE+UFW_SAVE_SIZE-$00077FD0
     fail  "userfw save area runs past the free gap at $77FD0"
     endc
@@ -912,6 +933,15 @@ userfw:
     bset    #MFP_TIMERA_BIT, MFP_IMRA.w
     move.b  #$03, STE_DMA_CTRL.w          ; play + loop
 
+    ; Timer-B is free here: the status bar's palette (userfw_hud_irq).
+    ; Left stopped; the VBL loop arms it for each frame that has one.
+    clr.w   UFW_SPLIT_NEXT
+    clr.w   UFW_SPLIT_SHOW
+    lea     userfw_hud_irq(pc), a0
+    move.l  a0, VEC_TIMERB.w
+    bset    #0, MFP_IERA.w                ; Timer-B IRQ enable (IERA bit 0)
+    bset    #0, MFP_IMRA.w                ; Timer-B IRQ unmask (IMRA bit 0)
+
 .boot_audio_done:
 
     bset    #MFP_ACIA_BIT, MFP_IERB.w     ; enable keyboard/MIDI ACIA IRQ
@@ -1013,13 +1043,41 @@ userfw:
     ; Cost: two MOVEM pairs, ~330 cyc / VBL. Not in mono, where colour
     ; 0 was set at boot and the rest mean nothing.
     tst.b   UFW_MONO
-    bne.s   .palette_done
+    bne     .palette_done
     lea     UFW_PAL_LATCH, a5
     movem.l (a5), d0-d7
     movem.l d0-d7, PALETTE_BASE.w
     lea     PALETTE_ADDR, a6
     movem.l (a6), d0-d7
     movem.l d0-d7, (a5)
+
+    ; The status bar's palette, the same way: the page going on screen
+    ; takes the one latched with it, the slot is latched for the next.
+    ; Timer-B then counts display lines and fires at the end of the
+    ; line before the split; userfw_hud_irq does the rest. Only with
+    ; DMA sound: without it Timer-B is the YM's sample clock.
+    tst.b   UFW_HAS_DMA
+    beq.s   .palette_done
+    lea     UFW_HUD_NEXT, a5
+    lea     UFW_HUD_SHOW, a6
+    movem.l (a5), d0-d7
+    movem.l d0-d7, (a6)
+    move.w  UFW_SPLIT_NEXT, UFW_SPLIT_SHOW
+    lea     HUD_PALETTE_ADDR, a6
+    movem.l (a6), d0-d7
+    movem.l d0-d7, (a5)
+    move.w  SPLIT_ADDR, UFW_SPLIT_NEXT
+    clr.b   MFP_TBCR.w                    ; stopped; armed afresh each frame
+    tst.w   UFW_SPLIT_SHOW
+    beq.s   .palette_done
+    ; Where the video counter will be at the split: the page on screen
+    ; (the base register still holds it; this VBL's flip comes after the
+    ; copy) plus SPLIT_LINE rows, which is a whole number of 256 bytes.
+    move.b  VIDEO_BASE_ADDR_MID.w, d0
+    addi.b  #((SPLIT_LINE*FB_ROW_BYTES)>>8), d0
+    move.b  d0, UFW_SPLIT_MID
+    move.b  #(SPLIT_LINE-1), MFP_TBDR.w
+    move.b  #$08, MFP_TBCR.w              ; event-count mode: display lines
 .palette_done:
 
     ; Pure 68000 CPU copy via the FBDRV_INLINE macro (defined in
@@ -1589,6 +1647,34 @@ userfw_snd_irq:
 ; Timer-C $114, Timer-D $110, ACIA $118). Stopping TOS's handlers cuts the per-frame jitter they
 ; impose on the blit; we don't need their behaviour because the
 ; framebuffer template owns the screen + IKBD until ESC exit.
+; userfw_hud_irq -- Timer-B in event-count mode, DMA-sound machines
+; only: the status bar's 16 colours, from line SPLIT_LINE. Fires at the
+; end of the line before; the colours are loaded into registers, the
+; video address counter tells when the shifter has fetched the view's
+; last line, and one MOVEM writes them in the blank that follows, so no
+; visible pixel of either side changes colour. The wait is about a
+; line (~64 us) a frame, at IPL 6: ACIA bytes are 128 us apart at the
+; fastest and the 6850 holds one, and the DMA frame-end handler has a
+; frame to spare. The bound only matters if the counter never gets
+; there (it always should).
+userfw_hud_irq:
+    movem.l d0-d7/a1-a3, -(sp)
+    lea     UFW_HUD_SHOW, a1
+    movem.l (a1), d0-d5/a2-a3             ; colours 0..11 in d0-d5, 12..15 in a2/a3
+    move.b  UFW_SPLIT_MID, d6
+    move.w  #HUD_SPIN_MAX, d7
+    lea     VIDEO_COUNT_MID.w, a1
+.hud_spin:
+    cmp.b   (a1), d6
+    dbls    d7, .hud_spin                 ; until counter bits 8..15 >= the split's
+    rept    HUD_SPLIT_NOPS
+    nop
+    endr
+    movem.l d0-d5/a2-a3, PALETTE_BASE.w
+    clr.b   MFP_TBCR.w                    ; once a frame
+    movem.l (sp)+, d0-d7/a1-a3
+    rte
+
 userfw_dummy_irq:
     rte
 

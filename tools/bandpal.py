@@ -41,8 +41,10 @@ that stretch with the 8 frame pens only (the "g8 seam" rows).
 Pens chosen afresh every frame can flicker. --temporal FIRST:LAST
 takes a run of consecutive dumps (MDDOOM_FRAMEDUMP_EVERY=1) and
 measures how much the still parts of the picture change from frame to
-frame, for pens chosen from scratch, from the last frame's centres, and
-with hysteresis on the snapping.
+frame, for pens chosen from scratch, from the last frame's centres,
+with hysteresis on the snapping, and with the firmware's gate; and how
+often the pens change at all, as each change costs the firmware a wait
+for a fresh ack.
 
   tools/bandpal.py DIR [--out OUT] [--every N] [--samples 0,10,...]
   tools/bandpal.py DIR --temporal 300:560
@@ -319,11 +321,14 @@ class Tracker:
     colour is more than `hold` Delta E away. iters=None chooses every
     frame from scratch. `sticky` snaps with hysteresis instead: a
     channel keeps its level until the centre is more than 0.5 + sticky
-    of a level away from it."""
+    of a level away from it. `gate` keeps the pens on screen unless the
+    new ones serve the region's colours that much better (doom_video.c's
+    ADAPT_GATE, in the same 2:4:3 weighted RGB)."""
 
-    def __init__(self, h, chip, iters, hold, sticky=0.0):
-        self.h, self.chip, self.iters, self.hold, self.sticky = h, chip, iters, hold, sticky
+    def __init__(self, h, chip, iters, hold, sticky=0.0, gate=0.0):
+        self.h, self.chip, self.iters, self.hold, self.sticky, self.gate = h, chip, iters, hold, sticky, gate
         self.cen, self.pens = {}, {}
+        self.changes = 0
 
     def palettes(self, pal, frame, hud):
         pal_lab = rgb_to_lab(pal)
@@ -343,6 +348,14 @@ class Tracker:
             if old is not None and self.hold:
                 near = np.sqrt(((rgb_to_lab(pens) - rgb_to_lab(old)) ** 2).sum(1)) <= self.hold
                 pens = np.where(near[:, None], old, pens)
+            if old is not None and self.gate and not np.array_equal(pens, old):
+                def err(p):
+                    d = (((pal[idx][:, None, :] - p[None, :, :]) ** 2) * [2, 4, 3]).sum(2).min(1)
+                    return (d * w).sum()
+                if err(pens) > (1 - self.gate) * err(old):
+                    pens = old
+            if old is not None and not np.array_equal(pens, old):
+                self.changes += 1
             self.pens[(hud, key)] = pens
             out.append(((y0, y1), pens))
         return out
@@ -361,6 +374,7 @@ def temporal(files, args):
         trackers[name + ' warm2'] = Tracker(h, 'ste', 2, 0)
         trackers[name + ' warm2 sticky.3'] = Tracker(h, 'ste', 2, 0, 0.3)
         trackers[name + ' warm2 sticky.6'] = Tracker(h, 'ste', 2, 0, 0.6)
+        trackers[name + ' warm2 st.3 gate6%'] = Tracker(h, 'ste', 2, 0, 0.3, 0.06)
     prev = {}
     stats = {k: [] for k in trackers}
     for fi, path in enumerate(files):
@@ -389,12 +403,14 @@ def temporal(files, args):
             prev[name] = (frame, shown, blur)
         print('\r%d/%d' % (fi + 1, len(files)), end='', flush=True)
     print()
-    print('%-28s %8s %10s %10s %10s %10s' % ('variant (STE, bayer4)', 'mean dE', 'flicker dE', 'changed %',
-                                            'blur flick', 'p99 flick'))
+    print('%-28s %8s %10s %10s %10s %10s %9s' % ('variant (STE, bayer4)', 'mean dE', 'flicker dE', 'changed %',
+                                                 'blur flick', 'p99 flick', 'new pens'))
     for name, v in stats.items():
         a = np.array(v)
-        print('%-28s %8.2f %10.3f %10.2f %10.3f %10.3f' % (name, a[:, 0].mean(), a[:, 1].mean(), 100 * a[:, 2].mean(),
-                                                     a[:, 3].mean(), a[:, 4].mean()))
+        tr = trackers[name]
+        new = '%8.0f%%' % (100 * tr.changes / len(files)) if tr else '%9s' % '-'
+        print('%-28s %8.2f %10.3f %10.2f %10.3f %10.3f %s' % (name, a[:, 0].mean(), a[:, 1].mean(), 100 * a[:, 2].mean(),
+                                                        a[:, 3].mean(), a[:, 4].mean(), new))
 
 
 def main():

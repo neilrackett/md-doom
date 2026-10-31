@@ -98,7 +98,7 @@ available, because this renderer cannot draw a narrower view.
 Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
 Colour palettes: STDOOM (default), adaptive, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
 
-The adaptive palette picks the 16 colours for each frame from what is on screen. Dark corridors get dark shades and brown rooms get browns, so there is less dither and less colour cast than with a fixed palette.
+The adaptive palette picks the 16 colours for each frame from what is on screen. Dark corridors get dark shades and brown rooms get browns, so there is less dither and less colour cast than with a fixed palette. On an STE (or any ST with DMA sound) the status bar gets 16 colours of its own as well, switched in part-way down the screen.
 
 ### Mono monitors
 

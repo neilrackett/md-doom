@@ -159,7 +159,7 @@ The number of lines copied by `FBDRV_INLINE` is parameterized by `FB_COPY_LINES`
 replacing TOS's handlers so the m68k VBL blit runs interrupt-free apart from
 the two IRQs the app actually needs:
 
-1. **m68k boot stubs 4 IRQ vectors** — HBL (`$68`), Timer-A (`$134`), Timer-C (`$114`) and Timer-D (`$110`) all point at a 1-instruction `userfw_dummy_irq` (just `rte`). MFP Timer A/C/D are disabled+masked at IERA/IERB so they never fire; HBL is masked by SR=$2300. Timer-B (`$120`) is owned by the YM audio path; it is left idle when STE DMA sound is in use. On a DMA-sound machine Timer-A is then claimed by `userfw_snd_irq` (event-count mode, one event per DMA frame end; see the audio pipeline).
+1. **m68k boot stubs 4 IRQ vectors** — HBL (`$68`), Timer-A (`$134`), Timer-C (`$114`) and Timer-D (`$110`) all point at a 1-instruction `userfw_dummy_irq` (just `rte`). MFP Timer A/C/D are disabled+masked at IERA/IERB so they never fire; HBL is masked by SR=$2300. Timer-B (`$120`) is owned by the YM audio path; when STE DMA sound is in use it is the status bar's palette split instead (`userfw_hud_irq`, event-count mode, armed per frame; see "Video"). On a DMA-sound machine Timer-A is then claimed by `userfw_snd_irq` (event-count mode, one event per DMA frame end; see the audio pipeline).
 2. **The ACIA vector (`$118`) gets a real handler**, `userfw_acia_irq`, enabled at IERB/IMRB bit 6. It reads each IKBD byte the instant it arrives and forwards it to the RP with a cart-bus read at `IKBD_WINDOW_BASE + byte` (`$FB8200..$FB82FF`). Interrupt-driven rather than polled: the MC6850 has a one-byte receive buffer, and polling drops bytes, which desynchronises the multi-byte joystick packets. The MIDI ACIA shares the same MFP interrupt, so the handler drains it too. MFP is in auto-EOI mode, so the handler needs no in-service acknowledge; it saves only D0/A1, which makes it safe to fire in the middle of `FBDRV_INLINE`.
 3. **m68k boot sends the IKBD nothing at all** — and must not: its default state, which TOS leaves alone, already reports relative mouse packets (`$F8`..`$FB` + signed dx, dy) *and* joystick 1 events (`$FE`/`$FF`) alongside the keyboard scancodes. The 6301 treats the two auto-report modes as one setting, so selecting joystick event reporting (`$14`) switches the mouse off, and `$12` — what this used to send, before the demux could frame mouse packets — switches it off outright. Y is at its default `Y=0 at top`, so positive `dy` is towards the user. md-sidepad's `sidepong` example drives two paddles from a mouse and a joystick the same way.
 3b. **The m68k heartbeats once per VBL** at `RELOC_WINDOW_BASE + protocol` (`$FB8E00`), from the display loop and therefore only ever from the relocated copy in ST RAM. One read carries three facts: this firmware relocated itself, so the cartridge code area can be reclaimed; the ST is still alive; and which protocol version to expect. `emul_start` blocks on the first one (`fb_wait_st_reloc`, 15 s) straight after `commemul_init` and before anything could write into that area, and logs which branch it took — a boot without the signal (no ST, older image, Shift held for the desktop) simply runs without the reclaim. This is the only point at which the RP can know the ST exists: `fb_wait_blit_ack` times out rather than blocking.
@@ -198,7 +198,7 @@ The Atari ST sees a 64 KB window at `$FA0000`–`$FAFFFF` (mirrored RP-side at `
 | `$FA4000` | `CMD_MAGIC_SENTINEL_ADDR` | 4 B | RP→m68k command word (`CMD_NOP`, `CMD_RESET`, `CMD_BOOT_GEM`, `CMD_START`). |
 | `$FA4004` | (reserved) | 8 B | Former handshake slots; unused. |
 | `$FA400C` | `FB_FRAME_COUNTER_ADDR` | 4 B | RP-incremented dirty-frame counter; `userfw.s` only blits when this changes. |
-| `$FA4010` | `SHARED_VARIABLES` | 240 B | 60 × 4 B indexed slots. Slot 0 is the skip-autostart word, slot 1 hands the YM to the music without DMA sound (`CART_YM_MUSIC_OFFSET`). **Slots 12–19 are the palette below — not free.** |
+| `$FA4010` | `SHARED_VARIABLES` | 240 B | 60 × 4 B indexed slots. Slot 0 is the skip-autostart word, slot 1 hands the YM to the music without DMA sound (`CART_YM_MUSIC_OFFSET`), slot 2 says the frame has a status-bar palette (`CART_SPLIT_OFFSET`). **Slots 12–19 are the palette below and 20–27 (`$FA4060`, `CART_HUD_PALETTE_OFFSET`) the status bar's — not free.** |
 | `$FA4040` | `PALETTE` (`CART_PALETTE_OFFSET`) | 32 B | 16 ST colour words (`0000.0RRR.0GGG.0BBB`, STE low bit in bit 3 of each nibble). The m68k latches them into `UFW_PAL_LATCH` ($77F20) as it starts each copy and applies the latch to `$FFFF8240..$FFFF825E` at the next VBL, with the page; `doom_video.c` writes them via `palette_set()` in the publish window only. |
 | `$FA4100` | `AUDIO_BUFFER_ADDR` | 1024 B | Audio buffer, refilled by the RP once per VBL in whichever format the detected back-end wants. Its last 32 bytes (`$FA44E0`, `CART_YM_PACKET_OFFSET`) are the YM music registers. |
 | `$FA4500` | `APP_FREE_ADDR` | ~15.5 KB | Contiguous arena, ends at FRAMEBUFFER. The ST never reads it, so the `CART_APP_FREE` linker region overlays it and RP-side buffers are parked there (`__cart_app_free`) — see "Memory layout". |
@@ -376,19 +376,39 @@ frame: a histogram of the frame's PLAYPAL indices (every other pixel of
 every other row), weighted k-means in 2:4:3 weighted RGB starting from the
 last frame's centres (two steps a frame, eight from scratch), each centre
 snapped to the chip's levels (16 a channel, or 8 without DMA sound, i.e. a
-plain ST) with hysteresis so a still picture settles. Pen 0 is held black:
-it is the border colour. Offline (`tools/bandpal.py`, below) it cuts the
-S-CIELAB error against the 256-colour original from 7.8 to 3.4 on an STE
-(7.5 to 6.4 on an ST). Into a melt the pens the old picture uses keep
-their colours and the rest are chosen for the new frame. **The palette
+plain ST) with hysteresis so a still picture settles, and a new set only taken if
+it serves the histogram ~6% better than the one on screen (`ADAPT_GATE`:
+offline, pens changed on 22% of frames without it and 7% with it, for 2%
+more error). Pen 0 is held black: it is the border colour. Offline
+(`tools/bandpal.py`, below) it cuts the S-CIELAB error against the
+256-colour original from 7.8 to 3.4 on an STE (7.5 to 6.4 on an ST).
+**With DMA sound the status bar gets its own palette** (`s_hud`), as
+the view's moving pens otherwise make it shimmer (offline 3.4 → 2.9 as
+well): rows 168..199 are drawn nearest-pen through a 256-byte table
+(`s_hud_pen`, sharing the c2p block code), and `userfw_hud_irq`, Timer-B
+in event-count mode armed each VBL for 167 lines, loads the 16 colours
+into registers, spins on the video address counter (`$FF8207`) until the
+shifter has fetched row 167, and writes them with one MOVEM in the
+horizontal blank (~190 cycles). Hatari shows the split exactly between
+rows 167 and 168; `HUD_SPLIT_NOPS` is the knob if real hardware shows
+the last pixels of row 167 changing. The ST has no spare timer for it
+(Timer-B is the YM's sample clock), so there the bar shares the view's
+palette. Into a melt the view pens the old picture uses keep their
+colours and the rest are chosen for the new frame; the split is off for
+the melt, and the old bar is remapped in place to the melt's pens at the
+first step (`remap_bar`). **The palette
 travels with its frame**: the RP writes the cart slot only in the
 publish window (`publish_begin`), never from `rebuild()`, and `userfw.s`
 latches the slot into `UFW_PAL_LATCH` as it starts copying a frame and
 applies the latch at the next VBL, when that page goes on screen (it
-used to apply the slot straight away, a frame early). A publish whose
+used to apply the slot straight away, a frame early); the status bar's
+palette and split flag are latched the same way (`UFW_HUD_NEXT` →
+`UFW_HUD_SHOW`, $77F40..$77F85). A publish whose
 palette words changed waits for a fresh ack (`fb_wait_next_blit_ack`);
 see "Direct c2p tearing" for why. The debug line's `pal syncs` counts
-them, ~10 in 64 frames while moving. Dither modes:
+them: 1 to 11 in 64 frames while moving in Hatari, none standing still.
+The adaptive state costs ~1.2 KB of RAM (the histogram, two palettes'
+state, the bar's table) plus ~0.5 KB more RAM-resident c2p code. Dither modes:
 nearest, 2×2 Bayer, 4×4 Bayer (default), 4×4 clustered-dot, and blue noise
 (md-mjpeg's 32×32 void-and-cluster tile, `bluenoise.h`, regenerated by
 `tools/gen_bluenoise.py`; it cannot be a per-cell LUT so it takes a

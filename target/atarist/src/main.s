@@ -1,5 +1,6 @@
 ; Firmware loader from cartridge
 ; (C) 2023-2025 by Diego Parrilla
+; Copyright (C) 2026 Neil Rackett
 ; License: GPL v3
 
 ; Some technical info about the header format https://www.atari-forum.com/viewtopic.php?t=14086
@@ -38,10 +39,14 @@ ROM4_ADDR			equ $FA0000
 ;   $FA4008  RANDOM_TOKEN_SEED_ADDR	4 B  (legacy; as above)
 ;   $FA400C  FB_FRAME_COUNTER_ADDR	4 B
 ;   $FA4010  SHARED_VARIABLES		240 B (60 x 4-byte slots. Slots 12..19
-;					      hold PALETTE_ADDR below; the other
-;					      52 slots are app-free.)
+;					      hold PALETTE_ADDR below and 20..27
+;					      the status bar's; slots 0..2 are
+;					      flags (userfw.s); the rest are
+;					      app-free.)
 ;   $FA4040    PALETTE_ADDR		32 B  (slots 12..19; 16 ST colour words
 ;					      applied to $FFFF8240.. each VBL)
+;   $FA4060    HUD_PALETTE_ADDR	32 B  (slots 20..27; the status bar's,
+;					      from line 168 when slot 2 says so)
 ;   $FA4100  AUDIO_BUFFER_ADDR	      1024 B  (Timer-B (vA,vB) YM volume pairs)
 ;   $FA4500  APP_FREE_ADDR	      15872 B (~15.5 KB arena, ends at FRAMEBUFFER)
 ;   $FA8300  FRAMEBUFFER_ADDR	      32000 B (320x200 4bpp, flush at top)

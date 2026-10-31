@@ -405,9 +405,16 @@ static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
  * sixteenths of a level past the halfway mark. A still picture settles
  * and stays put.
  *
- * Pen 0 stays black: it is also the colour of the border all round the
- * picture, which must not change with the frame, and Doom always has
- * black on screen anyway.
+ * With DMA sound, Timer-B is free and the status bar gets a palette of
+ * its own (the "split", see CART_SPLIT_OFFSET): the view's pens move
+ * with the view, and the bar, sharing them, would shimmer. Its rows are
+ * drawn nearest-pen through s_hud_pen, as 16 pens chosen for a few
+ * dozen flat colours leave nothing worth dithering, and a second 4 KB
+ * LUT is more RAM than the bar deserves.
+ *
+ * Pen 0 stays black in both: it is also the colour of the border all
+ * round the picture, which must not change with the frame, and Doom
+ * always has black on screen anyway.
  *
  * Distances are 2 dR^2 + 4 dG^2 + 3 dB^2, which the offline test found
  * as good as CIELAB here at a fraction of the cost. Centres are kept in
@@ -417,18 +424,31 @@ static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
 #define ADAPT_ITERS 2      /* k-means steps a frame, from the last frame's */
 #define ADAPT_COLD_ITERS 8 /* from scratch, or into a melt                 */
 #define ADAPT_STICKY 5     /* sixteenths of a level past halfway to move   */
+#define ADAPT_BLACK 1u     /* pen 0, never moved                           */
+#define SPLIT_ROW CART_SPLIT_LINE
 
-static bool s_lut_dirty;     /* the page changed under the adaptive pens  */
-static uint16_t s_hist[256]; /* the last frame's histogram                */
-static int16_t s_cen[16][3]; /* centres, RGB in sixteenths                */
-static uint8_t s_lvl[16][3]; /* the level each channel is snapped to      */
-static uint8_t s_lvl_max;    /* 15 (STE) or 7 (ST); 0 = nothing chosen yet */
-static uint16_t s_frozen;    /* pens k-means may not move (for the melt)  */
-#define ADAPT_BLACK 1u       /* pen 0, never moved                        */
+/* One palette's worth: the view's, and with the split the bar's. */
+typedef struct {
+  int16_t cen[16][3]; /* centres, RGB in sixteenths                   */
+  uint8_t lvl[16][3]; /* the level each channel is snapped to         */
+  uint8_t lvl_max;    /* 15 (STE) or 7 (ST); 0 = nothing chosen yet    */
+  uint8_t rgb[16][3]; /* the pens as the shifter shows them           */
+  uint16_t st[16];    /* and as palette words                         */
+} adapt_t;
 
-static void adapt_histogram(void) {
+static adapt_t s_view, s_hud;
+static uint16_t s_hist[256];  /* one region's histogram at a time         */
+static bool s_lut_dirty;      /* the page changed under the view's pens   */
+static bool s_hud_dirty;      /* or under the bar's                       */
+static uint16_t s_frozen;     /* view pens k-means may not move (a melt)  */
+static uint16_t s_view_used;  /* view pens the last frame used            */
+static bool s_status_bar;     /* the game says the bar is on screen       */
+static bool s_split;          /* and this frame has its own palette for it */
+static uint8_t s_hud_pen[256]; /* PLAYPAL index -> the bar's nearest pen   */
+
+static void adapt_histogram(unsigned y0, unsigned y1) {
   memset(s_hist, 0, sizeof(s_hist));
-  for (unsigned y = 0; y < FB_CHUNKED_H; y += 2u) {
+  for (unsigned y = y0; y < y1; y += 2u) {
     const uint8_t *p = fb_chunked_buffer + y * FB_CHUNKED_W + ((y >> 1) & 1u);
     for (unsigned x = 0; x < FB_CHUNKED_W; x += 2u) s_hist[p[x]]++;
   }
@@ -444,7 +464,7 @@ static int32_t adapt_dist(const int16_t *c, const uint8_t *rgb) {
 /* Put each centre not in `live` on the colour the live ones serve
  * worst, weighted by how much of the screen it covers, one at a time:
  * with none live it is a farthest-point start from the commonest. */
-static void adapt_reseed(uint16_t live) {
+static void adapt_reseed(adapt_t *a, uint16_t live) {
   for (unsigned k = 0; k < 16u; k++) {
     if (live & (1u << k)) continue;
     uint64_t best = 0;
@@ -454,7 +474,7 @@ static void adapt_reseed(uint16_t live) {
       uint32_t d = live ? UINT32_MAX : 1u;
       for (unsigned j = 0; j < 16u; j++) {
         if (!(live & (1u << j))) continue;
-        const uint32_t dj = (uint32_t)adapt_dist(s_cen[j], &s_playpal[i * 3u]);
+        const uint32_t dj = (uint32_t)adapt_dist(a->cen[j], &s_playpal[i * 3u]);
         if (dj < d) d = dj;
       }
       const uint64_t score = (uint64_t)d * s_hist[i];
@@ -464,14 +484,14 @@ static void adapt_reseed(uint16_t live) {
       }
     }
     if (bi < 0) return; /* nothing on screen */
-    for (unsigned ch = 0; ch < 3u; ch++) s_cen[k][ch] = (int16_t)(s_playpal[bi * 3 + (int)ch] << 4);
+    for (unsigned ch = 0; ch < 3u; ch++) a->cen[k][ch] = (int16_t)(s_playpal[bi * 3 + (int)ch] << 4);
     live |= (uint16_t)(1u << k);
   }
 }
 
 /* One k-means step over the histogram. Frozen centres take colours but
  * do not move; a centre left with none is re-seeded. */
-static void adapt_step(void) {
+static void adapt_step(adapt_t *a, uint16_t frozen) {
   int32_t sum[16][3];
   uint32_t cnt[16];
   memset(sum, 0, sizeof(sum));
@@ -483,7 +503,7 @@ static void adapt_step(void) {
     int32_t best = INT32_MAX;
     unsigned bk = 0;
     for (unsigned k = 0; k < 16u; k++) {
-      const int32_t d = adapt_dist(s_cen[k], c);
+      const int32_t d = adapt_dist(a->cen[k], c);
       if (d < best) {
         best = d;
         bk = k;
@@ -492,76 +512,126 @@ static void adapt_step(void) {
     for (unsigned ch = 0; ch < 3u; ch++) sum[bk][ch] += (int32_t)(w * c[ch]);
     cnt[bk] += w;
   }
-  const uint16_t frozen = s_frozen | ADAPT_BLACK;
   uint16_t live = frozen;
   for (unsigned k = 0; k < 16u; k++) {
     if (!cnt[k]) continue;
     live |= (uint16_t)(1u << k);
     if (frozen & (1u << k)) continue;
     for (unsigned ch = 0; ch < 3u; ch++) {
-      s_cen[k][ch] = (int16_t)((sum[k][ch] * 16 + (int32_t)(cnt[k] / 2u)) / (int32_t)cnt[k]);
+      a->cen[k][ch] = (int16_t)((sum[k][ch] * 16 + (int32_t)(cnt[k] / 2u)) / (int32_t)cnt[k]);
     }
   }
-  if (live != 0xFFFFu) adapt_reseed(live);
+  if (live != 0xFFFFu) adapt_reseed(a, live);
 }
 
-/* Snap the centres to levels, with hysteresis, and install them as the
- * pens. Frozen pens keep theirs. True if any pen changed. */
-static bool adapt_snap(void) {
-  const uint8_t max = (audio_get_mode() == AUDIO_MODE_YM) ? 7u : 15u;
-  const bool warm = (s_lvl_max == max);
-  bool changed = !warm;
-  s_lvl_max = max;
+/* Level -> displayed channel value / palette nibble, for 15 or 7 levels. */
+static uint8_t level_value(unsigned l, unsigned max) {
+  return (uint8_t)(max == 15u ? l * 17u : (l * 255u + 3u) / 7u);
+}
+
+/* How badly pens with these levels serve the histogram: each colour's
+ * distance to its nearest pen, weighted by its count. */
+static uint64_t adapt_error(const uint8_t lvl[16][3], unsigned max) {
+  int16_t pen[16][3];
   for (unsigned k = 0; k < 16u; k++) {
-    if ((s_frozen | ADAPT_BLACK) & (1u << k)) continue;
+    for (unsigned ch = 0; ch < 3u; ch++) pen[k][ch] = (int16_t)(level_value(lvl[k][ch], max) << 4);
+  }
+  uint64_t err = 0;
+  for (unsigned i = 0; i < 256u; i++) {
+    if (!s_hist[i]) continue;
+    int32_t best = INT32_MAX;
+    for (unsigned k = 0; k < 16u; k++) {
+      const int32_t d = adapt_dist(pen[k], &s_playpal[i * 3u]);
+      if (d < best) best = d;
+    }
+    err += (uint64_t)best * s_hist[i];
+  }
+  return err;
+}
+
+/* Snap the centres to levels, with hysteresis, and fill in the pens.
+ * Frozen pens keep theirs. A new set is only taken if it serves the
+ * histogram ADAPT_GATE better than the one on screen: every change of
+ * palette makes the publish wait for a fresh ack, and offline (on a
+ * run through E1M1) this cut the changes from 22% of frames to 7% for
+ * an error 2% higher. True if any pen changed. */
+#define ADAPT_GATE 16 /* in sixteenths: 15/16 of the error, ~6% better */
+
+static bool adapt_snap(adapt_t *a, uint16_t frozen) {
+  const uint8_t max = (audio_get_mode() == AUDIO_MODE_YM) ? 7u : 15u;
+  const bool warm = (a->lvl_max == max);
+  uint8_t lvl[16][3];
+  memcpy(lvl, a->lvl, sizeof(lvl));
+  for (unsigned k = 0; k < 16u; k++) {
+    if (frozen & (1u << k)) continue;
     for (unsigned ch = 0; ch < 3u; ch++) {
-      const int32_t pos = ((int32_t)s_cen[k][ch] * max + 127) / 255; /* sixteenths */
-      int32_t lvl = (pos + 8) >> 4;
+      const int32_t pos = ((int32_t)a->cen[k][ch] * max + 127) / 255; /* sixteenths */
+      int32_t l = (pos + 8) >> 4;
       if (warm) {
-        const int32_t off = pos - ((int32_t)s_lvl[k][ch] << 4);
-        if (off > -(8 + ADAPT_STICKY) && off < 8 + ADAPT_STICKY) lvl = s_lvl[k][ch];
+        const int32_t off = pos - ((int32_t)a->lvl[k][ch] << 4);
+        if (off > -(8 + ADAPT_STICKY) && off < 8 + ADAPT_STICKY) l = a->lvl[k][ch];
       }
-      if (lvl < 0) lvl = 0;
-      if (lvl > max) lvl = max;
-      if (lvl != s_lvl[k][ch]) {
-        s_lvl[k][ch] = (uint8_t)lvl;
-        changed = true;
-      }
+      if (l < 0) l = 0;
+      if (l > max) l = max;
+      lvl[k][ch] = (uint8_t)l;
     }
   }
-  if (!changed) return false;
-  s_ref_count = 16;
+  if (warm) {
+    if (!memcmp(lvl, a->lvl, sizeof(lvl))) return false;
+    if (!(frozen & ~ADAPT_BLACK) &&
+        adapt_error(lvl, max) * ADAPT_GATE >= adapt_error(a->lvl, max) * (ADAPT_GATE - 1)) {
+      return false;
+    }
+  }
+  a->lvl_max = max;
+  memcpy(a->lvl, lvl, sizeof(lvl));
   for (unsigned k = 0; k < 16u; k++) {
     uint16_t w = 0;
     for (unsigned ch = 0; ch < 3u; ch++) {
-      const unsigned l = s_lvl[k][ch];
+      const unsigned l = a->lvl[k][ch];
       /* An STE level's lowest bit is the nibble's bit 3 (channel_nibble). */
       w = (uint16_t)((w << 4) | (max == 15u ? ((l >> 1) | ((l & 1u) << 3)) : l));
-      s_ref_rgb[k][ch] = (uint8_t)(max == 15u ? l * 17u : (l * 255u + 3u) / 7u);
+      a->rgb[k][ch] = level_value(l, max);
     }
-    s_st_colors[k] = w;
+    a->st[k] = w;
   }
   return true;
 }
 
-/* From scratch: black, and a farthest-point start for the rest (all
- * but the frozen ones). */
-static void adapt_cold(void) {
-  memset(s_cen[0], 0, sizeof(s_cen[0]));
-  memset(s_lvl[0], 0, sizeof(s_lvl[0]));
-  adapt_reseed(s_frozen | ADAPT_BLACK);
+/* The pens for rows [y0, y1). True if they changed. Nothing chosen yet
+ * means from scratch: black, then a farthest-point start for the rest. */
+static bool adapt_update(adapt_t *a, unsigned y0, unsigned y1, uint16_t frozen, int iters) {
+  frozen |= ADAPT_BLACK;
+  adapt_histogram(y0, y1);
+  if (!a->lvl_max) {
+    memset(a->cen[0], 0, sizeof(a->cen[0]));
+    memset(a->lvl[0], 0, sizeof(a->lvl[0]));
+    adapt_reseed(a, frozen);
+    iters = ADAPT_COLD_ITERS;
+  }
+  while (iters-- > 0) adapt_step(a, frozen);
+  return adapt_snap(a, frozen);
 }
 
-/* This frame's pens. True if the LUT has to be rebuilt for them. */
-static bool adapt_update(void) {
-  adapt_histogram();
-  if (!s_lvl_max) {
-    adapt_cold();
-    for (int i = 0; i < ADAPT_COLD_ITERS; i++) adapt_step();
-  } else {
-    for (int i = 0; i < ADAPT_ITERS; i++) adapt_step();
+/* The view's pens are the reducer's references. */
+static void adapt_install_view(void) {
+  s_ref_count = 16;
+  memcpy(s_ref_rgb, s_view.rgb, sizeof(s_ref_rgb));
+  memcpy(s_st_colors, s_view.st, sizeof(s_st_colors));
+}
+
+static void build_hud_pens(void) {
+  for (unsigned i = 0; i < 256u; i++) {
+    const uint8_t *c = &s_playpal[i * 3u];
+    long best = 0x7FFFFFFFL;
+    for (unsigned k = 0; k < 16u; k++) {
+      const long d = color_dist(c[0], c[1], c[2], s_hud.rgb[k][0], s_hud.rgb[k][1], s_hud.rgb[k][2]);
+      if (d < best) {
+        best = d;
+        s_hud_pen[i] = (uint8_t)k;
+      }
+    }
   }
-  return adapt_snap();
 }
 
 /* ------------------------------------------------------------------ */
@@ -721,7 +791,7 @@ static void rebuild(void) {
     return;
   }
   if (s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
-    s_lut_dirty = true; /* the pens come from the frame: built at the publish */
+    s_lut_dirty = s_hud_dirty = true; /* the pens come from the frame: built at the publish */
     return;
   }
   build_refs();
@@ -747,7 +817,7 @@ void doom_video_set_playpal(const uint8_t *rgb768) {
 void doom_video_set_palette_mode(doom_video_palette_t mode) {
   if (mode >= DOOM_VIDEO_PAL_COUNT) return;
   s_pal_mode = mode;
-  s_lvl_max = 0; /* adaptive: start from scratch */
+  s_view.lvl_max = s_hud.lvl_max = 0; /* adaptive: start from scratch */
   s_frozen = 0;
   rebuild();
 }
@@ -772,6 +842,8 @@ doom_video_palette_t doom_video_next_palette(doom_video_palette_t mode) {
 }
 
 doom_video_dither_t doom_video_get_dither(void) { return s_dither; }
+
+void doom_video_set_status_bar(bool shown) { s_status_bar = shown; }
 
 const char *doom_video_palette_name(doom_video_palette_t mode) {
   switch (mode) {
@@ -820,12 +892,23 @@ const uint16_t *doom_video_st_palette(void) { return s_st_colors; }
  * layout fb_c2p_half emits. */
 static uint8_t *s_cart_fb;
 
+static unsigned s_split_pix = ~0u; /* first pixel of the bar's rows, latched per frame */
+
+/* `pix` is the block's first pixel. The status bar's rows, with the
+ * split, go through its nearest-pen table instead: the same table for
+ * every cell, and no dither. */
 static inline void __not_in_flash_func(doom_c2p_block)(uint32_t *dst, const uint8_t *src,
-                                                       unsigned y) {
-  const uint8_t *l0 = s_lut.pen[((y & 3u) << 2) | 0u];
-  const uint8_t *l1 = s_lut.pen[((y & 3u) << 2) | 1u];
-  const uint8_t *l2 = s_lut.pen[((y & 3u) << 2) | 2u];
-  const uint8_t *l3 = s_lut.pen[((y & 3u) << 2) | 3u];
+                                                       unsigned pix) {
+  const uint8_t *l0, *l1, *l2, *l3;
+  if (pix >= s_split_pix) {
+    l0 = l1 = l2 = l3 = s_hud_pen;
+  } else {
+    const unsigned y = pix / FB_CHUNKED_W;
+    l0 = s_lut.pen[((y & 3u) << 2) | 0u];
+    l1 = s_lut.pen[((y & 3u) << 2) | 1u];
+    l2 = s_lut.pen[((y & 3u) << 2) | 2u];
+    l3 = s_lut.pen[((y & 3u) << 2) | 3u];
+  }
   uint32_t p01 = 0, p23 = 0; /* (plane1 << 16) | plane0, (plane3 << 16) | plane2 */
   for (unsigned g = 0; g < 4u; g++) {
     uint32_t q = (uint32_t)l0[src[0]] | ((uint32_t)l1[src[1]] << 8) |
@@ -873,8 +956,10 @@ static inline void __not_in_flash_func(doom_c2p_block_bn)(uint32_t *dst, const u
 
 static bool s_use_bn; /* latched per frame from s_dither */
 
-static uint16_t s_published[16]; /* the words last written to the cart slot */
-static uint32_t s_pal_syncs;     /* debug: publishes that waited for that  */
+/* The palette words last written to the cart slots: the view's, the
+ * bar's, and the split flag. */
+static uint16_t s_published[2 * 16 + 1];
+static uint32_t s_pal_syncs; /* debug: publishes that waited for a fresh ack */
 
 /* Wait for the m68k's blit ack and send the palette, if it changed.
  * fb_wait_blit_ack takes any ack since the last publish, so a frame
@@ -885,22 +970,33 @@ static uint32_t s_pal_syncs;     /* debug: publishes that waited for that  */
  * colours. So a new palette waits for the next ack, which costs up to
  * a VBL, and goes out with its pixels in the window that follows. */
 static void publish_begin(void) {
-  if (s_mono || !memcmp(s_published, s_st_colors, sizeof(s_published))) {
+  uint16_t words[2 * 16 + 1];
+  memcpy(words, s_st_colors, 32);
+  if (s_split) {
+    memcpy(&words[16], s_hud.st, 32);
+  } else {
+    memset(&words[16], 0, 32);
+  }
+  words[32] = s_split;
+  if (s_mono || !memcmp(s_published, words, sizeof(words))) {
     fb_wait_blit_ack();
     return;
   }
   fb_wait_next_blit_ack();
+  uint8_t *cart = (uint8_t *)fb_screen.framebuffer - CART_FRAMEBUFFER_OFFSET;
   palette_set(s_st_colors);
-  memcpy(s_published, s_st_colors, sizeof(s_published));
+  memcpy(cart + CART_HUD_PALETTE_OFFSET, &words[16], 32);
+  *(volatile uint16_t *)(cart + CART_SPLIT_OFFSET) = words[32];
+  memcpy(s_published, words, sizeof(words));
   s_pal_syncs++;
 }
 
 static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const uint8_t *src,
                                                            unsigned pix) {
-  if (s_use_bn) {
+  if (s_use_bn && pix < s_split_pix) {
     doom_c2p_block_bn(dst, src, pix % FB_CHUNKED_W, pix / FB_CHUNKED_W);
   } else {
-    doom_c2p_block(dst, src, pix / FB_CHUNKED_W);
+    doom_c2p_block(dst, src, pix);
   }
 }
 
@@ -1004,11 +1100,28 @@ void doom_video_publish(void) {
   s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
 
   /* The adaptive pens are this frame's: chosen before the wait, in the
-   * game's time rather than the m68k's slack. */
+   * game's time rather than the m68k's slack. With the split the view
+   * and the bar each get their own. */
+  s_split = false;
   if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
-    if (adapt_update() || s_lut_dirty) build_lut();
-    s_lut_dirty = false;
+    s_split = s_status_bar && audio_get_mode() == AUDIO_MODE_DMA;
+    const unsigned view_h = s_split ? SPLIT_ROW : FB_CHUNKED_H;
+    if (adapt_update(&s_view, 0u, view_h, 0u, ADAPT_ITERS) || s_lut_dirty) {
+      adapt_install_view();
+      build_lut();
+      s_lut_dirty = false;
+    }
+    /* What the melt will need to keep, should this frame be melted. */
+    s_view_used = ADAPT_BLACK;
+    for (unsigned i = 0; i < 256u; i++) {
+      if (s_hist[i]) s_view_used |= (uint16_t)((1u << (s_pair[i] & 15u)) | (1u << ((s_pair[i] >> 4) & 15u)));
+    }
+    if (s_split && (adapt_update(&s_hud, SPLIT_ROW, FB_CHUNKED_H, 0u, ADAPT_ITERS) || s_hud_dirty)) {
+      build_hud_pens();
+      s_hud_dirty = false;
+    }
   }
+  s_split_pix = s_split ? SPLIT_ROW * FB_CHUNKED_W : ~0u;
 
   /* The cart FB is written in place, so only in the m68k's post-blit
    * slack: wait for its ack, convert on both cores, mark ready. The
@@ -1327,6 +1440,28 @@ static void wipe_compose_mono(unsigned g0, unsigned g1) {
   }
 }
 
+/* The old frame's status bar, drawn in the bar's own pens, into the
+ * melt's: every pixel of rows SPLIT_ROW..199 through s_remap, in place.
+ * Once, in the first step's window, with the palette that needs it. */
+static uint8_t s_remap[16];
+static bool s_melt_remap;
+
+static void remap_bar(void) {
+  for (unsigned y = SPLIT_ROW; y < FB_CHUNKED_H; y++) {
+    for (unsigned g = 0; g < FB_CHUNKED_W / 16u; g++) {
+      uint16_t *w = (uint16_t *)(s_cart_fb + wipe_cart_off(y, g)); /* planes 0..3 */
+      uint16_t out[4] = {0, 0, 0, 0};
+      for (unsigned bit = 0; bit < 16u; bit++) {
+        unsigned pen = 0;
+        for (unsigned pl = 0; pl < 4u; pl++) pen |= ((w[pl] >> bit) & 1u) << pl;
+        pen = s_remap[pen];
+        for (unsigned pl = 0; pl < 4u; pl++) out[pl] |= (uint16_t)(((pen >> pl) & 1u) << bit);
+      }
+      memcpy(w, out, sizeof(out));
+    }
+  }
+}
+
 static void __not_in_flash_func(wipe_right_job)(void *arg) {
   (void)arg;
   if (s_mono) {
@@ -1337,29 +1472,40 @@ static void __not_in_flash_func(wipe_right_job)(void *arg) {
 }
 
 void doom_video_wipe_begin(void) {
-  /* One palette serves both pictures. The old one is in the cart FB as
-   * pens, so with the adaptive source the pens it uses (by the last
-   * frame's histogram) keep their colours for the melt, and the others
-   * are chosen for the new frame. With all 16 in use the new frame is
-   * drawn in the old one's; the next frame after the melt chooses its
-   * own. */
+  /* One palette serves both pictures, and the whole screen. The old
+   * one is in the cart FB as pens, so with the adaptive source the view
+   * pens it uses keep their colours for the melt, and the others are
+   * chosen for the new frame. With all 16 in use the new frame is drawn
+   * in the old one's; the next frame after the melt chooses its own.
+   * If the old frame had the split, its bar is in the bar's pens: each
+   * is mapped to the nearest of the melt's at the first step. */
   if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
-    if (s_lvl_max) {
-      for (unsigned i = 0; i < 256u; i++) {
-        if (s_hist[i]) s_frozen |= (uint16_t)((1u << (s_pair[i] & 15u)) | (1u << ((s_pair[i] >> 4) & 15u)));
-      }
+    if (s_view.lvl_max) {
+      s_frozen = s_view_used;
       for (unsigned k = 0; k < 16u; k++) {
         if (!(s_frozen & (1u << k))) continue;
-        for (unsigned ch = 0; ch < 3u; ch++) s_cen[k][ch] = (int16_t)(s_ref_rgb[k][ch] << 4);
+        for (unsigned ch = 0; ch < 3u; ch++) s_view.cen[k][ch] = (int16_t)(s_view.rgb[k][ch] << 4);
       }
     }
-    adapt_histogram();
-    if (!s_lvl_max) adapt_cold();
-    for (int i = 0; i < ADAPT_COLD_ITERS; i++) adapt_step();
-    adapt_snap();
+    adapt_update(&s_view, 0u, FB_CHUNKED_H, s_frozen, ADAPT_COLD_ITERS);
+    adapt_install_view();
     build_lut();
     s_lut_dirty = false;
     s_frozen = 0;
+    s_melt_remap = s_split;
+    for (unsigned k = 0; s_split && k < 16u; k++) {
+      long best = 0x7FFFFFFFL;
+      for (unsigned j = 0; j < 16u; j++) {
+        const long d = color_dist(s_hud.rgb[k][0], s_hud.rgb[k][1], s_hud.rgb[k][2],
+                                  s_view.rgb[j][0], s_view.rgb[j][1], s_view.rgb[j][2]);
+        if (d < best) {
+          best = d;
+          s_remap[k] = (uint8_t)j;
+        }
+      }
+    }
+    s_split = false;
+    s_split_pix = ~0u;
   }
 
   s_wipe_rand = time_us_32() | 1u;
@@ -1396,6 +1542,10 @@ bool doom_video_wipe_step(int tics) {
   s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
   publish_begin();
   const uint32_t t0 = time_us_32();
+  if (s_melt_remap) {
+    remap_bar();
+    s_melt_remap = false;
+  }
   fb_core1_dispatch(wipe_right_job, NULL);
   if (s_mono) {
     wipe_compose_mono(0u, 10u);

@@ -203,6 +203,8 @@ void I_MD_PresentFrame(void) {
     next_pal = -1;
   }
 
+  doom_video_set_status_bar(gamestate == GS_LEVEL && viewheight < SCREENHEIGHT);
+
   if (wipe_pending) {
     /* The last published frame melts into this one. Blocks for the
      * 1.2 s or so the melt takes, at Doom's tic rate, as the original
