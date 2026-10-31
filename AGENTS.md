@@ -115,7 +115,7 @@ Build flow (orchestrated by `build.sh`):
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests
-There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. The mono path (`mono_rows`, `mono_block*`, `wipe_compose_mono`) was checked the same way: every output bit of a random frame through a random PLAYPAL for all five dither modes, and every step of a whole melt, against a per-pixel 640×400 reference that simulates the m68k's chunk reversal and the cart bus's word order. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host. Palette work is measured offline: with `MDDOOM_FRAMEDUMP=DIR` the EmuMD build writes Doom's frames as PLAYPAL indices (`emu/framedump.c`), and `tools/bandpal.py` scores palette schemes on them against the original with an S-CIELAB Delta E; its copy of the reducer matches a Hatari screenshot pixel for pixel. The music was checked there by recording a scripted run (`mdfw run --record`) and lining the recording's 20 ms loudness and pitch up against an offline square-wave rendering of the same STM file: the right tempo at 50 and 71 Hz VBLs (the match collapses at ±5%), and the strongest pitch the same in most 0.1 s windows.
+There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. The mono path (`mono_rows`, `mono_block*`, `wipe_compose_mono`) was checked the same way: every output bit of a random frame through a random PLAYPAL for all five dither modes, and every step of a whole melt, against a per-pixel 640×400 reference that simulates the m68k's chunk reversal and the cart bus's word order. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host. Palette work is measured offline: with `MDDOOM_FRAMEDUMP=DIR` the EmuMD build writes Doom's frames as PLAYPAL indices (`emu/framedump.c`), and `tools/bandpal.py` scores palette schemes on them against the original with an S-CIELAB Delta E (its copy of the old reducer matched a Hatari screenshot pixel for pixel); `tools/palsel.py` does the same for the adaptive selector and the pair matching. The music was checked there by recording a scripted run (`mdfw run --record`) and lining the recording's 20 ms loudness and pitch up against an offline square-wave rendering of the same STM file: the right tempo at 50 and 71 Hz VBLs (the match collapses at ±5%), and the strongest pitch the same in most 0.1 s windows.
 
 ### EmuMD: the game in Hatari, on the host
 [EmuMD](https://github.com/neilrackett/emumd) (the `emu/emumd` submodule; its skill is `emu/emumd/skills/emumd/SKILL.md`) builds the firmware's C and C++ for the host as `build/md-doom.mdfw` and runs it in a patched Hatari, with the real m68k cartridge (`target_firmware.h`, so whatever the last hardware build made) on the cartridge port and `emu/sd` as the microSD card. `make emu` runs it in a window (EmuTOS, which `mdfw hatari` downloads, unless `TOS=` names another image; `MONO=1` for a mono monitor; `RECORD=FILE.avi` records it). For a check without one:
@@ -421,9 +421,23 @@ in the app config (`DITHER` / `PALETTE`, `aconfig.c`) and restored at boot.
 key missing from flash reads as its default, so it is 0 on any config
 from before it. CFGVER 1 switched every install to the adaptive palette
 once (`doomgame_start`); a later choice stands.
-A colour is drawn as its nearest
-reference on some cells and its second-nearest on the others, split by where
-it falls on the line between them (`t` in 0..16 against the cell threshold).
+A colour is drawn as a mix of two
+pens, one on some cells and the other on the rest (`t` in 0..16 against
+the cell threshold), and **the pair is chosen by the colour its mix
+really makes** (`best_pair`): the eye averages a dither as light, not as
+0..255 values, so of the pairs among the four nearest pens each gets a
+level from a projection in linear light (and the levels either side),
+the mix is taken back to sRGB (`gamma.h`, from `tools/gen_gamma.py`) and
+compared with the colour by redmean. The old rule (the two nearest pens,
+a projection in sRGB) put every mix between distant pens too light.
+Without a dither it is the nearest pen. The adaptive view's pens are
+then moved to suit mixing (`adapt_refine`, one least-squares pass in
+linear light from the k-means centres, which stay as they were for the
+next frame), and the change gate measures the mixed error too. Offline
+(`tools/palsel.py`, STE, 4×4 Bayer) the view went 2.99 → 2.50 (matching)
+→ 2.28 (refinement); in Hatari, scoring ~920 recorded frames against
+the originals, 3.59 → 2.40. Clustering in OKLab or CIELAB, perceptual
+snapping and count^p weighting were tried and did not help.
 **The melt wipe** (`doom_video_wipe_begin` / `doom_video_wipe_step`) runs
 in place on the cart FB: the last published frame is already there in
 planar form, so it is the picture that melts, and `fb_chunked_buffer`

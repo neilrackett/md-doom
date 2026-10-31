@@ -38,6 +38,7 @@
 
 #include "audio.h"
 #include "bluenoise.h" /* 32x32 threshold tile, 16 levels, in flash */
+#include "gamma.h"     /* sRGB <-> linear light, in flash          */
 #include "cart_shared.h"
 #include "debug.h"
 #include "fb.h"
@@ -113,6 +114,12 @@ static const uint8_t s_pal_pico8[16][3] = {
     {255, 0, 77},    {255, 163, 0},   {255, 236, 39},  {0, 228, 54},
     {41, 173, 255},  {131, 118, 156}, {255, 119, 168}, {255, 204, 170}};
 
+/* Everything from here to the public API runs per palette or per frame,
+ * not per pixel: size matters more than speed (the debug build's flash
+ * ran out at -O3). */
+#pragma GCC push_options
+#pragma GCC optimize("Os")
+
 /* ------------------------------------------------------------------ */
 /* ST colour helpers                                                   */
 
@@ -146,25 +153,73 @@ static long color_dist(int r1, int g1, int b1, int r2, int g2, int b2) {
          (((767 - rmean) * db * db) >> 8);
 }
 
-static void two_nearest_ref(const uint8_t *c, uint8_t *out_a,
-                            uint8_t *out_b) {
-  long best = 0x7FFFFFFFL, best2 = 0x7FFFFFFFL;
-  uint8_t a = 0, b = 0;
-  for (uint8_t k = 0; k < (uint8_t)s_ref_count; k++) {
-    long d = color_dist(c[0], c[1], c[2], s_ref_rgb[k][0], s_ref_rgb[k][1],
-                        s_ref_rgb[k][2]);
-    if (d < best) {
-      best2 = best;
-      b = a;
-      best = d;
-      a = k;
-    } else if (d < best2) {
-      best2 = d;
-      b = k;
+/* The pens to draw colour c with, as s_pair holds them: one pen (bits
+ * 0..3), another (4..7) and the 0..16 mix level (8..12), the second pen
+ * taking the cells whose threshold the level beats.
+ *
+ * A dither is two pens side by side and the eye averages them as light,
+ * not as 0..255 values (half black and half white looks like sRGB 188,
+ * not 128), so a pair is judged by the colour its mix really makes: of
+ * the pairs among the four nearest pens, the level from a projection in
+ * linear light (and the levels either side), the mix taken back to sRGB
+ * and compared with c by redmean; the nearest pen alone is the baseline.
+ * Offline against the original frames (S-CIELAB, STE, 4x4 Bayer) this
+ * took the error from 2.99 to 2.50 against the two nearest pens and a
+ * projection in sRGB, which places every mix between distant pens too
+ * light. Without a dither it is simply the nearest pen. */
+#define PAIR_CANDS 4
+
+static uint16_t best_pair(const uint8_t *c, const uint8_t (*rgb)[3], const uint16_t (*lin)[3],
+                          int n, bool dither) {
+  uint8_t cand[PAIR_CANDS];
+  long cd[PAIR_CANDS];
+  int nc = 0;
+  for (int k = 0; k < n; k++) {
+    const long d = color_dist(c[0], c[1], c[2], rgb[k][0], rgb[k][1], rgb[k][2]);
+    int j = nc < PAIR_CANDS ? nc++ : PAIR_CANDS;
+    while (j > 0 && cd[j - 1] > d) {
+      if (j < PAIR_CANDS) {
+        cd[j] = cd[j - 1];
+        cand[j] = cand[j - 1];
+      }
+      j--;
+    }
+    if (j < PAIR_CANDS) {
+      cd[j] = d;
+      cand[j] = (uint8_t)k;
     }
   }
-  *out_a = a;
-  *out_b = b;
+  unsigned a = cand[0], b = cand[0], t = 0;
+  if (!dither) return (uint16_t)(a | (a << 4));
+  long best = cd[0];
+  const int32_t cl[3] = {gamma_lin[c[0]], gamma_lin[c[1]], gamma_lin[c[2]]};
+  for (int i = 0; i < nc; i++) {
+    for (int j = i + 1; j < nc; j++) {
+      const uint16_t *la = lin[cand[i]], *lb = lin[cand[j]];
+      int32_t v[3], num = 0, den = 0;
+      for (int ch = 0; ch < 3; ch++) {
+        v[ch] = (int32_t)lb[ch] - (int32_t)la[ch];
+        num += (cl[ch] - (int32_t)la[ch]) * v[ch];
+        den += v[ch] * v[ch];
+      }
+      if (den <= 0) continue;
+      int32_t t0 = num <= 0 ? 0 : (num * 16 + den / 2) / den;
+      if (t0 > 16) t0 = 16;
+      for (int32_t tt = t0 - 1; tt <= t0 + 1; tt++) {
+        if (tt < 0 || tt > 16) continue;
+        uint8_t m[3];
+        for (int ch = 0; ch < 3; ch++) m[ch] = gamma_srgb[(la[ch] + (v[ch] * tt) / 16) >> 2];
+        const long e = color_dist(c[0], c[1], c[2], m[0], m[1], m[2]);
+        if (e < best) {
+          best = e;
+          a = cand[i];
+          b = cand[j];
+          t = (unsigned)tt;
+        }
+      }
+    }
+  }
+  return (uint16_t)(a | (b << 4) | (t << 8));
 }
 
 /* ------------------------------------------------------------------ */
@@ -529,24 +584,95 @@ static uint8_t level_value(unsigned l, unsigned max) {
   return (uint8_t)(max == 15u ? l * 17u : (l * 255u + 3u) / 7u);
 }
 
-/* How badly pens with these levels serve the histogram: each colour's
- * distance to its nearest pen, weighted by its count. */
-static uint64_t adapt_error(const uint8_t lvl[16][3], unsigned max) {
-  int16_t pen[16][3];
+/* Pens with these levels, as shown and in linear light. */
+static void level_pens(const uint8_t lvl[16][3], unsigned max, uint8_t rgb[16][3], uint16_t lin[16][3]) {
   for (unsigned k = 0; k < 16u; k++) {
-    for (unsigned ch = 0; ch < 3u; ch++) pen[k][ch] = (int16_t)(level_value(lvl[k][ch], max) << 4);
+    for (unsigned ch = 0; ch < 3u; ch++) {
+      rgb[k][ch] = level_value(lvl[k][ch], max);
+      lin[k][ch] = gamma_lin[rgb[k][ch]];
+    }
   }
+}
+
+/* The colour index i's pair (best_pair) makes, in sRGB. */
+static void pair_mix(uint16_t v, const uint16_t (*lin)[3], uint8_t *m) {
+  const uint16_t *la = lin[v & 15u], *lb = lin[(v >> 4) & 15u];
+  const int32_t t = v >> 8;
+  for (int ch = 0; ch < 3; ch++) {
+    m[ch] = gamma_srgb[(la[ch] + (((int32_t)lb[ch] - (int32_t)la[ch]) * t) / 16) >> 2];
+  }
+}
+
+/* How badly pens with these levels serve the histogram, weighted by
+ * count: each colour's distance to its nearest pen, or with `mix` to
+ * the mix of its best pair, which is how it will be drawn. */
+static uint64_t adapt_error(const uint8_t lvl[16][3], unsigned max, bool mix) {
+  uint8_t rgb[16][3];
+  uint16_t lin[16][3];
+  level_pens(lvl, max, rgb, lin);
   uint64_t err = 0;
   for (unsigned i = 0; i < 256u; i++) {
     if (!s_hist[i]) continue;
-    int32_t best = INT32_MAX;
-    for (unsigned k = 0; k < 16u; k++) {
-      const int32_t d = adapt_dist(pen[k], &s_playpal[i * 3u]);
-      if (d < best) best = d;
-    }
-    err += (uint64_t)best * s_hist[i];
+    const uint8_t *c = &s_playpal[i * 3u];
+    uint8_t m[3];
+    pair_mix(best_pair(c, (const uint8_t(*)[3])rgb, (const uint16_t(*)[3])lin, 16, mix),
+             (const uint16_t(*)[3])lin, m);
+    err += (uint64_t)color_dist(c[0], c[1], c[2], m[0], m[1], m[2]) * s_hist[i];
   }
   return err;
+}
+
+/* k-means puts each pen at the middle of its colours, which is right for
+ * drawing every colour in its nearest pen; drawn in mixes of two, the
+ * pens do better as the ends the mixes are made from. One pass: each
+ * colour takes its best pair and level against the pens as they stand
+ * (the centres, snapped), and each pen moves, in linear light, to the
+ * weighted least-squares best for the mixes it is part of. Offline
+ * (S-CIELAB, STE, 4x4 Bayer) 2.50 -> 2.28; more passes add nothing. The
+ * centres themselves stay as k-means left them, for the next frame. */
+static void adapt_refine(const adapt_t *a, uint16_t frozen, int16_t out[16][3]) {
+  const uint8_t max = (audio_get_mode() == AUDIO_MODE_YM) ? 7u : 15u;
+  uint8_t lvl[16][3], rgb[16][3];
+  uint16_t lin[16][3];
+  for (unsigned k = 0; k < 16u; k++) {
+    for (unsigned ch = 0; ch < 3u; ch++) {
+      const int32_t l = ((int32_t)a->cen[k][ch] * max + 2040) / 4080;
+      lvl[k][ch] = (uint8_t)(l < 0 ? 0 : l > (int32_t)max ? (int32_t)max : l);
+    }
+  }
+  level_pens(lvl, max, rgb, lin);
+  int64_t num[16][3];
+  int64_t den[16];
+  memset(num, 0, sizeof(num));
+  memset(den, 0, sizeof(den));
+  for (unsigned i = 0; i < 256u; i++) {
+    const int64_t w = s_hist[i];
+    if (!w) continue;
+    const uint8_t *c = &s_playpal[i * 3u];
+    const uint16_t v = best_pair(c, (const uint8_t(*)[3])rgb, (const uint16_t(*)[3])lin, 16, true);
+    const unsigned pa = v & 15u, pb = (v >> 4) & 15u;
+    const int64_t t = v >> 8, u = 16 - t;
+    /* c ~ (u A + t B) / 16, each end solved with the other held. */
+    for (int ch = 0; ch < 3; ch++) {
+      const int64_t c16 = 16 * (int64_t)gamma_lin[c[ch]];
+      if (u) num[pa][ch] += w * u * (c16 - t * lin[pb][ch]);
+      if (t) num[pb][ch] += w * t * (c16 - u * lin[pa][ch]);
+    }
+    if (u) den[pa] += w * u * u;
+    if (t) den[pb] += w * t * t;
+  }
+  for (unsigned k = 0; k < 16u; k++) {
+    for (unsigned ch = 0; ch < 3u; ch++) {
+      if ((frozen & (1u << k)) || !den[k]) { /* held, or in no mix */
+        out[k][ch] = a->cen[k][ch];
+        continue;
+      }
+      int64_t l = num[k][ch] / den[k];
+      if (l < 0) l = 0;
+      if (l > 4095) l = 4095;
+      out[k][ch] = (int16_t)(gamma_srgb[l >> 2] << 4);
+    }
+  }
 }
 
 /* Snap the centres to levels, with hysteresis, and fill in the pens.
@@ -557,7 +683,7 @@ static uint64_t adapt_error(const uint8_t lvl[16][3], unsigned max) {
  * higher. True if any pen changed. */
 #define ADAPT_GATE 16 /* in sixteenths: 15/16 of the error, ~6% better */
 
-static bool adapt_snap(adapt_t *a, uint16_t frozen) {
+static bool adapt_snap(adapt_t *a, const int16_t (*cen)[3], uint16_t frozen, bool mix) {
   const uint8_t max = (audio_get_mode() == AUDIO_MODE_YM) ? 7u : 15u;
   const bool warm = (a->lvl_max == max);
   uint8_t lvl[16][3];
@@ -565,7 +691,7 @@ static bool adapt_snap(adapt_t *a, uint16_t frozen) {
   for (unsigned k = 0; k < 16u; k++) {
     if (frozen & (1u << k)) continue;
     for (unsigned ch = 0; ch < 3u; ch++) {
-      const int32_t pos = ((int32_t)a->cen[k][ch] * max + 127) / 255; /* sixteenths */
+      const int32_t pos = ((int32_t)cen[k][ch] * max + 127) / 255; /* sixteenths */
       int32_t l = (pos + 8) >> 4;
       if (warm) {
         const int32_t off = pos - ((int32_t)a->lvl[k][ch] << 4);
@@ -579,7 +705,7 @@ static bool adapt_snap(adapt_t *a, uint16_t frozen) {
   if (warm) {
     if (!memcmp(lvl, a->lvl, sizeof(lvl))) return false;
     if (!(frozen & ~ADAPT_BLACK) &&
-        adapt_error(lvl, max) * ADAPT_GATE >= adapt_error(a->lvl, max) * (ADAPT_GATE - 1)) {
+        adapt_error(lvl, max, mix) * ADAPT_GATE >= adapt_error(a->lvl, max, mix) * (ADAPT_GATE - 1)) {
       return false;
     }
   }
@@ -598,9 +724,10 @@ static bool adapt_snap(adapt_t *a, uint16_t frozen) {
   return true;
 }
 
-/* The pens for rows [y0, y1). True if they changed. Nothing chosen yet
- * means from scratch: black, then a farthest-point start for the rest. */
-static bool adapt_update(adapt_t *a, unsigned y0, unsigned y1, uint16_t frozen, int iters) {
+/* The pens for rows [y0, y1), drawn in mixes (`mix`, a dither) or in
+ * their nearest pen. True if they changed. Nothing chosen yet means from
+ * scratch: black, then a farthest-point start for the rest. */
+static bool adapt_update(adapt_t *a, unsigned y0, unsigned y1, uint16_t frozen, int iters, bool mix) {
   frozen |= ADAPT_BLACK;
   adapt_histogram(y0, y1);
   if (!a->lvl_max) {
@@ -610,7 +737,10 @@ static bool adapt_update(adapt_t *a, unsigned y0, unsigned y1, uint16_t frozen, 
     iters = ADAPT_COLD_ITERS;
   }
   while (iters-- > 0) adapt_step(a, frozen);
-  return adapt_snap(a, frozen);
+  if (!mix) return adapt_snap(a, (const int16_t(*)[3])a->cen, frozen, false);
+  int16_t ends[16][3];
+  adapt_refine(a, frozen, ends);
+  return adapt_snap(a, (const int16_t(*)[3])ends, frozen, true);
 }
 
 /* The view's pens are the reducer's references. */
@@ -739,43 +869,28 @@ static void build_mono(void) {
 
 /* s_lut and s_pair from s_ref_rgb and the installed page. */
 static void build_lut(void) {
+  uint16_t lin[16][3];
+  for (int k = 0; k < s_ref_count; k++) {
+    for (int ch = 0; ch < 3; ch++) lin[k][ch] = gamma_lin[s_ref_rgb[k][ch]];
+  }
+  const bool dither = (s_dither != DOOM_VIDEO_DITHER_NEAREST);
   for (uint32_t i = 0; i < 256u; i++) {
     const uint8_t *c = &s_playpal[i * 3u];
-    uint8_t a, b, nearest;
-    int t16;
+    uint16_t v;
     if (s_vivid) {
+      uint8_t a, b;
+      int t16;
       vivid_pair(c, &a, &b, &t16);
-      nearest = (t16 >= 8) ? b : a;
+      v = dither ? (uint16_t)(a | (b << 4) | (t16 << 8))
+                 : (uint16_t)((t16 >= 8 ? b : a) * 0x11u);
     } else {
-      two_nearest_ref(c, &a, &b);
-      nearest = a;
-
-      /* Project the colour onto the a->b line: t in 0..16. */
-      int dr = (int)s_ref_rgb[b][0] - (int)s_ref_rgb[a][0];
-      int dg = (int)s_ref_rgb[b][1] - (int)s_ref_rgb[a][1];
-      int db = (int)s_ref_rgb[b][2] - (int)s_ref_rgb[a][2];
-      int denom = dr * dr + dg * dg + db * db;
-      int dot = ((int)c[0] - (int)s_ref_rgb[a][0]) * dr +
-                ((int)c[1] - (int)s_ref_rgb[a][1]) * dg +
-                ((int)c[2] - (int)s_ref_rgb[a][2]) * db;
-      if (denom <= 0 || dot <= 0) {
-        t16 = 0;
-      } else if (dot >= denom) {
-        t16 = 16;
-      } else {
-        t16 = (dot * 16) / denom;
-      }
+      v = best_pair(c, (const uint8_t(*)[3])s_ref_rgb, (const uint16_t(*)[3])lin, s_ref_count, dither);
     }
-    if (s_dither == DOOM_VIDEO_DITHER_NEAREST) {
-      for (uint8_t cell = 0; cell < 16u; cell++) s_lut.pen[cell][i] = nearest;
-      s_pair[i] = (uint16_t)(nearest | (nearest << 4));
-      continue;
-    }
-
+    s_pair[i] = v;
+    const uint8_t a = v & 15u, b = (v >> 4) & 15u;
     for (uint8_t cell = 0; cell < 16u; cell++) {
-      s_lut.pen[cell][i] = (t16 > (int)dither_threshold(s_dither, cell)) ? b : a;
+      s_lut.pen[cell][i] = ((int)(v >> 8) > (int)dither_threshold(s_dither, cell)) ? b : a;
     }
-    s_pair[i] = (uint16_t)(a | (b << 4) | (t16 << 8));
   }
 }
 
@@ -797,6 +912,8 @@ static void rebuild(void) {
   build_refs();
   build_lut();
 }
+
+#pragma GCC pop_options
 
 /* ------------------------------------------------------------------ */
 /* Public palette API                                                  */
@@ -952,6 +1069,9 @@ static inline void __not_in_flash_func(doom_c2p_block_bn)(uint32_t *dst, const u
 
 static bool s_use_bn; /* latched per frame from s_dither */
 
+#pragma GCC push_options
+#pragma GCC optimize("Os")
+
 /* Wait for the m68k's window and send the palette words with the frame:
  * the view's, the bar's, and the split flag. The m68k latches them as
  * it starts copying the frame, so they are shown with it. */
@@ -967,6 +1087,8 @@ static void publish_begin(void) {
   }
   *(volatile uint16_t *)(cart + CART_SPLIT_OFFSET) = s_split;
 }
+
+#pragma GCC pop_options
 
 static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const uint8_t *src,
                                                            unsigned pix) {
@@ -987,7 +1109,7 @@ static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const 
  * the m68k's ~26), and Core 0's half is not reached until ~9 ms into
  * the copy, so a conversion only has to start before the VBL, not
  * finish by it. */
-static void __not_in_flash_func(doom_c2p_chunks)(unsigned k0, unsigned k1) {
+static void __attribute__((noinline)) __not_in_flash_func(doom_c2p_chunks)(unsigned k0, unsigned k1) {
   for (unsigned k = k1; k-- > k0;) {
     const unsigned pix0 = k * 96u;
     const uint32_t cart0 = fb_cart_offset(k * (uint32_t)CART_FB_CHUNK_BYTES);
@@ -1077,6 +1199,9 @@ static void __not_in_flash_func(mono_bottom_job)(void *arg) {
   mono_rows(FB_CHUNKED_H / 2u, FB_CHUNKED_H);
 }
 
+#pragma GCC push_options
+#pragma GCC optimize("Os")
+
 void doom_video_publish(void) {
   /* The ST says which it is long before the first frame; rebuilding on
    * a change here just means the LUT and the layout can never disagree. */
@@ -1091,7 +1216,8 @@ void doom_video_publish(void) {
   if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
     s_split = s_status_bar;
     const unsigned view_h = s_split ? SPLIT_ROW : FB_CHUNKED_H;
-    if (adapt_update(&s_view, 0u, view_h, 0u, ADAPT_ITERS) || s_lut_dirty) {
+    const bool mix = (s_dither != DOOM_VIDEO_DITHER_NEAREST);
+    if (adapt_update(&s_view, 0u, view_h, 0u, ADAPT_ITERS, mix) || s_lut_dirty) {
       adapt_install_view();
       build_lut();
       s_lut_dirty = false;
@@ -1101,7 +1227,7 @@ void doom_video_publish(void) {
     for (unsigned i = 0; i < 256u; i++) {
       if (s_hist[i]) s_view_used |= (uint16_t)((1u << (s_pair[i] & 15u)) | (1u << ((s_pair[i] >> 4) & 15u)));
     }
-    if (s_split && (adapt_update(&s_hud, SPLIT_ROW, FB_CHUNKED_H, 0u, ADAPT_ITERS) || s_hud_dirty)) {
+    if (s_split && (adapt_update(&s_hud, SPLIT_ROW, FB_CHUNKED_H, 0u, ADAPT_ITERS, false) || s_hud_dirty)) {
       build_hud_pens();
       s_hud_dirty = false;
     }
@@ -1168,6 +1294,8 @@ void doom_video_publish(void) {
 }
 
 uint32_t doom_video_last_convert_us(void) { return s_convert_us; }
+
+#pragma GCC pop_options
 
 /* ------------------------------------------------------------------ */
 /* Melt wipe                                                           */
@@ -1471,7 +1599,7 @@ void doom_video_wipe_begin(void) {
         for (unsigned ch = 0; ch < 3u; ch++) s_view.cen[k][ch] = (int16_t)(s_view.rgb[k][ch] << 4);
       }
     }
-    adapt_update(&s_view, 0u, FB_CHUNKED_H, s_frozen, ADAPT_COLD_ITERS);
+    adapt_update(&s_view, 0u, FB_CHUNKED_H, s_frozen, ADAPT_COLD_ITERS, s_dither != DOOM_VIDEO_DITHER_NEAREST);
     adapt_install_view();
     build_lut();
     s_lut_dirty = false;
