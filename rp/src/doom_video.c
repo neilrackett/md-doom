@@ -801,6 +801,12 @@ void doom_video_publish(void) {
   s_convert_us = time_us_32() - t0;
   fb_frame_done();
 
+#ifdef EMUMD
+  /* emu/framedump.c: the frame and its page, for offline experiments. */
+  extern void emu_frame_dump(const uint8_t *frame, const uint8_t *playpal);
+  emu_frame_dump(fb_chunked_buffer, s_playpal);
+#endif
+
 #if defined(_DEBUG) && (_DEBUG != 0)
   /* Every 64 frames: the conversion time (must stay inside the m68k's
    * ~3 ms post-blit slack), the longest frame-to-frame interval, the
