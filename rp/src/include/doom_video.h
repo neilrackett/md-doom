@@ -19,6 +19,8 @@
  * are picked out of the tinted page and the LUT is rebuilt against them.
  * The fixed retro palettes match by hue and shade by brightness instead
  * of by plain distance, or Doom's dark colours would all come out black.
+ * The adaptive source chooses its 16 for each frame from the colours on
+ * screen, and the m68k shows them with the frame they were chosen for.
  *
  * This is the same reduction the DOOM Accelerator microfirmware for
  * STDOOM does, carried over here; the default 16-colour subset is the
@@ -50,6 +52,7 @@ typedef enum {
   DOOM_VIDEO_PAL_C64,
   DOOM_VIDEO_PAL_ZX,
   DOOM_VIDEO_PAL_PICO8,
+  DOOM_VIDEO_PAL_ADAPTIVE,   /* 16 chosen for each frame's content   */
   DOOM_VIDEO_PAL_COUNT
 } doom_video_palette_t;
 
@@ -71,14 +74,17 @@ void doom_video_init(void);
  * rebuild the 16 ST colours + the dither LUT from it. Doom calls this
  * via I_SetPalette at level start and on every tint change; it costs
  * well under a millisecond, so no caching is done. The bytes are copied;
- * the caller's buffer need not stay live. */
+ * the caller's buffer need not stay live. (The adaptive source builds
+ * at the next publish instead, from the frame.) */
 void doom_video_set_playpal(const uint8_t *rgb768);
 
 /* Change the palette source or dither mode. Both rebuild the LUT from
- * the last installed PLAYPAL. */
+ * the last installed PLAYPAL. doom_video_next_palette is the order
+ * keypad / steps through them. */
 void doom_video_set_palette_mode(doom_video_palette_t mode);
 void doom_video_set_dither(doom_video_dither_t mode);
 doom_video_palette_t doom_video_get_palette_mode(void);
+doom_video_palette_t doom_video_next_palette(doom_video_palette_t mode);
 doom_video_dither_t doom_video_get_dither(void);
 const char *doom_video_palette_name(doom_video_palette_t mode);
 const char *doom_video_dither_name(doom_video_dither_t mode);
@@ -96,7 +102,9 @@ bool doom_video_wipe_step(int tics);
 /* Convert fb_chunked_buffer (320x200 PLAYPAL indices) to ST planar via
  * the LUT and hand it to the m68k, VBL-synced and tear-free. Blocks on
  * the ST's VBL like fb_publish(), so one call per frame paces the app
- * to 50 Hz. The 16 colour words go out in the same frame. */
+ * to 50 Hz. The 16 colour words go out in the same window as the
+ * pixels; the m68k latches them as it copies the frame and shows them
+ * with it. */
 void doom_video_publish(void);
 
 /* Microseconds the last doom_video_publish() spent in the LUT + c2p

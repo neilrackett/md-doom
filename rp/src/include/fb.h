@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 /**
  * File: fb.h
  * Description: Framebuffer module — owns the single 32 KB cartridge
@@ -80,6 +85,13 @@ void fb_publish(void);
  *         m68k's post-blit slack. */
 void fb_wait_blit_ack(void);
 void fb_frame_done(void);
+
+/** @brief fb_wait_blit_ack(), but only an ack that arrives after the
+ *         call counts. fb_wait_blit_ack() takes any ack since the last
+ *         publish, however long ago, so a frame finished late in a VBL
+ *         is written while the m68k is copying and tears; waiting for the
+ *         next one costs up to a VBL. For frames that must not tear. */
+void fb_wait_next_blit_ack(void);
 
 /* Debug: longest fb_wait_blit_ack since the last call, in microseconds. */
 uint32_t fb_debug_wait_max_us(void);

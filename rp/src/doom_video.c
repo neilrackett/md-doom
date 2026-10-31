@@ -8,7 +8,8 @@
  *
  * Two halves:
  *
- *  1. Palette work, done whenever the PLAYPAL page or a mode changes:
+ *  1. Palette work, done whenever the PLAYPAL page or a mode changes
+ *     (and for every frame with the adaptive source, from its colours):
  *     pick 16 reference colours, snap them to what the ST can display,
  *     and build s_lut[16][256] -- for each of the 16 dither cells, the
  *     pen every PLAYPAL index maps to. A dithered index is drawn as its
@@ -387,6 +388,183 @@ static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Adaptive palette: 16 pens for each frame                            */
+
+/* The other sources choose 16 colours for the whole of PLAYPAL, and so
+ * spend pens on colours that are not on screen. This one chooses them
+ * for the frame being shown: a histogram of the PLAYPAL indices in it,
+ * clustered into 16 by weighted k-means, each centre snapped to a
+ * colour the shifter can show (16 levels a channel on an STE, 8 on an
+ * ST, told apart by DMA sound). Measured offline against the original
+ * 256-colour frames (tools/bandpal.py), it more than halves the error
+ * of STDOOM's subset on an STE.
+ *
+ * Pens chosen afresh every frame would shimmer, so a frame starts from
+ * the last one's centres and takes ADAPT_ITERS k-means steps, and a
+ * channel only moves to another level once its centre is ADAPT_STICKY
+ * sixteenths of a level past the halfway mark. A still picture settles
+ * and stays put.
+ *
+ * Pen 0 stays black: it is also the colour of the border all round the
+ * picture, which must not change with the frame, and Doom always has
+ * black on screen anyway.
+ *
+ * Distances are 2 dR^2 + 4 dG^2 + 3 dB^2, which the offline test found
+ * as good as CIELAB here at a fraction of the cost. Centres are kept in
+ * sixteenths so the hysteresis has something to work with, and the
+ * histogram samples every other pixel of every other row. */
+
+#define ADAPT_ITERS 2      /* k-means steps a frame, from the last frame's */
+#define ADAPT_COLD_ITERS 8 /* from scratch, or into a melt                 */
+#define ADAPT_STICKY 5     /* sixteenths of a level past halfway to move   */
+
+static bool s_lut_dirty;     /* the page changed under the adaptive pens  */
+static uint16_t s_hist[256]; /* the last frame's histogram                */
+static int16_t s_cen[16][3]; /* centres, RGB in sixteenths                */
+static uint8_t s_lvl[16][3]; /* the level each channel is snapped to      */
+static uint8_t s_lvl_max;    /* 15 (STE) or 7 (ST); 0 = nothing chosen yet */
+static uint16_t s_frozen;    /* pens k-means may not move (for the melt)  */
+#define ADAPT_BLACK 1u       /* pen 0, never moved                        */
+
+static void adapt_histogram(void) {
+  memset(s_hist, 0, sizeof(s_hist));
+  for (unsigned y = 0; y < FB_CHUNKED_H; y += 2u) {
+    const uint8_t *p = fb_chunked_buffer + y * FB_CHUNKED_W + ((y >> 1) & 1u);
+    for (unsigned x = 0; x < FB_CHUNKED_W; x += 2u) s_hist[p[x]]++;
+  }
+}
+
+static int32_t adapt_dist(const int16_t *c, const uint8_t *rgb) {
+  const int32_t dr = ((int32_t)rgb[0] << 4) - c[0];
+  const int32_t dg = ((int32_t)rgb[1] << 4) - c[1];
+  const int32_t db = ((int32_t)rgb[2] << 4) - c[2];
+  return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+}
+
+/* Put each centre not in `live` on the colour the live ones serve
+ * worst, weighted by how much of the screen it covers, one at a time:
+ * with none live it is a farthest-point start from the commonest. */
+static void adapt_reseed(uint16_t live) {
+  for (unsigned k = 0; k < 16u; k++) {
+    if (live & (1u << k)) continue;
+    uint64_t best = 0;
+    int bi = -1;
+    for (unsigned i = 0; i < 256u; i++) {
+      if (!s_hist[i]) continue;
+      uint32_t d = live ? UINT32_MAX : 1u;
+      for (unsigned j = 0; j < 16u; j++) {
+        if (!(live & (1u << j))) continue;
+        const uint32_t dj = (uint32_t)adapt_dist(s_cen[j], &s_playpal[i * 3u]);
+        if (dj < d) d = dj;
+      }
+      const uint64_t score = (uint64_t)d * s_hist[i];
+      if (bi < 0 || score > best) {
+        best = score;
+        bi = (int)i;
+      }
+    }
+    if (bi < 0) return; /* nothing on screen */
+    for (unsigned ch = 0; ch < 3u; ch++) s_cen[k][ch] = (int16_t)(s_playpal[bi * 3 + (int)ch] << 4);
+    live |= (uint16_t)(1u << k);
+  }
+}
+
+/* One k-means step over the histogram. Frozen centres take colours but
+ * do not move; a centre left with none is re-seeded. */
+static void adapt_step(void) {
+  int32_t sum[16][3];
+  uint32_t cnt[16];
+  memset(sum, 0, sizeof(sum));
+  memset(cnt, 0, sizeof(cnt));
+  for (unsigned i = 0; i < 256u; i++) {
+    const uint32_t w = s_hist[i];
+    if (!w) continue;
+    const uint8_t *c = &s_playpal[i * 3u];
+    int32_t best = INT32_MAX;
+    unsigned bk = 0;
+    for (unsigned k = 0; k < 16u; k++) {
+      const int32_t d = adapt_dist(s_cen[k], c);
+      if (d < best) {
+        best = d;
+        bk = k;
+      }
+    }
+    for (unsigned ch = 0; ch < 3u; ch++) sum[bk][ch] += (int32_t)(w * c[ch]);
+    cnt[bk] += w;
+  }
+  const uint16_t frozen = s_frozen | ADAPT_BLACK;
+  uint16_t live = frozen;
+  for (unsigned k = 0; k < 16u; k++) {
+    if (!cnt[k]) continue;
+    live |= (uint16_t)(1u << k);
+    if (frozen & (1u << k)) continue;
+    for (unsigned ch = 0; ch < 3u; ch++) {
+      s_cen[k][ch] = (int16_t)((sum[k][ch] * 16 + (int32_t)(cnt[k] / 2u)) / (int32_t)cnt[k]);
+    }
+  }
+  if (live != 0xFFFFu) adapt_reseed(live);
+}
+
+/* Snap the centres to levels, with hysteresis, and install them as the
+ * pens. Frozen pens keep theirs. True if any pen changed. */
+static bool adapt_snap(void) {
+  const uint8_t max = (audio_get_mode() == AUDIO_MODE_YM) ? 7u : 15u;
+  const bool warm = (s_lvl_max == max);
+  bool changed = !warm;
+  s_lvl_max = max;
+  for (unsigned k = 0; k < 16u; k++) {
+    if ((s_frozen | ADAPT_BLACK) & (1u << k)) continue;
+    for (unsigned ch = 0; ch < 3u; ch++) {
+      const int32_t pos = ((int32_t)s_cen[k][ch] * max + 127) / 255; /* sixteenths */
+      int32_t lvl = (pos + 8) >> 4;
+      if (warm) {
+        const int32_t off = pos - ((int32_t)s_lvl[k][ch] << 4);
+        if (off > -(8 + ADAPT_STICKY) && off < 8 + ADAPT_STICKY) lvl = s_lvl[k][ch];
+      }
+      if (lvl < 0) lvl = 0;
+      if (lvl > max) lvl = max;
+      if (lvl != s_lvl[k][ch]) {
+        s_lvl[k][ch] = (uint8_t)lvl;
+        changed = true;
+      }
+    }
+  }
+  if (!changed) return false;
+  s_ref_count = 16;
+  for (unsigned k = 0; k < 16u; k++) {
+    uint16_t w = 0;
+    for (unsigned ch = 0; ch < 3u; ch++) {
+      const unsigned l = s_lvl[k][ch];
+      /* An STE level's lowest bit is the nibble's bit 3 (channel_nibble). */
+      w = (uint16_t)((w << 4) | (max == 15u ? ((l >> 1) | ((l & 1u) << 3)) : l));
+      s_ref_rgb[k][ch] = (uint8_t)(max == 15u ? l * 17u : (l * 255u + 3u) / 7u);
+    }
+    s_st_colors[k] = w;
+  }
+  return true;
+}
+
+/* From scratch: black, and a farthest-point start for the rest (all
+ * but the frozen ones). */
+static void adapt_cold(void) {
+  memset(s_cen[0], 0, sizeof(s_cen[0]));
+  memset(s_lvl[0], 0, sizeof(s_lvl[0]));
+  adapt_reseed(s_frozen | ADAPT_BLACK);
+}
+
+/* This frame's pens. True if the LUT has to be rebuilt for them. */
+static bool adapt_update(void) {
+  adapt_histogram();
+  if (!s_lvl_max) {
+    adapt_cold();
+    for (int i = 0; i < ADAPT_COLD_ITERS; i++) adapt_step();
+  } else {
+    for (int i = 0; i < ADAPT_ITERS; i++) adapt_step();
+  }
+  return adapt_snap();
+}
+
+/* ------------------------------------------------------------------ */
 /* Palette + LUT build                                                 */
 
 static void set_refs_from_rgb(const uint8_t (*src)[3], int count) {
@@ -489,15 +667,8 @@ static void build_mono(void) {
   }
 }
 
-static void rebuild(void) {
-  s_mono = fb_st_mono();
-  if (!s_have_playpal) return;
-  if (s_mono) {
-    build_mono(); /* no palette to publish: the m68k does not copy it */
-    return;
-  }
-  build_refs();
-
+/* s_lut and s_pair from s_ref_rgb and the installed page. */
+static void build_lut(void) {
   for (uint32_t i = 0; i < 256u; i++) {
     const uint8_t *c = &s_playpal[i * 3u];
     uint8_t a, b, nearest;
@@ -536,8 +707,25 @@ static void rebuild(void) {
     }
     s_pair[i] = (uint16_t)(a | (b << 4) | (t16 << 8));
   }
+}
 
-  palette_set(s_st_colors);
+/* The palette words go to the cart slot from the publish, in the same
+ * window as the pixels, never from here: the m68k latches the slot as
+ * it copies the frame, and a write at any other time would be shown
+ * with the wrong picture. */
+static void rebuild(void) {
+  s_mono = fb_st_mono();
+  if (!s_have_playpal) return;
+  if (s_mono) {
+    build_mono(); /* no palette to publish: the m68k does not copy it */
+    return;
+  }
+  if (s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
+    s_lut_dirty = true; /* the pens come from the frame: built at the publish */
+    return;
+  }
+  build_refs();
+  build_lut();
 }
 
 /* ------------------------------------------------------------------ */
@@ -559,6 +747,8 @@ void doom_video_set_playpal(const uint8_t *rgb768) {
 void doom_video_set_palette_mode(doom_video_palette_t mode) {
   if (mode >= DOOM_VIDEO_PAL_COUNT) return;
   s_pal_mode = mode;
+  s_lvl_max = 0; /* adaptive: start from scratch */
+  s_frozen = 0;
   rebuild();
 }
 
@@ -569,6 +759,18 @@ void doom_video_set_dither(doom_video_dither_t mode) {
 }
 
 doom_video_palette_t doom_video_get_palette_mode(void) { return s_pal_mode; }
+
+/* Adaptive straight after STDOOM's, the two worth comparing, then the
+ * rest in order. */
+doom_video_palette_t doom_video_next_palette(doom_video_palette_t mode) {
+  switch (mode) {
+    case DOOM_VIDEO_PAL_SUBSET: return DOOM_VIDEO_PAL_ADAPTIVE;
+    case DOOM_VIDEO_PAL_ADAPTIVE: return DOOM_VIDEO_PAL_GENERATED;
+    case DOOM_VIDEO_PAL_PICO8: return DOOM_VIDEO_PAL_SUBSET;
+    default: return (doom_video_palette_t)((mode + 1) % DOOM_VIDEO_PAL_COUNT);
+  }
+}
+
 doom_video_dither_t doom_video_get_dither(void) { return s_dither; }
 
 const char *doom_video_palette_name(doom_video_palette_t mode) {
@@ -581,6 +783,7 @@ const char *doom_video_palette_name(doom_video_palette_t mode) {
     case DOOM_VIDEO_PAL_C64: return "C64";
     case DOOM_VIDEO_PAL_ZX: return "ZX SPECTRUM";
     case DOOM_VIDEO_PAL_PICO8: return "PICO-8";
+    case DOOM_VIDEO_PAL_ADAPTIVE: return "ADAPTIVE";
     default: return "?";
   }
 }
@@ -669,6 +872,28 @@ static inline void __not_in_flash_func(doom_c2p_block_bn)(uint32_t *dst, const u
 }
 
 static bool s_use_bn; /* latched per frame from s_dither */
+
+static uint16_t s_published[16]; /* the words last written to the cart slot */
+static uint32_t s_pal_syncs;     /* debug: publishes that waited for that  */
+
+/* Wait for the m68k's blit ack and send the palette, if it changed.
+ * fb_wait_blit_ack takes any ack since the last publish, so a frame
+ * finished late in a VBL lands while the m68k is copying and tears.
+ * With the same pens the tear is only a seam; with new ones the m68k
+ * has already latched the old palette for that copy, and the part of
+ * the frame it reads after the write would be shown in the wrong
+ * colours. So a new palette waits for the next ack, which costs up to
+ * a VBL, and goes out with its pixels in the window that follows. */
+static void publish_begin(void) {
+  if (s_mono || !memcmp(s_published, s_st_colors, sizeof(s_published))) {
+    fb_wait_blit_ack();
+    return;
+  }
+  fb_wait_next_blit_ack();
+  palette_set(s_st_colors);
+  memcpy(s_published, s_st_colors, sizeof(s_published));
+  s_pal_syncs++;
+}
 
 static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const uint8_t *src,
                                                            unsigned pix) {
@@ -778,9 +1003,18 @@ void doom_video_publish(void) {
   s_cart_fb = (uint8_t *)fb_screen.framebuffer;
   s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
 
+  /* The adaptive pens are this frame's: chosen before the wait, in the
+   * game's time rather than the m68k's slack. */
+  if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
+    if (adapt_update() || s_lut_dirty) build_lut();
+    s_lut_dirty = false;
+  }
+
   /* The cart FB is written in place, so only in the m68k's post-blit
-   * slack: wait for its ack, convert on both cores, mark ready. */
-  fb_wait_blit_ack();
+   * slack: wait for its ack, convert on both cores, mark ready. The
+   * palette goes in the same window, so the m68k latches it with these
+   * pixels (see rebuild). */
+  publish_begin();
   const uint32_t t0 = time_us_32();
 
   if (s_mono) {
@@ -823,14 +1057,15 @@ void doom_video_publish(void) {
     extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
     char prof[96];
     md_prof_report(prof, sizeof(prof));
-    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | audio core %d mode %d len %lu: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
+    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | pal syncs %lu | audio core %d mode %d len %lu: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
             doom_video_dither_name(s_dither), (unsigned long)s_convert_us,
             (unsigned long)(s_frame_max_us / 1000u), (unsigned long)fb_debug_wait_max_us(),
-            audio_vbl_timer_core(), (int)audio_get_mode(), (unsigned long)audio_get_fill_bytes(), (unsigned long)cbs,
+            (unsigned long)s_pal_syncs, audio_vbl_timer_core(), (int)audio_get_mode(), (unsigned long)audio_get_fill_bytes(), (unsigned long)cbs,
             (unsigned long)fills, (unsigned long)fill_max, (unsigned long)cb_max,
             (unsigned long)md_sound_dbg_starts, (unsigned long)md_sound_dbg_max_playing, prof);
     md_sound_dbg_starts = md_sound_dbg_max_playing = 0;
     s_frame_max_us = 0;
+    s_pal_syncs = 0;
   }
 #endif
 }
@@ -1102,6 +1337,31 @@ static void __not_in_flash_func(wipe_right_job)(void *arg) {
 }
 
 void doom_video_wipe_begin(void) {
+  /* One palette serves both pictures. The old one is in the cart FB as
+   * pens, so with the adaptive source the pens it uses (by the last
+   * frame's histogram) keep their colours for the melt, and the others
+   * are chosen for the new frame. With all 16 in use the new frame is
+   * drawn in the old one's; the next frame after the melt chooses its
+   * own. */
+  if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
+    if (s_lvl_max) {
+      for (unsigned i = 0; i < 256u; i++) {
+        if (s_hist[i]) s_frozen |= (uint16_t)((1u << (s_pair[i] & 15u)) | (1u << ((s_pair[i] >> 4) & 15u)));
+      }
+      for (unsigned k = 0; k < 16u; k++) {
+        if (!(s_frozen & (1u << k))) continue;
+        for (unsigned ch = 0; ch < 3u; ch++) s_cen[k][ch] = (int16_t)(s_ref_rgb[k][ch] << 4);
+      }
+    }
+    adapt_histogram();
+    if (!s_lvl_max) adapt_cold();
+    for (int i = 0; i < ADAPT_COLD_ITERS; i++) adapt_step();
+    adapt_snap();
+    build_lut();
+    s_lut_dirty = false;
+    s_frozen = 0;
+  }
+
   s_wipe_rand = time_us_32() | 1u;
   s_wipe_y[0] = -(int16_t)(wipe_random() % 16u);
   for (unsigned i = 1; i < WIPE_COLS; i++) {
@@ -1134,7 +1394,7 @@ bool doom_video_wipe_step(int tics) {
 
   s_cart_fb = (uint8_t *)fb_screen.framebuffer;
   s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);
-  fb_wait_blit_ack();
+  publish_begin();
   const uint32_t t0 = time_us_32();
   fb_core1_dispatch(wipe_right_job, NULL);
   if (s_mono) {

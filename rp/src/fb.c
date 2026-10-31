@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 /**
  * File: fb.c
  * Description: Framebuffer module — owns `fb_screen` and brings up the
@@ -257,6 +262,12 @@ void fb_wait_blit_ack(void) {
   s_vbl_published = s_vbl_seen;
   const uint32_t waited = time_us_32() - t_wait;
   if (waited > s_dbg_wait_max_us) s_dbg_wait_max_us = waited;
+}
+
+void fb_wait_next_blit_ack(void) {
+  fb_pump_rom3(); /* every ack so far is stale */
+  s_vbl_published = s_vbl_seen;
+  fb_wait_blit_ack();
 }
 
 void fb_frame_done(void) {

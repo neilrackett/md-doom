@@ -66,7 +66,7 @@ static void cycle_video_mode(uint8_t scancode) {
         doom_video_dither_name((doom_video_dither_t)s_pending_dither);
   } else if (!fb_st_mono()) { /* a mono monitor has no colours to choose */
     int cur = s_pending_palette >= 0 ? s_pending_palette : (int)doom_video_get_palette_mode();
-    s_pending_palette = (int8_t)((cur + 1) % DOOM_VIDEO_PAL_COUNT);
+    s_pending_palette = (int8_t)doom_video_next_palette((doom_video_palette_t)cur);
     players[consoleplayer].message =
         doom_video_palette_name((doom_video_palette_t)s_pending_palette);
   }

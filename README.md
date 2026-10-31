@@ -96,7 +96,9 @@ setting; your choice is remembered. The sizes in between are not
 available, because this renderer cannot draw a narrower view.
 
 Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
-Colour palettes: STDOOM (default), generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
+Colour palettes: STDOOM (default), adaptive, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
+
+The adaptive palette picks the 16 colours for each frame from what is on screen. Dark corridors get dark shades and brown rooms get browns, so there is less dither and less colour cast than with a fixed palette.
 
 ### Mono monitors
 
@@ -154,7 +156,7 @@ Xpad gamepad buttons       ──$FB88xx──►  hi byte, then lo at $FB8Axx
 Sound chip report (_SND)   ──$FB86xx──►  picks STE DMA or YM2149
 Display report (mono?)     ──$FB90xx──►  picks 16 colours or 640x400 mono
 Screen: blit + page flip   ◄──$FA8300──  256 → 16 colours + c2p, both cores
-Palette: 16 shifter words  ◄──$FA4040──  derived from PLAYPAL each tint
+Palette: 16 shifter words  ◄──$FA4040──  per tint, or per frame (adaptive)
 Sound: DMA refill or YM    ◄──$FA4100──  8-channel sfx mix on Core 1
 Music: YM2149 registers    ◄──$FA44E0──  STM songs from the SD card
 ```

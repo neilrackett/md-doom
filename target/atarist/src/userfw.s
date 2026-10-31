@@ -1,3 +1,6 @@
+; Copyright (C) 2026 Neil Rackett
+; SPDX-License-Identifier: GPL-3.0-or-later
+;
 ; userfw.s -- user firmware module.
 ;
 ; Entry point: USERFW ($FA0800), reached from main.s either directly
@@ -105,6 +108,7 @@ UFW_MONO              equ $00077F06          ; byte: 1 = ST high res (mono monit
 UFW_HALF              equ $00077F07          ; byte: $FF = mono frame half copied, rest next VBL
 UFW_YM_SEQ            equ $00077F08          ; word: last music packet written to the YM
 UFW_YM_MUSIC          equ $00077F0A          ; byte: $FF = no DMA, and the YM is the music's
+UFW_PAL_LATCH         equ $00077F20          ; 32 B: the palette of the page on screen
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -232,9 +236,10 @@ CMD_MAGIC_SENTINEL    equ $00FA4000
 CMD_BOOT_GEM          equ 2
 CMD_RESET             equ 1
 
-; 16-entry ST palette slot. 32 bytes of palette words
-; published by the RP; .vbl_loop applies them to PALETTE_BASE each
-; frame via a MOVEM-load + MOVEM-store. Mirrors main.s PALETTE_ADDR.
+; 16-entry ST palette slot. 32 bytes of palette words published by the
+; RP with each frame; .vbl_loop latches them into UFW_PAL_LATCH as it
+; copies the frame and applies them to PALETTE_BASE at the next VBL,
+; when that page goes on screen. Mirrors main.s PALETTE_ADDR.
 PALETTE_ADDR          equ $00FA4040
 PALETTE_SIZE          equ 32
 
@@ -571,7 +576,7 @@ FORCE_NO_DMA          equ 0
 ;   offset 28: MFP VR save (byte) -- S-bit + vector base, switched to auto-EOI under userfw
 ;   offset 29-31: reserved / padding (longword align)
 UFW_SAVE_SIZE         equ 32
-UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F0B..$77FCF gap
+UFW_SAVE              equ $00077FA0          ; 32 B, inside the free $77F40..$77FCF gap
     ifgt  UFW_SAVE+UFW_SAVE_SIZE-$00077FD0
     fail  "userfw save area runs past the free gap at $77FD0"
     endc
@@ -958,6 +963,11 @@ userfw:
     ; Doom's forward axis. See md-sidepad's sidepong example, which
     ; drives two paddles from a mouse and a joystick the same way.
 
+    ; The first VBL shows whatever palette the RP has published so far.
+    lea     PALETTE_ADDR, a6
+    movem.l (a6), d0-d7
+    movem.l d0-d7, UFW_PAL_LATCH
+
     ; Initialise the hidden-page pointer. UFW_SCREEN_PAGE holds the
     ; page currently being drawn into; .after_copy toggles it between
     ; UFW_SCREEN_A and UFW_SCREEN_B via XOR with UFW_SCREEN_XOR.
@@ -994,19 +1004,22 @@ userfw:
     move.w  #BLIT_MARK_VSYNC, PALETTE_IDX0.w   ; border = vsync mark
     endc
 
-    ; Publish RP-supplied palette to the shifter. 16 words
-    ; from PALETTE_ADDR -> $FFFF8240..$FFFF825E via two MOVEMs.
-    ; Cost: 76 (load) + 72 (store) + 16 (lea) = ~164 cyc / VBL =
-    ; ~20 us. Apps that don't want RP-driven palette can leave the
-    ; cart slot zero (= all-black screen, since the m68k still
-    ; publishes it every frame) -- swap the load EA below for
-    ; their own palette source if needed. Not in mono, where colour 0
-    ; was set at boot and the rest mean nothing.
+    ; The palette travels with its frame. The page going on screen now
+    ; is the one copied last VBL, so it gets the palette latched then;
+    ; the RP's slot, written in the same window as the pixels about to
+    ; be copied, is latched for the next. Applying the slot directly
+    ; would show every palette a frame early, which the adaptive pens
+    ; (a new 16 every frame) would turn into a flash on every change.
+    ; Cost: two MOVEM pairs, ~330 cyc / VBL. Not in mono, where colour
+    ; 0 was set at boot and the rest mean nothing.
     tst.b   UFW_MONO
     bne.s   .palette_done
-    lea     PALETTE_ADDR, a5
+    lea     UFW_PAL_LATCH, a5
     movem.l (a5), d0-d7
     movem.l d0-d7, PALETTE_BASE.w
+    lea     PALETTE_ADDR, a6
+    movem.l (a6), d0-d7
+    movem.l d0-d7, (a5)
 .palette_done:
 
     ; Pure 68000 CPU copy via the FBDRV_INLINE macro (defined in

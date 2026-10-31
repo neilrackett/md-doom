@@ -115,7 +115,7 @@ Build flow (orchestrated by `build.sh`):
 - `make tag` tags HEAD with the contents of `version.txt` and pushes the tag.
 
 ### Tests
-There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. The mono path (`mono_rows`, `mono_block*`, `wipe_compose_mono`) was checked the same way: every output bit of a random frame through a random PLAYPAL for all five dither modes, and every step of a whole melt, against a per-pixel 640×400 reference that simulates the m68k's chunk reversal and the cart bus's word order. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host. The music was checked there by recording a scripted run (`mdfw run --record`) and lining the recording's 20 ms loudness and pitch up against an offline square-wave rendering of the same STM file: the right tempo at 50 and 71 Hz VBLs (the match collapses at ±5%), and the strongest pitch the same in most 0.1 s windows.
+There is no test suite for the firmware. "Verification" is: build succeeds, UF2 boots on hardware, the game plays — plus the serial debug console (`make uart`), where debug builds print a line every 64 frames with the c2p time, the longest frame, the audio interrupt's counters and the per-phase maxima (`md_prof.c`); that line is what every hardware bug so far was diagnosed from, so ask for it. The fused LUT + c2p in `doom_video.c` was checked on the host against a bit-level reference (a random 256-colour frame through a random LUT, compared word for word with a naive planar encoder); repeat that if you touch `doom_c2p_chunks` or `doom_c2p_block`. The mono path (`mono_rows`, `mono_block*`, `wipe_compose_mono`) was checked the same way: every output bit of a random frame through a random PLAYPAL for all five dither modes, and every step of a whole melt, against a per-pixel 640×400 reference that simulates the m68k's chunk reversal and the cart bus's word order. Before any of that, the EmuMD build (next section) plays the game in Hatari on the host. Palette work is measured offline: with `MDDOOM_FRAMEDUMP=DIR` the EmuMD build writes Doom's frames as PLAYPAL indices (`emu/framedump.c`), and `tools/bandpal.py` scores palette schemes on them against the original with an S-CIELAB Delta E; its copy of the reducer matches a Hatari screenshot pixel for pixel. The music was checked there by recording a scripted run (`mdfw run --record`) and lining the recording's 20 ms loudness and pitch up against an offline square-wave rendering of the same STM file: the right tempo at 50 and 71 Hz VBLs (the match collapses at ±5%), and the strongest pitch the same in most 0.1 s windows.
 
 ### EmuMD: the game in Hatari, on the host
 [EmuMD](https://github.com/neilrackett/emumd) (the `emu/emumd` submodule; its skill is `emu/emumd/skills/emumd/SKILL.md`) builds the firmware's C and C++ for the host as `build/md-doom.mdfw` and runs it in a patched Hatari, with the real m68k cartridge (`target_firmware.h`, so whatever the last hardware build made) on the cartridge port and `emu/sd` as the microSD card. `make emu` runs it in a window (EmuTOS, which `mdfw hatari` downloads, unless `TOS=` names another image; `MONO=1` for a mono monitor; `RECORD=FILE.avi` records it). For a check without one:
@@ -199,7 +199,7 @@ The Atari ST sees a 64 KB window at `$FA0000`–`$FAFFFF` (mirrored RP-side at `
 | `$FA4004` | (reserved) | 8 B | Former handshake slots; unused. |
 | `$FA400C` | `FB_FRAME_COUNTER_ADDR` | 4 B | RP-incremented dirty-frame counter; `userfw.s` only blits when this changes. |
 | `$FA4010` | `SHARED_VARIABLES` | 240 B | 60 × 4 B indexed slots. Slot 0 is the skip-autostart word, slot 1 hands the YM to the music without DMA sound (`CART_YM_MUSIC_OFFSET`). **Slots 12–19 are the palette below — not free.** |
-| `$FA4040` | `PALETTE` (`CART_PALETTE_OFFSET`) | 32 B | 16 ST colour words (`0000.0RRR.0GGG.0BBB`, STE low bit in bit 3 of each nibble). The m68k VBL handler copies these to `$FFFF8240..$FFFF825E` every frame; `doom_video.c` writes them via `palette_set()`. |
+| `$FA4040` | `PALETTE` (`CART_PALETTE_OFFSET`) | 32 B | 16 ST colour words (`0000.0RRR.0GGG.0BBB`, STE low bit in bit 3 of each nibble). The m68k latches them into `UFW_PAL_LATCH` ($77F20) as it starts each copy and applies the latch to `$FFFF8240..$FFFF825E` at the next VBL, with the page; `doom_video.c` writes them via `palette_set()` in the publish window only. |
 | `$FA4100` | `AUDIO_BUFFER_ADDR` | 1024 B | Audio buffer, refilled by the RP once per VBL in whichever format the detected back-end wants. Its last 32 bytes (`$FA44E0`, `CART_YM_PACKET_OFFSET`) are the YM music registers. |
 | `$FA4500` | `APP_FREE_ADDR` | ~15.5 KB | Contiguous arena, ends at FRAMEBUFFER. The ST never reads it, so the `CART_APP_FREE` linker region overlays it and RP-side buffers are parked there (`__cart_app_free`) — see "Memory layout". |
 | `$FA8300` | `FRAMEBUFFER_ADDR` | 32000 B | 320×200×4bpp planar framebuffer, chunk-reversed. Read by `FBDRV_INLINE` every VBL. |
@@ -357,7 +357,7 @@ The LUT is rebuilt whenever the PLAYPAL page or a mode changes
 (`doom_video_set_playpal` — Doom's `I_SetPalette` — is expected on every
 tint, and the rebuild is cheap enough not to cache the 14 pages).
 
-The 16 colours come from one of eight sources (`doom_video_palette_t`):
+The 16 colours come from one of nine sources (`doom_video_palette_t`):
 STDOOM's hand-picked subset of PLAYPAL indices (Jonas Eschenburg's, refined
 over a long time on the shareware WAD; the default), a median-cut + k-means
 palette generated from the current page, a 16-step grey ramp, and the fixed
@@ -370,7 +370,25 @@ Instead the pen is chosen by hue alone (colour and pens scaled to full
 brightness), the colour's brightness is stretched with a gamma of 0.75,
 and the dither runs along a brightness ladder of black plus every pen of
 that hue (EGA's dark and bright pairs, C64's greys). Checked on the host
-against a Python prototype of the same arithmetic. Dither modes:
+against a Python prototype of the same arithmetic. The ninth, **adaptive**
+(`adapt_*`, keypad `/` straight after STDOOM's), chooses the 16 for each
+frame: a histogram of the frame's PLAYPAL indices (every other pixel of
+every other row), weighted k-means in 2:4:3 weighted RGB starting from the
+last frame's centres (two steps a frame, eight from scratch), each centre
+snapped to the chip's levels (16 a channel, or 8 without DMA sound, i.e. a
+plain ST) with hysteresis so a still picture settles. Pen 0 is held black:
+it is the border colour. Offline (`tools/bandpal.py`, below) it cuts the
+S-CIELAB error against the 256-colour original from 7.8 to 3.4 on an STE
+(7.5 to 6.4 on an ST). Into a melt the pens the old picture uses keep
+their colours and the rest are chosen for the new frame. **The palette
+travels with its frame**: the RP writes the cart slot only in the
+publish window (`publish_begin`), never from `rebuild()`, and `userfw.s`
+latches the slot into `UFW_PAL_LATCH` as it starts copying a frame and
+applies the latch at the next VBL, when that page goes on screen (it
+used to apply the slot straight away, a frame early). A publish whose
+palette words changed waits for a fresh ack (`fb_wait_next_blit_ack`);
+see "Direct c2p tearing" for why. The debug line's `pal syncs` counts
+them, ~10 in 64 frames while moving. Dither modes:
 nearest, 2×2 Bayer, 4×4 Bayer (default), 4×4 clustered-dot, and blue noise
 (md-mjpeg's 32×32 void-and-cluster tile, `bluenoise.h`, regenerated by
 `tools/gen_bluenoise.py`; it cannot be a per-cell LUT so it takes a
@@ -637,8 +655,13 @@ revisited in order of visible payoff.
 - **Palette quality.** The reducer dithers between the two nearest of 16
   colours. STDOOM's software path mixes up to four with weights searched
   offline (`palette-opt`, `mix_weights_lorez` in `atari_c2p.c`); porting
-  those tables gives smoother gradients for the default palette. A
-  per-level generated palette could be precomputed offline too.
+  those tables gives smoother gradients for the default palette. The
+  adaptive source took most of the remaining gain; `tools/bandpal.py`
+  measured what raster palette splits would add on top (STE, 4×4 Bayer,
+  S-CIELAB): a status-bar palette of its own 3.4 → 2.9 (and it stops the
+  bar shimmering as the view's pens move), 24-row bands 2.6, 8-row bands
+  2.5. A split needs a Timer-B event-count interrupt, which the YM path
+  uses as its sample clock.
 - **Music on a plain ST is music *or* sound effects** (keypad `)`), and
   the songs come from the SD card. The YM's channels A and B are the
   effects' DAC, which leaves C: one voice of music alongside the effects
@@ -661,7 +684,14 @@ revisited in order of visible payoff.
 - **Direct c2p tearing.** The frame is written into the cart FB in the
   m68k's ~3 ms post-blit slack. Measured: ~2.1 ms for the LUT modes,
   ~3.4 ms for blue noise, so blue noise can tear; none has been seen yet.
-  A faster blue-noise path (a per-row LUT slice) would close it.
+  A faster blue-noise path (a per-row LUT slice) would close it. Worse:
+  `fb_wait_blit_ack` accepts any ack since the last publish, however
+  old, so a frame finished late in a VBL is written while the m68k is
+  copying ("ack wait max 0 us") and tears. With one buffer the publish
+  cannot finish before the copy does, so a real wait costs up to a VBL a
+  frame; only publishes that change the palette pay it
+  (`fb_wait_next_blit_ack`), because a tear across a palette change
+  shows part of the frame in the wrong colours.
 - **The renderer's work area is taken from the zone, not carved out at
   build time** (`pd_alloc_work_area` in `pd_render.cpp`, called at the
   end of `P_SetupLevel` and once from `pd_init` for the screens before
