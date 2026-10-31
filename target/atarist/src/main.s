@@ -452,19 +452,24 @@ end_pre_auto:
 ; Xpad provider installed as a TSR is resident and userfw's cookie walk
 ; can find it. At CA_INIT time it cannot be.
 ;
-; No GEMDOS Malloc, deliberately. userfw's screen pages are $70000 and
-; $78000, and on a 512 KB machine $78000 is the physical screen, which
-; TOS owns and never puts in the free pool -- so a check that the
-; largest free block spans what we need could never pass. We take the
-; same memory the autostart path takes, for the same reason it is safe
-; to: MD/DOOM owns the machine from here and never hands it back. There
-; is no rts once the copy starts.
+; userfw takes UFW_RAM_DEST..$80000 for its code, stack, state and both
+; screen pages, at fixed addresses. At autostart GEMDOS has given none of
+; it away; from the desktop it may have, so it is taken only if it is
+; ours. TOS starts a cartridge program as it starts any other, as a
+; process: (sp) is a return address of 0 and 4(sp) the basepage GEMDOS
+; made for it, whose TPA is the largest free block. The window has to
+; lie in that TPA, or in the screen memory above it (on a 512 KB
+; machine $78000 is TOS's screen, which is never in the free pool).
+; Anything else -- a resident program, a ramdisk, a driver's buffers --
+; and we stop, rather than overwrite it.
 ;
-; Returning from a cartridge entry throws two bombs on the way back to
-; the desktop -- md-net documents it and md-js reproduces it -- so the
-; error paths below are the only ones that return, and quitting the game
-; resets the ST instead.
+; Once the copy starts there is no way back: MD/DOOM owns the machine,
+; and quitting the game resets the ST. The error paths before it end the
+; process with Pterm0. A plain rts would return to that address 0, which
+; is the two bombs md-net documents.
 cart_run:
+	move.l 4(sp), a4			; our basepage, before Super moves the stack
+
 	; Supervisor: everything below reads low memory or takes over the
 	; machine. Keep what Super returns so the error paths can go back.
 	clr.l -(sp)
@@ -475,6 +480,25 @@ cart_run:
 
 	cmp.l #$80000, phystop.w
 	blo .cart_run_no_ram
+
+	; Is the window ours? A basepage's p_lowtpa is its own address,
+	; which tells a real one from anything else that might be at 4(sp).
+	move.l a4, d0
+	btst #0, d0
+	bne .cart_run_in_use
+	cmp.l phystop.w, d0
+	bhs .cart_run_in_use
+	cmp.l (a4), d0				; p_lowtpa
+	bne .cart_run_in_use
+	cmp.l #UFW_RAM_DEST, d0
+	bhi .cart_run_in_use		; the TPA starts inside the window
+	move.l 4(a4), d4			; p_hitpa
+	cmp.l #$80000, d4
+	bhs.s .cart_run_ours		; the TPA covers all of it
+	get_screen_base				; else the rest must be the screen's
+	cmp.l d4, d0
+	bhi .cart_run_in_use		; something lives between the two
+.cart_run_ours:
 
 	; Unlike the autostart path, this one inherits whatever resolution
 	; the desktop is in. Low and high (mono) run as they are; medium
@@ -517,16 +541,25 @@ cart_run:
 	print msg_no_ram
 	bra .cart_run_return
 
+.cart_run_in_use:
+	print banner_txt
+	print msg_in_use
+	bra.s .cart_run_return
+
 .cart_run_bad:
 	print banner_txt
 	print msg_bad_image
 
+	; The desktop clears the screen for a .TOS program and redraws as
+	; soon as it ends, so wait for the user to have read why.
 .cart_run_return:
+	print msg_press_key
+	gemdos Cnecin,2
 	move.l d5, -(sp)
 	move.w #$20, -(sp)			; GEMDOS Super, back to user mode
 	trap #1
 	addq.l #6, sp
-	rts
+	Pterm0
 
 
 
@@ -547,6 +580,13 @@ msg_shift_hint:
 	even
 msg_run_from_c:
 	dc.b $d,$a,"MD/DOOM: Run MDDOOM.TOS from drive c",$d,$a,0
+	even
+msg_in_use:
+	dc.b $d,$a,"MD/DOOM: The RAM it needs is in use.",$d,$a
+	dc.b "Reset to start it from the cartridge.",$d,$a,0
+	even
+msg_press_key:
+	dc.b $d,$a,"Press any key",$d,$a,0
 	even
 
 ; Boot banner, printed above every message either entry path produces.

@@ -30,13 +30,11 @@ boot to the desktop instead. MD/DOOM says so on the boot screen. From
 the desktop you can start it again by opening the cartridge icon (the
 lower-case `c` drive) and running **MDDOOM.TOS**.
 
-> **Start MD/DOOM from the desktop only on a machine with nothing else
-> resident.** MD/DOOM claims a fixed region of memory for its screens,
-> and it does not yet check whether anything else is using it. Anything
-> loaded from your AUTO folder shifts what is where, and the result is
-> bombs a moment after the splash screen. Letting MD/DOOM start on its
-> own from the cartridge is unaffected — it runs before the AUTO folder
-> does — and is the way to play until this is fixed.
+MD/DOOM needs a fixed region of memory for its screens. Started from
+the desktop, it checks that nothing else is using it first; if
+something is (a resident program, a RAM disk), it says so and takes you
+back to the desktop. Letting it start on its own from the cartridge
+always works — it runs before the AUTO folder does.
 
 Quitting restarts your ST and returns you to the desktop. MD/DOOM takes
 the machine over completely while it runs, so there is nothing to hand
@@ -65,12 +63,10 @@ Controls match the original PC Doom:
 
 **Gamepad support is off in this release.** MD/DOOM can read an
 [Xpad](https://github.com/neilrackett/atarist-xpad) gamepad, but only a
-driver loaded from your AUTO folder can provide one, and MD/DOOM
-currently crashes when it is started from the desktop with anything
-resident (see the warning above) — so there is no working route to it
-yet. The crash is not in the gamepad code: it happens just the same
-with gamepad support compiled out. Fixing the memory claim comes first;
-gamepad support goes back on after that.
+driver loaded from your AUTO folder can provide one, so it only works
+when MD/DOOM is started from the desktop. That route used to crash with
+anything resident, and gamepad support goes back on once the fix has
+been proven on real hardware.
 
 A joystick in port 1 moves, turns and fires. The mouse turns and walks,
 with the **right** button to fire and the **left** button held to

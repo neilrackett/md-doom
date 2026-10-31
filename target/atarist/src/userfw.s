@@ -111,7 +111,8 @@ UFW_YM_SEQ            equ $00077F08          ; word: last music packet written t
 UFW_YM_MUSIC          equ $00077F0A          ; byte: $FF = no DMA, and the YM is the music's
 UFW_TWO_VBL           equ $00077F0B          ; byte: $FF = a frame is two VBLs (mono, or no DMA sound)
 UFW_YM_BANK           equ $00077F0C          ; longword: the YM sample bank this VBL plays
-UFW_PAL_LATCH         equ $00077F20          ; 32 B: the palette of the page being copied
+UFW_SP_SAVE           equ $00077F10          ; longword: the stack userfw was entered on
+UFW_PAL_LATCH        equ $00077F20          ; 32 B: the palette of the page being copied
 UFW_PAL_SHOW          equ $0007FF00          ; 32 B: and of the page on screen (page B's tail)
 UFW_HUD_NEXT          equ $00077F40          ; 32 B: status bar palette of the page being copied
 UFW_HUD_SHOW          equ $00077F60          ; 32 B: and of the page on screen
@@ -281,7 +282,15 @@ UFW_SCREEN_B          equ $00078000
 ; KEEP IN STEP with main.s.
 UFW_RAM_DEST          equ $0006E000
 UFW_RAM_SIZE          equ $2000
-UFW_SCREEN_XOR        equ (UFW_SCREEN_A ^ UFW_SCREEN_B)
+; userfw's own stack, at the top of that window above the image. It
+; cannot keep the one it was entered on: from the desktop that is the
+; top of the program's TPA, which on a 512 KB machine is $77FF8, in the
+; middle of the state above, and the interrupt frames pushed there
+; overwrote UFW_SCREEN_PAGE. The build fails at the end of this file if
+; the image leaves less than UFW_STACK_SIZE.
+UFW_STACK_TOP         equ (UFW_RAM_DEST + UFW_RAM_SIZE)
+UFW_STACK_SIZE        equ 512
+UFW_SCREEN_XOR       equ (UFW_SCREEN_A ^ UFW_SCREEN_B)
 
 UFW_FB_SRC            equ $00FA8300           ; FRAMEBUFFER_ADDR
 
@@ -655,6 +664,11 @@ userfw_image_start:
 
 userfw:
     ; --- Boot setup (runs once) ---
+
+    ; Our own stack before anything is pushed (UFW_STACK_TOP); the old
+    ; one is put back for the return to GEM.
+    move.l  sp, UFW_SP_SAVE
+    lea     UFW_STACK_TOP, sp
 
     ; Save the original screen base so we can restore it on ESC exit.
     move.w  #2, -(sp)                ; XBIOS Physbase
@@ -1560,6 +1574,7 @@ userfw:
     move.w  #5, -(sp)                 ; XBIOS Setscreen
     trap    #14
     lea     12(sp), sp
+    movea.l UFW_SP_SAVE, sp           ; the caller's stack, for its return address
     rts
 
 ; -------------------------------------------------------------------
@@ -1761,7 +1776,7 @@ userfw_image_end:
 
 ; Build-time guard: the destination is a fixed 8 KB window immediately
 ; below screen page A, so an image that outgrows it would silently
-; overrun the screen.
-    ifgt (userfw_image_end - userfw_image_start) - UFW_RAM_SIZE
-    fail "userfw image is larger than UFW_RAM_SIZE"
+; overrun the screen -- and before that, the stack at its top.
+    ifgt (userfw_image_end - userfw_image_start) - (UFW_RAM_SIZE - UFW_STACK_SIZE)
+    fail "userfw image leaves less than UFW_STACK_SIZE of UFW_RAM_SIZE for the stack"
     endc
