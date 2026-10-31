@@ -54,7 +54,7 @@
 
 static uint8_t s_playpal[768];   /* last installed page, RGB           */
 static bool s_have_playpal;
-static doom_video_palette_t s_pal_mode = DOOM_VIDEO_PAL_SUBSET;
+static doom_video_palette_t s_pal_mode = DOOM_VIDEO_PAL_ADAPTIVE;
 static doom_video_dither_t s_dither = DOOM_VIDEO_DITHER_BAYER4;
 
 static bool s_mono;               /* ST high res: 640x400, one bit a pixel */
@@ -551,10 +551,10 @@ static uint64_t adapt_error(const uint8_t lvl[16][3], unsigned max) {
 
 /* Snap the centres to levels, with hysteresis, and fill in the pens.
  * Frozen pens keep theirs. A new set is only taken if it serves the
- * histogram ADAPT_GATE better than the one on screen: every change of
- * palette makes the publish wait for a fresh ack, and offline (on a
- * run through E1M1) this cut the changes from 22% of frames to 7% for
- * an error 2% higher. True if any pen changed. */
+ * histogram ADAPT_GATE better than the one on screen: offline (on a
+ * run through E1M1) this cut the changes from 22% of frames to 7%, and
+ * the flicker of still parts of the picture with them, for an error 2%
+ * higher. True if any pen changed. */
 #define ADAPT_GATE 16 /* in sixteenths: 15/16 of the error, ~6% better */
 
 static bool adapt_snap(adapt_t *a, uint16_t frozen) {
@@ -803,7 +803,7 @@ static void rebuild(void) {
 
 void doom_video_init(void) {
   s_have_playpal = false;
-  s_pal_mode = DOOM_VIDEO_PAL_SUBSET;
+  s_pal_mode = DOOM_VIDEO_PAL_ADAPTIVE;
   s_dither = DOOM_VIDEO_DITHER_BAYER4;
   s_convert_us = 0;
 }
@@ -830,15 +830,11 @@ void doom_video_set_dither(doom_video_dither_t mode) {
 
 doom_video_palette_t doom_video_get_palette_mode(void) { return s_pal_mode; }
 
-/* Adaptive straight after STDOOM's, the two worth comparing, then the
- * rest in order. */
+/* From the adaptive default to STDOOM's, the two worth comparing, then
+ * the rest in order and round to adaptive again. */
 doom_video_palette_t doom_video_next_palette(doom_video_palette_t mode) {
-  switch (mode) {
-    case DOOM_VIDEO_PAL_SUBSET: return DOOM_VIDEO_PAL_ADAPTIVE;
-    case DOOM_VIDEO_PAL_ADAPTIVE: return DOOM_VIDEO_PAL_GENERATED;
-    case DOOM_VIDEO_PAL_PICO8: return DOOM_VIDEO_PAL_SUBSET;
-    default: return (doom_video_palette_t)((mode + 1) % DOOM_VIDEO_PAL_COUNT);
-  }
+  if (mode == DOOM_VIDEO_PAL_ADAPTIVE) return DOOM_VIDEO_PAL_SUBSET;
+  return (doom_video_palette_t)((mode + 1) % DOOM_VIDEO_PAL_COUNT);
 }
 
 doom_video_dither_t doom_video_get_dither(void) { return s_dither; }
@@ -956,39 +952,20 @@ static inline void __not_in_flash_func(doom_c2p_block_bn)(uint32_t *dst, const u
 
 static bool s_use_bn; /* latched per frame from s_dither */
 
-/* The palette words last written to the cart slots: the view's, the
- * bar's, and the split flag. */
-static uint16_t s_published[2 * 16 + 1];
-static uint32_t s_pal_syncs; /* debug: publishes that waited for a fresh ack */
-
-/* Wait for the m68k's blit ack and send the palette, if it changed.
- * fb_wait_blit_ack takes any ack since the last publish, so a frame
- * finished late in a VBL lands while the m68k is copying and tears.
- * With the same pens the tear is only a seam; with new ones the m68k
- * has already latched the old palette for that copy, and the part of
- * the frame it reads after the write would be shown in the wrong
- * colours. So a new palette waits for the next ack, which costs up to
- * a VBL, and goes out with its pixels in the window that follows. */
+/* Wait for the m68k's window and send the palette words with the frame:
+ * the view's, the bar's, and the split flag. The m68k latches them as
+ * it starts copying the frame, so they are shown with it. */
 static void publish_begin(void) {
-  uint16_t words[2 * 16 + 1];
-  memcpy(words, s_st_colors, 32);
-  if (s_split) {
-    memcpy(&words[16], s_hud.st, 32);
-  } else {
-    memset(&words[16], 0, 32);
-  }
-  words[32] = s_split;
-  if (s_mono || !memcmp(s_published, words, sizeof(words))) {
-    fb_wait_blit_ack();
-    return;
-  }
-  fb_wait_next_blit_ack();
+  fb_wait_blit_ack();
+  if (s_mono) return;
   uint8_t *cart = (uint8_t *)fb_screen.framebuffer - CART_FRAMEBUFFER_OFFSET;
   palette_set(s_st_colors);
-  memcpy(cart + CART_HUD_PALETTE_OFFSET, &words[16], 32);
-  *(volatile uint16_t *)(cart + CART_SPLIT_OFFSET) = words[32];
-  memcpy(s_published, words, sizeof(words));
-  s_pal_syncs++;
+  if (s_split) {
+    memcpy(cart + CART_HUD_PALETTE_OFFSET, s_hud.st, sizeof(s_hud.st));
+  } else {
+    memset(cart + CART_HUD_PALETTE_OFFSET, 0, sizeof(s_hud.st));
+  }
+  *(volatile uint16_t *)(cart + CART_SPLIT_OFFSET) = s_split;
 }
 
 static inline void __not_in_flash_func(doom_c2p_block_any)(uint32_t *dst, const uint8_t *src,
@@ -1178,15 +1155,14 @@ void doom_video_publish(void) {
     extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
     char prof[96];
     md_prof_report(prof, sizeof(prof));
-    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | pal syncs %lu | audio core %d mode %d len %lu: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
+    DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | audio core %d mode %d len %lu: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
             doom_video_dither_name(s_dither), (unsigned long)s_convert_us,
             (unsigned long)(s_frame_max_us / 1000u), (unsigned long)fb_debug_wait_max_us(),
-            (unsigned long)s_pal_syncs, audio_vbl_timer_core(), (int)audio_get_mode(), (unsigned long)audio_get_fill_bytes(), (unsigned long)cbs,
+            audio_vbl_timer_core(), (int)audio_get_mode(), (unsigned long)audio_get_fill_bytes(), (unsigned long)cbs,
             (unsigned long)fills, (unsigned long)fill_max, (unsigned long)cb_max,
             (unsigned long)md_sound_dbg_starts, (unsigned long)md_sound_dbg_max_playing, prof);
     md_sound_dbg_starts = md_sound_dbg_max_playing = 0;
     s_frame_max_us = 0;
-    s_pal_syncs = 0;
   }
 #endif
 }

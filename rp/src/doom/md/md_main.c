@@ -239,7 +239,7 @@ void doomgame_start(const char *folder) {
     int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
     if (v >= 0 && v < (int)DOOM_VIDEO_DITHER_COUNT) doom_video_set_dither((doom_video_dither_t)v);
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_PALETTE);
-    v = e ? atoi(e->value) : (int)DOOM_VIDEO_PAL_SUBSET;
+    v = e ? atoi(e->value) : (int)DOOM_VIDEO_PAL_ADAPTIVE;
     if (v >= 0 && v < (int)DOOM_VIDEO_PAL_COUNT) doom_video_set_palette_mode((doom_video_palette_t)v);
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
     v = e ? atoi(e->value) : 10;

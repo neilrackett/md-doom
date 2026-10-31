@@ -42,8 +42,10 @@
  * first half of a frame, which is a VBL (the audio refill takes it) but
  * leaves half the cart FB still to be read. */
 #define FB_VBLSYNC_HIBYTE   0x8400u
-/* Display report, one read per VBL: $FB9000 + 1 when the ST is in high
- * res on a mono monitor (VIDEO_WINDOW_BASE in userfw.s). */
+/* Display report, the first read of every VBL: $FB9000 + 1 when the ST
+ * is in high res on a mono monitor (VIDEO_WINDOW_BASE in userfw.s). It
+ * also closes the window a frame ack opens: the m68k is about to read
+ * the cart FB and the palette slots again. */
 #define FB_VIDEO_HIBYTE     0x9000u
 /* Relocation heartbeat, one read per VBL from the m68k -- see
  * RELOC_WINDOW_BASE in userfw.s. Emitted only from the relocated copy
@@ -66,6 +68,7 @@ static volatile uint32_t s_vbl_seen;
 static volatile uint32_t s_reloc_seen;
 static uint32_t s_vbl_published;
 static volatile bool s_st_mono;
+static volatile bool s_in_window; /* a frame ack, and no VBL since */
 
 /* Boot splash, painted once by fb_init (defined below). */
 static void fb_render_frame(void);
@@ -160,9 +163,11 @@ static void fb_rom3_dispatch(uint16_t sample) {
   audio_consume_rom3_sample(sample);
   if (sample == FB_VBLSYNC_HIBYTE) {
     s_vbl_seen++;
+    s_in_window = true;
   }
   if ((sample & FB_WINDOW_HIMASK) == FB_VIDEO_HIBYTE) {
     s_st_mono = (sample & 1u) != 0u;
+    s_in_window = false;
   }
   if ((sample & FB_WINDOW_HIMASK) == FB_RELOC_HIBYTE &&
       (sample & 0xFFu) == FB_RELOC_PROTOCOL) {
@@ -248,12 +253,17 @@ uint32_t fb_debug_wait_max_us(void) {
 }
 
 void fb_wait_blit_ack(void) {
-  /* Block until the m68k has finished blitting the previous frame (its
-   * VBLSYNC ack) so the cart FB is free to overwrite. Drain the ROM3
-   * ring meanwhile so IKBD stays live; the timeout is a safety net for
-   * "m68k not running" (e.g. at boot). */
+  /* Block until the cart FB is free: the m68k has acked a frame since
+   * the last publish (VBLSYNC) and has not started another VBL since
+   * (its display report, the first thing it reads). Any ack since the
+   * last publish used to do, however old, so a frame finished late in
+   * a VBL was written while the m68k copied it, and tore. The ring is
+   * captured as it happens, so once it is drained the last of the two
+   * says where the m68k is. Drain it meanwhile so IKBD stays live; the
+   * timeout is a safety net for "m68k not running" (e.g. at boot). */
   uint32_t t_wait = time_us_32();
-  while (s_vbl_seen == s_vbl_published) {
+  fb_pump_rom3();
+  while (!s_in_window || s_vbl_seen == s_vbl_published) {
     fb_pump_rom3();
     if (time_us_32() - t_wait > FB_VSYNC_TIMEOUT_US) {
       break;
@@ -262,12 +272,6 @@ void fb_wait_blit_ack(void) {
   s_vbl_published = s_vbl_seen;
   const uint32_t waited = time_us_32() - t_wait;
   if (waited > s_dbg_wait_max_us) s_dbg_wait_max_us = waited;
-}
-
-void fb_wait_next_blit_ack(void) {
-  fb_pump_rom3(); /* every ack so far is stale */
-  s_vbl_published = s_vbl_seen;
-  fb_wait_blit_ack();
 }
 
 void fb_frame_done(void) {

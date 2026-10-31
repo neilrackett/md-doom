@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Neil Rackett
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 #include "include/aconfig.h"
 
 // Per-app settings: the pack folder and the saved video and sound options.
@@ -5,7 +10,7 @@ static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_FOLDER, SETTINGS_TYPE_STRING, "/doom"},
     {ACONFIG_PARAM_MODE, SETTINGS_TYPE_INT, "255"},  // 255: Menu mode
     {ACONFIG_PARAM_DITHER, SETTINGS_TYPE_INT, "2"},   // 4x4 Bayer
-    {ACONFIG_PARAM_PALETTE, SETTINGS_TYPE_INT, "0"},  // STDOOM's 16
+    {ACONFIG_PARAM_PALETTE, SETTINGS_TYPE_INT, "8"},  // adaptive (DOOM_VIDEO_PAL_ADAPTIVE)
     {ACONFIG_PARAM_SCRNSIZE, SETTINGS_TYPE_INT, "10"},  // view + status bar
     {ACONFIG_PARAM_YMMUSIC, SETTINGS_TYPE_INT, "0"},    // no DMA sound: effects on the YM
 };

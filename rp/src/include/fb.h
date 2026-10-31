@@ -80,18 +80,13 @@ void fb_publish(void);
 /** @brief The two halves of fb_publish() for callers that write the
  *         cart FB by their own route (MD/DOOM's fused palette-reduce +
  *         c2p): block until the m68k has finished blitting the previous
- *         frame, then, after writing, mark the new frame ready. Anything
- *         written to the cart FB must happen between the two, inside the
- *         m68k's post-blit slack. */
+ *         frame and not yet started its next VBL, then, after writing,
+ *         mark the new frame ready. Anything written to the cart FB or
+ *         the palette slots must start between the two, inside the
+ *         m68k's post-blit slack. A frame finished just after the next
+ *         VBL waits up to a VBL for the following one. */
 void fb_wait_blit_ack(void);
 void fb_frame_done(void);
-
-/** @brief fb_wait_blit_ack(), but only an ack that arrives after the
- *         call counts. fb_wait_blit_ack() takes any ack since the last
- *         publish, however long ago, so a frame finished late in a VBL
- *         is written while the m68k is copying and tears; waiting for the
- *         next one costs up to a VBL. For frames that must not tear. */
-void fb_wait_next_blit_ack(void);
 
 /* Debug: longest fb_wait_blit_ack since the last call, in microseconds. */
 uint32_t fb_debug_wait_max_us(void);

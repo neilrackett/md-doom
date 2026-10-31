@@ -411,10 +411,11 @@ VBLSYNC_ADDR          equ $FB8400
 ; keys off it. The RP tells the two apart by the low byte.
 VBLSYNC_HALF_ADDR     equ (VBLSYNC_ADDR + 1)
 
-; Display report: the m68k reads (VIDEO_WINDOW_BASE + UFW_MONO) once per
-; VBL, before the sound reports, so the RP knows which picture to draw
-; and how many YM samples a 71 Hz VBL takes. Distinct from every other
-; window here.
+; Display report: the m68k reads (VIDEO_WINDOW_BASE + UFW_MONO) first
+; thing every VBL, before it touches the cart FB or the palette slots,
+; so the RP knows which picture to draw and how many YM samples a 71 Hz
+; VBL takes, and when the frame ack's window has closed. Distinct from
+; every other window here.
 VIDEO_WINDOW_BASE     equ $FB9000
 
 ; --- STE/Mega STE DMA sound (auto-detected at runtime) -----------
@@ -1046,6 +1047,15 @@ userfw:
     tst.w   UFW_VBL_FLAG.w
     bne.s   .wait_vbl
 
+    ; Report the display to the RP, first thing every VBL: one cart-bus
+    ; read at VIDEO_WINDOW_BASE + mono. Being first, it also tells the
+    ; RP the cart FB is about to be read again, which closes the window
+    ; the frame ack opened (fb_wait_blit_ack). A1/D1 are scratch.
+    moveq   #0, d1
+    move.b  UFW_MONO, d1
+    lea     VIDEO_WINDOW_BASE, a1
+    tst.b   (a1, d1.w)
+
     ifne    FBDRV_DEBUG_MARKS
     move.w  #BLIT_MARK_VSYNC, PALETTE_IDX0.w   ; border = vsync mark
     endc
@@ -1147,13 +1157,6 @@ userfw:
     endc
 
 .after_copy:
-
-    ; Report the display to the RP every VBL, ahead of the sound reports:
-    ; one cart-bus read at VIDEO_WINDOW_BASE + mono. A1/D1 are scratch.
-    moveq   #0, d1
-    move.b  UFW_MONO, d1
-    lea     VIDEO_WINDOW_BASE, a1
-    tst.b   (a1, d1.w)
 
     ; Report sound capability to the RP every VBL: one cart-bus read at
     ; SNDCAP_WINDOW_BASE + has_dma. The RP's commemul ring decodes the

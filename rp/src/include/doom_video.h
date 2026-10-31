@@ -52,7 +52,7 @@ typedef enum {
   DOOM_VIDEO_PAL_C64,
   DOOM_VIDEO_PAL_ZX,
   DOOM_VIDEO_PAL_PICO8,
-  DOOM_VIDEO_PAL_ADAPTIVE,   /* 16 chosen for each frame's content   */
+  DOOM_VIDEO_PAL_ADAPTIVE,   /* 16 chosen for each frame (default)   */
   DOOM_VIDEO_PAL_COUNT
 } doom_video_palette_t;
 
@@ -66,7 +66,7 @@ typedef enum {
   DOOM_VIDEO_DITHER_COUNT
 } doom_video_dither_t;
 
-/* Reset to the defaults (subset palette, 4x4 Bayer) with no PLAYPAL
+/* Reset to the defaults (adaptive palette, 4x4 Bayer) with no PLAYPAL
  * installed; nothing publishes until doom_video_set_playpal(). */
 void doom_video_init(void);
 

@@ -144,7 +144,7 @@ The firmware is a **two-target build**: m68k assembly that runs on the Atari ST 
 End-to-end, every visible pixel on the ST goes through this path each VBL:
 
 1. **RP draws into a chunked off-screen buffer** at RP `0x20000000+` (`fb_chunked_buffer`, 320×200 bytes = 64 KB, one byte per pixel). For the framework's own path the palette index is in the low nibble; **for MD/DOOM the byte is a full PLAYPAL index** and the buffer doubles as the engine's video buffer (see "Video" below). `fb_font.c` writes text.
-2. **RP publishes via chunky-to-planar conversion, straight into the cart FB.** Both paths first block on the m68k's blit ack (`fb_wait_blit_ack`, a cart-bus read at `$FB8400` after each blit) and then write the cart FB at `$FA8300` (RP `0x20030000 + 0x8300`) inside the m68k's ~3 ms post-blit slack, ending with `fb_frame_done` (the frame counter bump). There is **no planar scratch buffer** — md-lynx's 32 KB went to the game — so the write is in place and must never spill past the next VBL or the m68k blits a torn frame. The framework path (`fb_publish` → `fb_chunky_to_planar`) transposes the low nibbles with the Thumb worker `fb_c2p_half` (for each 4-pixel uint32 group, plane K's 4-bit nibble = `((q >> K) & 0x01010101) * 0x80402010 >> 28`), one 96-pixel MOVEM chunk at a time; MD/DOOM's path (`doom_video_publish`) does the same transpose in C but maps each byte through the 16-colour dither LUT on the way in. Either way chunk k of the image lands at cart chunk (665-k) — the 48-byte m68k MOVEM chunks **pre-reversed** so the predec store in step 3 lands each at its natural position (see "Framebuffer chunk layout for the m68k MOVEM blit" in `cart_shared.h`; `fb_cart_offset()` is the mapping) — and the work is split between **Core 0 (chunks 0–332) and Core 1 (333–665)**, synced via the inter-core FIFO. ~1 ms per frame.
+2. **RP publishes via chunky-to-planar conversion, straight into the cart FB.** Both paths first block until the m68k is between its blit ack and its next VBL (`fb_wait_blit_ack`: a cart-bus read at `$FB8400` after each blit opens the window, the display report at `$FB9000`, the first read of every VBL, closes it) and then write the cart FB at `$FA8300` (RP `0x20030000 + 0x8300`) inside the m68k's ~3 ms post-blit slack, ending with `fb_frame_done` (the frame counter bump). There is **no planar scratch buffer** — md-lynx's 32 KB went to the game — so the write is in place and must never spill past the next VBL or the m68k blits a torn frame. The framework path (`fb_publish` → `fb_chunky_to_planar`) transposes the low nibbles with the Thumb worker `fb_c2p_half` (for each 4-pixel uint32 group, plane K's 4-bit nibble = `((q >> K) & 0x01010101) * 0x80402010 >> 28`), one 96-pixel MOVEM chunk at a time; MD/DOOM's path (`doom_video_publish`) does the same transpose in C but maps each byte through the 16-colour dither LUT on the way in. Either way chunk k of the image lands at cart chunk (665-k) — the 48-byte m68k MOVEM chunks **pre-reversed** so the predec store in step 3 lands each at its natural position (see "Framebuffer chunk layout for the m68k MOVEM blit" in `cart_shared.h`; `fb_cart_offset()` is the mapping) — and the work is split between **Core 0 (chunks 0–332) and Core 1 (333–665)**, synced via the inter-core FIFO. ~1 ms per frame.
 3. **m68k blits cart FB → ST screen page** inside `userfw.s`'s VBL loop via the `FBDRV_INLINE` macro — a fully unrolled `movem.l (a6)+, d0-d7/a1-a4` load + `movem.l d0-d7/a1-a4, -(a5)` predec store (**12 longwords / 48 bytes per iter, 666 iterations** for the full 200-line low-res FB, plus a `d16(a5)` MOVEM tail copying the last 32 bytes). A0 and A7 are intentionally omitted from the MOVEM list: A0 is the dedicated YM sample cursor, and A7 keeps the supervisor SP valid so IRQs can fire safely during the macro. Pure 68000 CPU, no STE blitter, no `_MCH` cookie dispatch — same code runs on plain ST / STE / MegaSTE / TT / Falcon.
 4. **m68k flips video base** to the page it just wrote. `userfw.s` toggles between `$70000` and `$78000` every frame (`UFW_SCREEN_PAGE` XOR `UFW_SCREEN_XOR`), so the display always reads from a stable page while the next blit fills the other.
 5. **PALETTE_IDX0 (`$FFFF8240`) doubles as a timing tape-measure** when `FBDRV_DEBUG_MARKS` is 1 — `userfw.s` writes it at three points so the ST border shows the blit cost as colored bands. (In mono, where bit 0 of that register is the screen's polarity, the marks invert the picture instead.)
@@ -359,7 +359,7 @@ tint, and the rebuild is cheap enough not to cache the 14 pages).
 
 The 16 colours come from one of nine sources (`doom_video_palette_t`):
 STDOOM's hand-picked subset of PLAYPAL indices (Jonas Eschenburg's, refined
-over a long time on the shareware WAD; the default), a median-cut + k-means
+over a long time on the shareware WAD), a median-cut + k-means
 palette generated from the current page, a 16-step grey ramp, and the fixed
 EGA, CGA (palette 1, four colours — the reducer handles a reference set
 smaller than 16), C64, ZX Spectrum and PICO-8 palettes. The five fixed
@@ -371,7 +371,7 @@ brightness), the colour's brightness is stretched with a gamma of 0.75,
 and the dither runs along a brightness ladder of black plus every pen of
 that hue (EGA's dark and bright pairs, C64's greys). Checked on the host
 against a Python prototype of the same arithmetic. The ninth, **adaptive**
-(`adapt_*`, keypad `/` straight after STDOOM's), chooses the 16 for each
+(`adapt_*`, the default; keypad `/` goes from it to STDOOM's), chooses the 16 for each
 frame: a histogram of the frame's PLAYPAL indices (every other pixel of
 every other row), weighted k-means in 2:4:3 weighted RGB starting from the
 last frame's centres (two steps a frame, eight from scratch), each centre
@@ -403,11 +403,10 @@ latches the slot into `UFW_PAL_LATCH` as it starts copying a frame and
 applies the latch at the next VBL, when that page goes on screen (it
 used to apply the slot straight away, a frame early); the status bar's
 palette and split flag are latched the same way (`UFW_HUD_NEXT` →
-`UFW_HUD_SHOW`, $77F40..$77F85). A publish whose
-palette words changed waits for a fresh ack (`fb_wait_next_blit_ack`);
-see "Direct c2p tearing" for why. The debug line's `pal syncs` counts
-them: 1 to 11 in 64 frames while moving in Hatari, none standing still.
-The adaptive state costs ~1.2 KB of RAM (the histogram, two palettes'
+`UFW_HUD_SHOW`, $77F40..$77F85). That only works if the RP writes
+them in the window between the ack and the next VBL, which
+`fb_wait_blit_ack` now guarantees (see "Direct c2p tearing"). The
+adaptive state costs ~1.2 KB of RAM (the histogram, two palettes'
 state, the bar's table) plus ~0.5 KB more RAM-resident c2p code. Dither modes:
 nearest, 2×2 Bayer, 4×4 Bayer (default), 4×4 clustered-dot, and blue noise
 (md-mjpeg's 32×32 void-and-cluster tile, `bluenoise.h`, regenerated by
@@ -711,14 +710,17 @@ revisited in order of visible payoff.
   Core 1 starts at the cart FB's first byte and stays ahead of the next
   copy, and Core 0's half is not reached until ~9 ms into it: a
   conversion only has to *start* before the VBL, which covers blue
-  noise too. Before, cart chunk 0 was the last one written. Worse:
-  `fb_wait_blit_ack` accepts any ack since the last publish, however
-  old, so a frame finished late in a VBL is written while the m68k is
-  copying ("ack wait max 0 us") and tears. With one buffer the publish
-  cannot finish before the copy does, so a real wait costs up to a VBL a
-  frame; only publishes that change the palette pay it
-  (`fb_wait_next_blit_ack`), because a tear across a palette change
-  shows part of the frame in the wrong colours.
+  noise too. Before, cart chunk 0 was the last one written.
+  `fb_wait_blit_ack` used to accept any ack since the last publish,
+  however old, so a frame finished late in a VBL was written while the
+  m68k copied it ("ack wait max 0 us") and tore, and with the adaptive
+  palette part of it showed in the wrong colours. It now waits for the
+  window between an ack and the next VBL: the m68k reads its display
+  report (`$FB9000`) first thing every VBL, and the capture ring keeps
+  the order of the reads, so once it is drained the last of the two
+  says where the m68k is. The cost is frame rate: with one buffer a
+  frame finished outside the window waits up to a VBL for the next, so
+  a game rendering at 30-odd frames a second gets 25.
 - **The renderer's work area is taken from the zone, not carved out at
   build time** (`pd_alloc_work_area` in `pd_render.cpp`, called at the
   end of `P_SetupLevel` and once from `pd_init` for the screens before

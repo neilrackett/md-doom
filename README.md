@@ -10,7 +10,7 @@ The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
 MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too (without it, you choose music or sound effects).
 
-A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed the default colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
+A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed a colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
 
 ## Installation
 
@@ -96,7 +96,7 @@ setting; your choice is remembered. The sizes in between are not
 available, because this renderer cannot draw a narrower view.
 
 Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
-Colour palettes: STDOOM (default), adaptive, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
+Colour palettes: adaptive (default), STDOOM, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
 
 The adaptive palette picks the 16 colours for each frame from what is on screen. Dark corridors get dark shades and brown rooms get browns, so there is less dither and less colour cast than with a fixed palette. The status bar gets 16 colours of its own as well, switched in part-way down the screen.
 
