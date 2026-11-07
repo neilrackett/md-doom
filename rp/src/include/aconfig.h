@@ -29,7 +29,7 @@ extern "C" {
 /* The one-off settings changes a firmware has made (md_main.c): 0 for a
  * config from before any, which is what flash without the key reads as. */
 #define ACONFIG_PARAM_CFGVER "CFGVER"
-#define ACONFIG_CFGVER 1 /* 1: the adaptive palette, once, for every install */
+#define ACONFIG_CFGVER 2 /* 1: the adaptive palette, 2: music without DMA sound; each once */
 
 #define ACONFIG_SUCCESS 0
 #define ACONFIG_INIT_ERROR -1

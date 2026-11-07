@@ -206,11 +206,21 @@ void doomgame_start(const char *folder) {
   extern void I_MD_MusicSetFolder(const char *folder);
   I_MD_MusicSetFolder(s_folder); /* the songs live beside the packs */
   /* Without DMA sound: whether the music plays too (keypad )). Read
-   * before the first pack loads, whose screen depends on it. */
+   * before the first pack loads, whose screen depends on it. It became
+   * the default with CFGVER 2, when the music began to play beside the
+   * effects rather than instead of them, and every install gets it once,
+   * as with the palette; from then on its own choice stands. */
   extern bool I_MD_MusicSetYm(bool music);
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);
-    I_MD_MusicSetYm(e && atoi(e->value) != 0);
+    bool music = !e || atoi(e->value) != 0;
+    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_CFGVER);
+    if (!e || atoi(e->value) < 2) {
+      extern void I_MD_SaveVideoSettings(void);
+      music = true;
+      I_MD_SaveVideoSettings(); /* written, with the CFGVER, at the first frame */
+    }
+    I_MD_MusicSetYm(music);
   }
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
