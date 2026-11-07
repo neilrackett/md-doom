@@ -119,7 +119,9 @@ A plain ST has no DMA sound, so its YM2149 is busy playing the sound effects. Pr
 
 Your SidecarT has only got 1,152KB available for both code and data, and the smallest we can compress the shareware WAD to is 1,758KB, so MD/DOOM loads level packs one at a time (maximum ~768KB each), which contain just the map, sprites, textures, flats and sounds needed. We also had to drop the help and credits screens, have monsters that always face you, and sound effects at 5 kHz.
 
-If you'd like to build the level packs yourself, you'll need [the `DOOM1.WAD` from the Shareware version of Doom](https://ia800601.us.archive.org/view_archive.php?archive=/26/items/doom-wads/Doom%20%28v1.9%29%20%28Demo%29.zip); it should work with the full level packs, but this is untested.
+The release builds them for you, but if you'd like to build them yourself, `make packs` does it all: it downloads the shareware `DOOM1.WAD` and the source of rp2040-doom's `whd_gen` (both pinned, in `tools/build_data.sh`), builds the packs and the music, and zips them as the release ships them, into `dist/mddoom-level-packs.zip`. You'll need git, cmake, a C++ compiler and Python 3.
+
+To do it by hand, or with another WAD, you'll need [the `DOOM1.WAD` from the Shareware version of Doom](https://ia800601.us.archive.org/view_archive.php?archive=/26/items/doom-wads/Doom%20%28v1.9%29%20%28Demo%29.zip); it should work with the full level packs, but this is untested.
 
 ```bash
 git clone --depth 1 https://github.com/kilograham/rp2040-doom /tmp/rp2040-doom

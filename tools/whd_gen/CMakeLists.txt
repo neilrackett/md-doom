@@ -31,4 +31,7 @@ target_compile_definitions(whd_gen PRIVATE IS_WHD_GEN=1)
 # harmless, so silence it (and the deprecation noise) rather than patch
 # the checkout.
 target_compile_options(whd_gen PRIVATE -w -Wno-missing-template-arg-list-after-template-kw)
+# And recent GCC no longer brings in <cstdint> with the other headers,
+# which upstream relied on for uint8_t and INT32_MAX.
+target_compile_options(whd_gen PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-include cstdint>)
 target_include_directories(whd_gen PRIVATE ${SRC}/whd_gen ${SRC} ${SRC}/doom ${SRC}/adpcm-xq)

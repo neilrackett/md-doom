@@ -1,9 +1,10 @@
 name: Release
 
-# Rolling release: build with make, tag the version, move the
-# lightweight "latest" tag to this commit, and replace the binaries on
-# the existing "latest" release. The release's title and body are left
-# exactly as they are: gh release upload touches assets only.
+# Rolling release: build with make, and the SD card data with make packs,
+# tag the version, move the lightweight "latest" tag to this commit, and
+# replace the firmware and the data on the existing "latest" release. The
+# release's title and body are left exactly as they are: gh release
+# upload touches assets only.
 
 on:
   # Anything landing on main is a release: a merge, or a direct push,
@@ -95,6 +96,23 @@ jobs:
         APP_UUID_KEY: ${{ secrets.APP_UUID_KEY }}
       run: make
 
+    - name: Cache the shareware WAD
+      # tools/build_data.sh fetches DOOM1.WAD from ataritt-doom's release
+      # and checks it against the checksum it pins (fetching it again if
+      # that ever changes), so the cache only saves the download.
+      uses: actions/cache@v4
+      with:
+        path: build/data/DOOM1.WAD
+        key: doom1-wad-v1.9-shareware
+
+    - name: Build the level packs and music
+      # The SD card data, as dist/mddoom-level-packs.zip: the level packs
+      # and the songs, built from the shareware WAD with whd_gen from
+      # rp2040-doom at the commit tools/build_data.sh pins. After the
+      # firmware, as build.sh empties dist/. A pack too big for
+      # PACK_FLASH (memmap_rp.ld) fails the run here.
+      run: make packs
+
     - name: Tag the version and move latest
       run: |
         VERSION=$(tr -d '\r\n' < version.txt)
@@ -106,11 +124,12 @@ jobs:
         git tag -f latest
         git push origin "refs/tags/$VERSION" +refs/tags/latest
 
-    - name: Replace the binaries on the latest release
+    - name: Replace the firmware and data on the latest release
       env:
         GH_TOKEN: ${{ github.token }}
         UUID: ${{ secrets.APP_UUID_KEY }}
       run: |
         VERSION=$(tr -d '\r\n' < version.txt)
         cp "dist/$UUID-$VERSION.uf2" "dist/$UUID.uf2"
-        gh release upload latest "dist/$UUID.uf2" "dist/$UUID.json" --clobber
+        gh release upload latest "dist/$UUID.uf2" "dist/$UUID.json" \
+          dist/mddoom-level-packs.zip --clobber

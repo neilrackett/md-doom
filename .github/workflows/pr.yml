@@ -1,7 +1,8 @@
 name: PR
 
-# Does it build? That is the whole job. This runs the same `make` as
-# release.yml, so a PR that would break the release fails here instead,
+# Does it build? That is the whole job. This runs the same `make` and
+# `make packs` as release.yml, so a PR that would break the release (a
+# level pack too big to load, say) fails here instead,
 # but it tags nothing, publishes nothing and keeps no artifacts. There
 # is no host test suite in this repo -- verification is a build, a UF2
 # that boots and the serial log; see AGENTS.md.
@@ -72,3 +73,19 @@ jobs:
       # UUID, which is all a build check needs, and it keeps this working
       # for pull requests from forks, where secrets are not available.
       run: make
+
+    - name: Cache the shareware WAD
+      # tools/build_data.sh fetches DOOM1.WAD from ataritt-doom's release
+      # and checks it against the checksum it pins (fetching it again if
+      # that ever changes), so the cache only saves the download.
+      uses: actions/cache@v4
+      with:
+        path: build/data/DOOM1.WAD
+        key: doom1-wad-v1.9-shareware
+
+    - name: Build the level packs and music
+      # The SD card data, as release.yml builds it (but publishes nothing
+      # from here): the level packs and the songs, from the shareware WAD
+      # with whd_gen from rp2040-doom at the commit tools/build_data.sh
+      # pins. A pack too big for PACK_FLASH (memmap_rp.ld) fails the run.
+      run: make packs
