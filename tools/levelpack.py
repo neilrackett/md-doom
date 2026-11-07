@@ -31,9 +31,10 @@ Levers, largest first (sizes measured on the shareware WAD):
   --sfx-rate N    resample sound effects down to N Hz (Doom's are 11025;
                   5000 is what fits the shareware episode)   ~-130 KB
 
-It also writes the music, D_*.STM (see ymmusic.py), unless given
---no-music. The songs are not part of the packs: they stay on the SD
-card, next to them, and are read from there as they play.
+It also writes the music unless given --no-music: the songs as they
+are in the WAD (D_*.MUS) and the instruments they are played with
+(GENMIDI.OP2, the GENMIDI lump). They are not part of the packs: they
+stay on the SD card, next to them, and are read from there as they play.
 
 `--doom-src` points at the engine's doom/ directory (info.c and info.h
 are parsed for the state and mobj tables, so the mapping follows the
@@ -328,6 +329,23 @@ def resample_sfx(lump, rate):
     return struct.pack('<HHI', fmt, rate, len(out)) + out
 
 
+def write_music(lumps, outdir):
+    """Write the MUS lumps as D_*.MUS and the GENMIDI lump as
+    GENMIDI.OP2 into outdir. Returns the bytes written."""
+    total = 0
+    for name, data in lumps:
+        if name.startswith('D_') and data[:4] == b'MUS\x1a':
+            out = name + '.MUS'
+        elif name == 'GENMIDI' and data[:8] == b'#OPL_II#':
+            out = 'GENMIDI.OP2'
+        else:
+            continue
+        with open(os.path.join(outdir, out), 'wb') as f:
+            f.write(data)
+        total += len(data)
+    return total
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('wad')
@@ -343,7 +361,7 @@ def main():
     ap.add_argument('--keep-player', action='store_true',
                     help='keep the PLAY sprite (only visible in multiplayer)')
     ap.add_argument('--no-music', action='store_true',
-                    help='do not write the songs (D_*.STM)')
+                    help='do not write the songs (D_*.MUS, GENMIDI.OP2)')
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -375,8 +393,7 @@ def main():
         print(f'largest pack {worst:,} B against a budget of {args.budget:,} B'
               + (' -- all fit' if worst <= args.budget else ' -- DOES NOT FIT'))
     if not args.no_music:
-        import ymmusic
-        total = ymmusic.write_songs(lumps, args.outdir)
+        total = write_music(lumps, args.outdir)
         print(f'{total:,} B of music, for the SD card beside the packs')
 
 

@@ -128,6 +128,17 @@ file(GLOB DOOM_ENGINE_SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/doom/md/*.c)
 set_source_files_properties(${DOOM_ENGINE_SOURCES} PROPERTIES COMPILE_OPTIONS
         "-Wno-unused-function;-Wno-unused-but-set-variable;-Wno-unused-variable;-Wno-format-truncation;-Wno-unused-value")
+# The music's OPL2: rp2040-doom's emu8950, its slot renderer and the
+# renderer's Cortex-M0+ inner loops (doom/md/i_mdopl.c drives it).
+set(OPL_SOURCES
+        ${CMAKE_CURRENT_LIST_DIR}/doom/opl/emu8950.c
+        ${CMAKE_CURRENT_LIST_DIR}/doom/opl/slot_render.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/doom/opl/slot_render_pico.S)
+set_source_files_properties(${OPL_SOURCES} PROPERTIES COMPILE_OPTIONS
+        "-Wno-unused-function;-Wno-unused-variable;-Wno-unused-but-set-variable")
+# Everywhere: emu8950's slot struct embeds the renderer's unnamed, and
+# every file that includes it must see the same layout.
+add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-fms-extensions>)
 
 # Tell CMake where to find the executable source file
 add_executable(${PROJECT_NAME} 
@@ -156,6 +167,7 @@ target_sources(${PROJECT_NAME} PRIVATE
         doom_video.c
         pack.c
         ${DOOM_ENGINE_SOURCES}
+        ${OPL_SOURCES}
         reset.c
         romemul.c
         sdcard.c
@@ -225,12 +237,20 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
         WHD_SUPER_TINY=1 DEMO1_ONLY=1 NO_USE_FINALE_CAST=1 NO_USE_FINALE_BUNNY=1
         # render_newhope
         PICODOOM_RENDER_NEWHOPE=1 MERGE_DISTSCALE0_INTO_VIEWCOSSINANGLE=1
+        # music (upstream's, for its emu8950)
+        USE_EMU8950_OPL=1 EMU8950_SLOT_RENDER=1 EMU8950_ASM=1 EMU8950_NO_RATECONV=1
+        EMU8950_NO_WAVE_TABLE_MAP=1 EMU8950_NO_TLL=1 EMU8950_NO_FLOAT=1
+        EMU8950_NO_TIMER=1 EMU8950_NO_TEST_FLAG=1 EMU8950_SIMPLER_NOISE=1
+        EMU8950_SHORT_NOISE_UPDATE_CHECK=1 EMU8950_LINEAR_SKIP=1
+        EMU8950_LINEAR_END_OF_NOTE_OPTIMIZATION=1 EMU8950_NO_PERCUSSION_MODE=1
+        EMU8950_LINEAR=1
         # MD/DOOM
         MDDOOM=1 MDDOOM_TEST_CARD=0 MDDOOM_LEVEL_SELECT=0
         PICO_STACK_SIZE=0x1000 PICO_CORE1_STACK_SIZE=0x800)
 
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/doom/md
+        ${CMAKE_CURRENT_LIST_DIR}/doom/opl
         ${CMAKE_CURRENT_LIST_DIR}/doom)
 
 # malloc/calloc/realloc/free -> the zone heap (doom/md/i_system.c)

@@ -14,3 +14,5 @@
 
 #undef __cart_app_free
 #define __cart_app_free(name)
+#undef __scratch_x_noload
+#define __scratch_x_noload(name)

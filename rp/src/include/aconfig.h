@@ -25,7 +25,7 @@ extern "C" {
 #define ACONFIG_PARAM_DITHER "DITHER"   /* doom_video_dither_t, saved on change */
 #define ACONFIG_PARAM_PALETTE "PALETTE" /* doom_video_palette_t, saved on change */
 #define ACONFIG_PARAM_SCRNSIZE "SCRNSIZE" /* view blocks, 10 or 11, saved on change */
-#define ACONFIG_PARAM_YMMUSIC "YMMUSIC"   /* no DMA sound: 1 = the YM plays music, saved on change */
+#define ACONFIG_PARAM_YMMUSIC "YMMUSIC"   /* no DMA sound: 1 = music with the effects, saved on change */
 /* The one-off settings changes a firmware has made (md_main.c): 0 for a
  * config from before any, which is what flash without the key reads as. */
 #define ACONFIG_PARAM_CFGVER "CFGVER"

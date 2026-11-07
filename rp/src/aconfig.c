@@ -12,7 +12,7 @@ static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_DITHER, SETTINGS_TYPE_INT, "2"},   // 4x4 Bayer
     {ACONFIG_PARAM_PALETTE, SETTINGS_TYPE_INT, "8"},  // adaptive (DOOM_VIDEO_PAL_ADAPTIVE)
     {ACONFIG_PARAM_SCRNSIZE, SETTINGS_TYPE_INT, "10"},  // view + status bar
-    {ACONFIG_PARAM_YMMUSIC, SETTINGS_TYPE_INT, "0"},    // no DMA sound: effects on the YM
+    {ACONFIG_PARAM_YMMUSIC, SETTINGS_TYPE_INT, "0"},    // no DMA sound: effects only, no music
     {ACONFIG_PARAM_CFGVER, SETTINGS_TYPE_INT, "0"},     // see ACONFIG_CFGVER
 };
 

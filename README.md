@@ -21,7 +21,7 @@ See below if you'd prefer to build alternative level packs yourself.
 ### Manual installation
 
 1. Download the latest `.uf2`, `.json` and shareware level packs from the [releases page](https://github.com/neilrackett/md-doom/releases).
-2. Copy both the `.uf2` and `.json` into the `/apps` folder of your SidecarT's microSD card, and extract all of the E1M\*.whx and D\_\*.STM files into a `/doom` folder. The `.STM` files are the music: leave them out and the game just plays without it.
+2. Copy both the `.uf2` and `.json` into the `/apps` folder of your SidecarT's microSD card, and extract all of the E1M\*.whx, D\_\*.MUS and GENMIDI.OP2 files into a `/doom` folder. The `.MUS` files and `GENMIDI.OP2` are the music: leave them out and the game just plays without it.
 3. On the Booster screen, press ESC for the app list and select MD/DOOM.
 4. To return to Booster, power on your ST while holding the SELECT button on your SidecarT.
 
@@ -109,9 +109,9 @@ second, which is still more often than the game itself moves on (35).
 
 ### Music
 
-On an STE, or any other ST with DMA sound, the sound effects play through the DMA chip, which leaves the YM2149 free for Doom's music: the level's own song, the intermission tune and the title. The songs are Doom's own, converted to the YM2149's three voices and noise by the MIDI synth from [STDL](https://github.com/neilrackett/atarist-stdl), and they sit on your SD card next to the level packs (`D_E1M1.STM` and so on), so they cost the game no flash. Without them there's simply no music, and the loading screen suggests downloading the latest level pack. The music volume in Doom's sound menu works as usual.
+MD/DOOM plays Doom's music the way a PC with an AdLib or Sound Blaster did: the cartridge synthesises an OPL2 FM chip, with Doom's own instruments, and mixes it with the sound effects, so your ST plays both together. The songs are Doom's own (`D_E1M1.MUS` and so on) and the instruments are `GENMIDI.OP2`; they sit on your SD card next to the level packs, so they cost the game no flash. Without them there's simply no music, and the loading screen suggests downloading the latest level pack. The music volume in Doom's sound menu works as usual.
 
-A plain ST has no DMA sound, so its YM2149 is busy playing the sound effects. Press keypad ) to give it to the music instead, and again to have the sound effects back; your choice is remembered. If the music files aren't on your SD card, MD/DOOM says so and keeps the sound effects.
+On an STE, or any other ST with DMA sound, the music and sound effects play through the DMA chip. A plain ST plays them through its YM2149, which can only manage a rougher version, so there the music is off until you press keypad ); press it again to turn it off. Your choice is remembered.
 
 ### Level packs
 
@@ -130,10 +130,10 @@ python3 tools/levelpack.py DOOM1.WAD packs --doom-src rp/src/doom/doom \
 `levelpack.py` will report every pack's size against the budget, and writes the music files as well (`--no-music` leaves them out). To make just the music, for level packs you already have:
 
 ```bash
-python3 tools/ymmusic.py DOOM1.WAD packs
+python3 tools/levelpack.py DOOM1.WAD packs --doom-src rp/src/doom/doom --maps none
 ```
 
-Copy the `.whx` and `.STM` files into the `/doom` folder of your SD card.
+Copy the `.whx`, `.MUS` and `GENMIDI.OP2` files into the `/doom` folder of your SD card.
 
 ## Hardware requirements
 
@@ -153,8 +153,7 @@ Sound chip report (_SND)   ──$FB86xx──►  picks STE DMA or YM2149
 Display report (mono?)     ──$FB90xx──►  picks 16 colours or 640x400 mono
 Screen: blit + page flip   ◄──$FA8300──  256 → 16 colours + c2p, both cores
 Palette: 16 shifter words  ◄──$FA4040──  per tint, or per frame (adaptive)
-Sound: DMA refill or YM    ◄──$FA4100──  8-channel sfx mix on Core 1
-Music: YM2149 registers    ◄──$FA44E0──  STM songs from the SD card
+Sound: DMA refill or YM    ◄──$FA4100──  8-channel sfx + OPL2 music on Core 1
 ```
 
 ## Building

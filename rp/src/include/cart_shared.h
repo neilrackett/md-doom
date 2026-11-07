@@ -228,6 +228,12 @@
 #define __cart_app_free(name) \
   __attribute__((section(".cart_app_free." name)))
 
+/* Scratch X without an initial value: .scratch_x proper is copied from
+ * flash at boot, so a buffer there costs its size in flash as well.
+ * NOLOAD, so not zeroed either (see memmap_rp.ld). */
+#define __scratch_x_noload(name) \
+  __attribute__((section(".scratch_x_noload." name)))
+
 /* The cart bus byte-swaps WITHIN each 16-bit word: RP stores LE,
  * m68k reads BE, and the swap makes that transparent for uint16_t.
  * For uint32_t, m68k's BE long-read is two word reads in (high, low)

@@ -17,8 +17,8 @@
  *              length the m68k asks for (STE DMA PCM or YM volume pairs).
  *              Mixing runs from the VBL-synced timer interrupt on Core 1
  *              (audio_start_vbl_timer), so it keeps up regardless of the
- *              frame rate. Music is i_mdmusic.c, stepped from the same
- *              interrupt.
+ *              frame rate. The music (i_mdmusic.c) is synthesised in the
+ *              same interrupt and mixed into the same buffer.
  */
 #include "config.h"
 
@@ -35,6 +35,7 @@
 #include "doomtype.h"
 #include "i_picosound.h"
 #include "audio.h"
+#include "cart_shared.h"
 #include "doom_sound.h"
 #include "hardware/sync.h"
 
@@ -331,28 +332,45 @@ static void I_Pico_UpdateSound(void)
 /* Per-VBL fill: mix every playing channel onto `bytes` of output in the
  * detected back-end's format. Runs from Core 1's timer interrupt. */
 
-static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes);
+/* MD/DOOM: 1 KB in scratch X, below Core 1's stack. */
+static int16_t mix[512] __scratch_x_noload("sfxmix");
+
+static void I_MD_SoundMixLocked(uint32_t nsamp, audio_mode_t mode);
 
 void I_MD_SoundFill(uint8_t *buf, uint32_t bytes)
 {
-    if (!s_mix_lock) { memset(buf, 0, bytes); return; }
-    uint32_t ints = spin_lock_blocking(s_mix_lock);
-    I_MD_SoundFillLocked(buf, bytes);
-    spin_unlock(s_mix_lock, ints);
-    /* MD/DOOM: the YM's music registers, on the same VBL (i_mdmusic.c) */
-    extern void I_MD_MusicTick(void);
-    I_MD_MusicTick();
-}
-
-static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes)
-{
     const audio_mode_t mode = audio_get_mode();
-    if (!sound_initialized || mode == AUDIO_MODE_SILENT) {
+    const bool ym = (mode == AUDIO_MODE_YM);
+    const uint32_t nsamp = ym ? bytes / 2u : bytes;
+    if (!s_mix_lock || !sound_initialized || mode == AUDIO_MODE_SILENT || nsamp > 512u) {
         memset(buf, 0, bytes);
         return;
     }
+    uint32_t ints = spin_lock_blocking(s_mix_lock);
+    I_MD_SoundMixLocked(nsamp, mode);
+    spin_unlock(s_mix_lock, ints);
+    /* MD/DOOM: the music, outside the lock: it is the longer job by far,
+     * and the game core takes the lock to start a sound (i_mdmusic.c). */
+    extern void I_MD_MusicMix(int16_t *mix, uint32_t n, uint32_t rate);
+    I_MD_MusicMix(mix, nsamp, s_out_rate);
+
+    for (uint32_t s = 0; s < nsamp; s++) {
+        int v = mix[s];
+        if (v > 127) v = 127;
+        else if (v < -127) v = -127;
+        if (ym) {
+            const uint8_t k = (uint8_t)((v + 128) >> 2);
+            buf[2u * s] = doom_sound_ghost_lut[k][0];
+            buf[2u * s + 1u] = doom_sound_ghost_lut[k][1];
+        } else {
+            buf[s] = (uint8_t)(int8_t)v;
+        }
+    }
+}
+
+static void I_MD_SoundMixLocked(uint32_t nsamp, audio_mode_t mode)
+{
     const bool ym = (mode == AUDIO_MODE_YM);
-    const uint32_t nsamp = ym ? bytes / 2u : bytes;
     if (mode != s_mode_for_steps) {
         s_out_rate = ym ? DOOM_SOUND_RATE_YM : DOOM_SOUND_RATE_DMA;
         for (int ch = 0; ch < NUM_SOUND_CHANNELS; ch++) {
@@ -363,9 +381,6 @@ static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes)
         s_mode_for_steps = mode;
     }
 
-    /* MD/DOOM: 1 KB in scratch X, below Core 1's stack. */
-    static int16_t mix[512] __scratch_x("sfxmix");
-    if (nsamp > 512u) return;
     memset(mix, 0, nsamp * sizeof(mix[0]));
 
     uint32_t playing = 0;
@@ -403,19 +418,6 @@ static void I_MD_SoundFillLocked(uint8_t *buf, uint32_t bytes)
                     break;
                 }
             }
-        }
-    }
-
-    for (uint32_t s = 0; s < nsamp; s++) {
-        int v = mix[s];
-        if (v > 127) v = 127;
-        else if (v < -127) v = -127;
-        if (ym) {
-            const uint8_t k = (uint8_t)((v + 128) >> 2);
-            buf[2u * s] = doom_sound_ghost_lut[k][0];
-            buf[2u * s + 1u] = doom_sound_ghost_lut[k][1];
-        } else {
-            buf[s] = (uint8_t)(int8_t)v;
         }
     }
 }

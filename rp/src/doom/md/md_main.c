@@ -205,8 +205,8 @@ void doomgame_start(const char *folder) {
   if (folder && folder[0]) s_folder = folder;
   extern void I_MD_MusicSetFolder(const char *folder);
   I_MD_MusicSetFolder(s_folder); /* the songs live beside the packs */
-  /* Without DMA sound: music or sound effects on the YM (keypad )).
-   * Read before the first pack loads, whose screen depends on it. */
+  /* Without DMA sound: whether the music plays too (keypad )). Read
+   * before the first pack loads, whose screen depends on it. */
   extern bool I_MD_MusicSetYm(bool music);
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);

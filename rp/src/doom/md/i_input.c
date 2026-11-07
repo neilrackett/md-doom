@@ -53,7 +53,7 @@ extern void I_MD_SaveVideoSettings(void);
  * frames, with Core 1 idle. */
 static int8_t s_pending_dither = -1;
 static int8_t s_pending_palette = -1;
-static int8_t s_pending_ym_music = -1; /* keypad ): 1 music, 0 sound effects */
+static int8_t s_pending_ym_music = -1; /* keypad ): 1 music on, 0 off (no DMA sound) */
 
 extern bool I_MD_MusicSetYm(bool music);
 extern bool I_MD_MusicGetYm(void);
@@ -81,8 +81,7 @@ void I_MD_ApplyVideoMode(void) {
     const bool want = s_pending_ym_music != 0;
     s_pending_ym_music = -1;
     const bool got = I_MD_MusicSetYm(want);
-    players[consoleplayer].message =
-        got ? "MUSIC" : want ? "NO MUSIC FILES, SOUND EFFECTS" : "SOUND EFFECTS";
+    players[consoleplayer].message = got ? "MUSIC ON" : want ? "NO MUSIC FILES" : "MUSIC OFF";
     I_MD_SaveVideoSettings();
   }
   if (s_pending_dither < 0 && s_pending_palette < 0) return;

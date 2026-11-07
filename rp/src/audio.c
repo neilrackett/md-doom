@@ -160,6 +160,13 @@ void audio_set_fill_callback(audio_fill_cb_t cb) {
 #define AUDIO_VBLSYNC_HIBYTE 0x8400u
 #define AUDIO_VBLSYNC_BANK   0x02u
 #define AUDIO_MIN_FILL_GAP_US 5000u
+/* With DMA sound the refill waits this many ticks (ms) after the ack.
+ * The ack also starts the next frame's c2p, half of it on Core 1, and in
+ * a one-VBL frame the RP has only ~2-3 ms to write it; the music synth
+ * on Core 1 would sit in the middle of that. The m68k copies the buffer
+ * out ~17 ms after the ack (~9 ms in mono), so there is room. The YM
+ * banks start playing at the next vsync, so they are refilled at once. */
+#define AUDIO_DMA_FILL_DELAY_TICKS 3u
 _Static_assert(CART_AUDIO_YM_BANK_BYTES + AUDIO_FILL_BYTES_YM <=
                    CART_YM_PACKET_OFFSET - CART_AUDIO_BUFFER_OFFSET,
                "the second YM bank runs into the music packet");
@@ -167,11 +174,22 @@ _Static_assert(CART_AUDIO_YM_BANK_BYTES + AUDIO_FILL_BYTES_YM <=
 static repeating_timer_t s_vbl_timer;
 static uint32_t s_scan_cursor;
 static volatile uint32_t s_dbg_fill_max_us, s_dbg_fills, s_dbg_cb_max_us, s_dbg_cbs;
+static uint8_t *s_fill_buf; /* a DMA refill waiting for its tick */
+static uint32_t s_fill_due;
+
+static void __not_in_flash_func(fill_now)(uint8_t *buf) {
+  const uint32_t t0 = time_us_32();
+  s_fill_cb(buf, s_fill_bytes);
+  const uint32_t dt = time_us_32() - t0;
+  if (dt > s_dbg_fill_max_us) s_dbg_fill_max_us = dt;
+  s_dbg_fills++;
+}
 
 static bool __not_in_flash_func(audio_vbl_timer_cb)(repeating_timer_t *rt) {
   (void)rt;
   s_dbg_cbs++;
   const uint32_t t0 = time_us_32();
+  if (s_fill_due && --s_fill_due == 0 && s_fill_cb) fill_now(s_fill_buf);
   const int ack = commemul_scan_last(&s_scan_cursor, AUDIO_VBLSYNC_HIBYTE);
   if (ack >= 0 && s_fill_cb) {
     if (t0 - s_last_frame_us >= AUDIO_MIN_FILL_GAP_US) {
@@ -180,10 +198,12 @@ static bool __not_in_flash_func(audio_vbl_timer_cb)(repeating_timer_t *rt) {
       if (s_audio_mode == AUDIO_MODE_YM && !(ack & AUDIO_VBLSYNC_BANK)) {
         buf += CART_AUDIO_YM_BANK_BYTES;
       }
-      s_fill_cb(buf, s_fill_bytes);
-      const uint32_t dt = time_us_32() - t0;
-      if (dt > s_dbg_fill_max_us) s_dbg_fill_max_us = dt;
-      s_dbg_fills++;
+      if (s_audio_mode == AUDIO_MODE_DMA) {
+        s_fill_buf = buf;
+        s_fill_due = AUDIO_DMA_FILL_DELAY_TICKS;
+      } else {
+        fill_now(buf);
+      }
     }
   }
   const uint32_t cb = time_us_32() - t0;
@@ -229,6 +249,7 @@ void audio_stop_vbl_timer(void) {
   if (s_vbl_timer_core < 0) return;
   cancel_repeating_timer(&s_vbl_timer);
   s_vbl_timer_core = -1;
+  s_fill_due = 0;
   memset(s_audio_buf, 0, CART_AUDIO_BUFFER_SIZE);
   DPRINTF("audio: VBL-synced refill timer stopped\n");
 }

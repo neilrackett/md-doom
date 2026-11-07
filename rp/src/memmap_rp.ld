@@ -217,6 +217,16 @@ SECTIONS
     } > SCRATCH_X AT > FLASH
     __scratch_x_source__ = LOADADDR(.scratch_x);
 
+    /* MD/DOOM: scratch X buffers with no initial value
+     * (__scratch_x_noload in cart_shared.h), which would otherwise cost
+     * their size in flash too. Before .stack1_dummy, which checks that
+     * they leave Core 1 its stack. */
+    .scratch_x_noload (NOLOAD) : {
+        . = ALIGN(4);
+        *(.scratch_x_noload.*)
+        . = ALIGN(4);
+    } > SCRATCH_X
+
     .scratch_y : {
         __scratch_y_start__ = .;
         *(.scratch_y.*)
