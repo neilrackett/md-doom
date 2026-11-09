@@ -22,6 +22,13 @@ debug:
 	@echo "Using APP_UUID_KEY: $(APP_UUID_KEY_RESOLVED)"
 	./build.sh pico_w debug "$(APP_UUID_KEY_RESOLVED)"
 
+## The SD card data -- level packs and music -- as the release ships it:
+## dist/mddoom-level-packs.zip (tools/build_data.sh fetches what it needs).
+## After make or make debug, which empty dist/.
+.PHONY: packs
+packs:
+	tools/build_data.sh
+
 ## make emu: run it in Hatari on this computer (emu/emu.mk)
 include emu/emu.mk
 

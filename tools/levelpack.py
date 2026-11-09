@@ -373,6 +373,7 @@ def main():
         maps = [m for m in maps if m in set(args.maps.split(','))]
 
     worst = 0
+    failed = []
     for m in maps:
         out, info = packer.build(m)
         wadpath = os.path.join(args.outdir, m + '.wad')
@@ -383,11 +384,14 @@ def main():
             r = subprocess.run([args.whd_gen, wadpath, whx], capture_output=True, text=True)
             if r.returncode != 0:
                 line += f'\n  whd_gen FAILED: {r.stdout[-400:]}{r.stderr[-400:]}'
+                failed.append(m)
             else:
                 wsz = os.path.getsize(whx)
                 worst = max(worst, wsz)
                 line += f'\n  WHX {wsz:,} B = {wsz * 100 // args.budget}% of budget' + \
                         ('' if wsz <= args.budget else f'  ** OVER by {wsz - args.budget:,} B **')
+                if wsz > args.budget:
+                    failed.append(m)
         print(line)
     if args.whd_gen and maps:
         print(f'largest pack {worst:,} B against a budget of {args.budget:,} B'
@@ -395,6 +399,8 @@ def main():
     if not args.no_music:
         total = write_music(lumps, args.outdir)
         print(f'{total:,} B of music, for the SD card beside the packs')
+    if failed:
+        sys.exit(f'{", ".join(failed)}: not built, or too big to load')
 
 
 if __name__ == '__main__':

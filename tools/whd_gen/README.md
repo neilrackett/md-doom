@@ -12,7 +12,9 @@ cmake --build build/whd_gen
 # -> build/whd_gen/whd_gen
 ```
 
-Then build the per-level packs:
+`make packs` (`tools/build_data.sh`) does all of this, with the WAD and
+the upstream commit pinned, and zips the result as the release ships it.
+By hand, build the per-level packs:
 
 ```bash
 python3 tools/levelpack.py DOOM1.WAD packs \
