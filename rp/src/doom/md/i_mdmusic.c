@@ -5,8 +5,7 @@
  * File: i_mdmusic.c
  * Description: Doom's music, synthesised on the RP2040 and mixed into the
  *              sound effects' stream, so the ST plays both from the one
- *              buffer: through the STE's DMA sound, or (when keypad ) asks
- *              for it, saved with the video options) through the YM
+ *              buffer: through the STE's DMA sound, or through the YM
  *              volume pairs of a plain ST. The songs are Doom's own MUS
  *              lumps, D_E1M1.MUS and so on, played the way DMX played them
  *              on an OPL2 (i_mdopl.c, with GENMIDI.OP2's instruments), and
@@ -92,7 +91,6 @@ static uint8_t s_velocity[16];           /* each channel's last note volume */
 static int32_t s_run[OPL_MD_RUN] __scratch_x_noload("oplrun");
 
 /* Game core only. */
-static bool s_ym_music;                  /* keypad ): music in the YM's stream too */
 static FIL s_file;
 static bool s_file_open;
 static bool s_looping;
@@ -105,12 +103,8 @@ static const char *s_folder = "/doom";
 
 void I_MD_MusicSetFolder(const char *folder) { s_folder = folder; }
 
-/* Whether a song may play: always with DMA sound, without it only when
- * keypad ) has asked for the music. */
-static bool may_play(void) {
-  const audio_mode_t mode = audio_get_mode();
-  return mode == AUDIO_MODE_DMA || (mode == AUDIO_MODE_YM && s_ym_music);
-}
+/* Whether a song may play: once the m68k has said which sound it has. */
+static bool may_play(void) { return audio_get_mode() != AUDIO_MODE_SILENT; }
 
 /* ---- the score, in the interrupt ------------------------------------ */
 
@@ -232,7 +226,6 @@ void I_MD_MusicMix(int16_t *mix, uint32_t n, uint32_t rate) {
   const bool stepping = s_playing && !paused;
 
   if (!stepping && !opl_md_voices_busy() && s_quiet >= QUIET_STOP) return; /* nothing to hear */
-  if (audio_get_mode() == AUDIO_MODE_YM && !s_ym_music) return;
 
   const uint32_t step = (uint32_t)(((uint64_t)OPL_MD_RATE << 16) / rate);
   uint32_t out = 0, rendered = 0;
@@ -481,7 +474,7 @@ static void request_song(void) {
 static void MD_PlaySong(void *handle, boolean looping) {
   (void)handle;
   stop_song();
-  s_looping = looping; /* kept for keypad ), should the music be asked for later */
+  s_looping = looping;
   if (may_play()) request_song();
 }
 
@@ -491,29 +484,6 @@ static bool song_playing(void) {
   spin_unlock(s_lock, ints);
   return playing;
 }
-
-/* Keypad ), without DMA sound: the music in the YM's stream with the
- * sound effects (true), or the effects alone. Game core only, between
- * frames (it opens the song). Returns whether there is music now: false
- * for the effects alone, and also if there is no song to play. With DMA
- * sound the music always plays, and this only records the choice. */
-bool I_MD_MusicSetYm(bool music) {
-  s_ym_music = music;
-  if (!s_lock || audio_get_mode() != AUDIO_MODE_YM) return music; /* at boot, or DMA sound */
-  if (!music) {
-    stop_song();
-    return false;
-  }
-  if (s_name[0]) {
-    stop_song();
-    request_song();
-    I_MD_MusicPump();
-    if (!song_playing()) s_ym_music = false; /* no song files: the effects alone */
-  }
-  return s_ym_music;
-}
-
-bool I_MD_MusicGetYm(void) { return s_ym_music; }
 
 /* For the loading screen: whether this machine would play music but the
  * map's song (D_E1M2.MUS for "E1M2") or the instruments are not on the

@@ -5,13 +5,12 @@
 
 #include "include/aconfig.h"
 
-// Per-app settings: the pack folder and the saved video and sound options.
+// Per-app settings: the pack folder and the saved video options.
 static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_FOLDER, SETTINGS_TYPE_STRING, "/doom"},
     {ACONFIG_PARAM_MODE, SETTINGS_TYPE_INT, "255"},  // 255: Menu mode
     {ACONFIG_PARAM_DITHER, SETTINGS_TYPE_INT, "2"},   // 4x4 Bayer
     {ACONFIG_PARAM_SCRNSIZE, SETTINGS_TYPE_INT, "10"},  // view + status bar
-    {ACONFIG_PARAM_YMMUSIC, SETTINGS_TYPE_INT, "1"},    // no DMA sound: music with the effects
 };
 
 // Create a global context for our settings

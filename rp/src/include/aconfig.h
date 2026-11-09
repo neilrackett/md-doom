@@ -24,7 +24,6 @@ extern "C" {
 #define ACONFIG_PARAM_MODE "MODE"
 #define ACONFIG_PARAM_DITHER "DITHER"   /* doom_video_dither_t, saved on change */
 #define ACONFIG_PARAM_SCRNSIZE "SCRNSIZE" /* view blocks, 10 or 11, saved on change */
-#define ACONFIG_PARAM_YMMUSIC "YMMUSIC"   /* no DMA sound: 1 = music with the effects, saved on change */
 
 #define ACONFIG_SUCCESS 0
 #define ACONFIG_INIT_ERROR -1

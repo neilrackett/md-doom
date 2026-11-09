@@ -31,10 +31,6 @@
 /* Keypad * cycles the dither mode at run time, as the DOOM Accelerator
  * did, and says so in the HUD. The key means nothing to Doom. */
 #define SCAN_KP_MULTIPLY 0x66
-/* Keypad ), on an ST without DMA sound, gives the YM2149 to the music
- * instead of the sound effects, or back (both play anyway with DMA
- * sound, which leaves the YM free). Saved with the video options. */
-#define SCAN_KP_RPAREN 0x64
 /* Debug builds only: keypad - cycles the audio refill interrupt off /
  * Core 0 / Core 1 for A/B tests. Core 0 stalls the renderer, so a
  * release build must not offer it one key away from *. */
@@ -50,10 +46,6 @@ extern void I_MD_SaveVideoSettings(void);
  * I_MD_ApplyVideoMode does the work from I_MD_PresentFrame, between
  * frames, with Core 1 idle. */
 static int8_t s_pending_dither = -1;
-static int8_t s_pending_ym_music = -1; /* keypad ): 1 music on, 0 off (no DMA sound) */
-
-extern bool I_MD_MusicSetYm(bool music);
-extern bool I_MD_MusicGetYm(void);
 
 static void cycle_dither(void) {
   int cur = s_pending_dither >= 0 ? s_pending_dither : (int)doom_video_get_dither();
@@ -61,18 +53,9 @@ static void cycle_dither(void) {
   players[consoleplayer].message = doom_video_dither_name((doom_video_dither_t)s_pending_dither);
 }
 
-/* Apply a dither / sound change asked for since the last
- * frame. Called from I_MD_PresentFrame, where the music module may also
- * read the SD card: switching to the music opens the song, so the HUD
- * can say if there is none. */
+/* Apply a dither change asked for since the last frame. Called from
+ * I_MD_PresentFrame, between frames. */
 void I_MD_ApplyVideoMode(void) {
-  if (s_pending_ym_music >= 0) {
-    const bool want = s_pending_ym_music != 0;
-    s_pending_ym_music = -1;
-    const bool got = I_MD_MusicSetYm(want);
-    players[consoleplayer].message = got ? "MUSIC ON" : want ? "NO MUSIC FILES" : "MUSIC OFF";
-    I_MD_SaveVideoSettings();
-  }
   if (s_pending_dither < 0) return;
   doom_video_set_dither((doom_video_dither_t)s_pending_dither);
   s_pending_dither = -1;
@@ -198,13 +181,6 @@ void I_GetEvent(void) {
   while (ikbd_pop_key(&k)) {
     if (k.scancode == SCAN_KP_MULTIPLY) {
       if (k.is_press) cycle_dither();
-      continue;
-    }
-    if (k.scancode == SCAN_KP_RPAREN) {
-      if (k.is_press && audio_get_mode() == AUDIO_MODE_YM) {
-        const bool cur = s_pending_ym_music >= 0 ? s_pending_ym_music != 0 : I_MD_MusicGetYm();
-        s_pending_ym_music = cur ? 0 : 1; /* applied, and announced, between frames */
-      }
       continue;
     }
 #if defined(_DEBUG) && (_DEBUG != 0)

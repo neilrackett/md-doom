@@ -166,8 +166,8 @@ static void apply_palette(int pal) {
 void I_MD_MusicPump(void);
 
 void I_MD_PresentFrame(void) {
-  /* A dither / palette change asked for by keypad * or / since the last
-   * frame. Done here, not where the key was seen: the renderer polls
+  /* A dither change asked for by keypad * since the last frame. Done
+   * here, not where the key was seen: the renderer polls
    * input mid-frame and the LUT rebuild has no business running there
    * (see I_MD_ApplyVideoMode). Core 1 is idle from the join in
    * pd_end_frame until the publish below. */

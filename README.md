@@ -59,7 +59,6 @@ Controls match the original PC Doom:
 | Undo            | Pause                                                                              |
 | - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \*       | Cycle through the dither options (see below); your choice is remembered            |
-| Keypad )        | On an ST without DMA sound: music or sound effects (see Music below); remembered   |
 
 **Gamepad support is off in this release.** MD/DOOM can read an
 [Xpad](https://github.com/neilrackett/atarist-xpad) gamepad, but only a
@@ -109,7 +108,7 @@ second, which is still more often than the game itself moves on (35).
 
 MD/DOOM plays Doom's music the way a PC with an AdLib or Sound Blaster did: the cartridge synthesises an OPL2 FM chip, with Doom's own instruments, and mixes it with the sound effects, so your ST plays both together. The songs are Doom's own (`D_E1M1.MUS` and so on) and the instruments are `GENMIDI.OP2`; they sit on your SD card next to the level packs, so they cost the game no flash. Without them there's simply no music, and the loading screen suggests downloading the latest level pack. The music volume in Doom's sound menu works as usual.
 
-On an STE, or any other ST with DMA sound, the music and sound effects play through the DMA chip. A plain ST plays them through its YM2149, which manages a rougher version; press keypad ) there to turn the music off, and again to turn it back on. Your choice is remembered.
+On an STE, or any other ST with DMA sound, the music and sound effects play through the DMA chip. A plain ST plays them through its YM2149, which manages a rougher version.
 
 ### Level packs
 

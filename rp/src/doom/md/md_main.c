@@ -205,13 +205,6 @@ void doomgame_start(const char *folder) {
   if (folder && folder[0]) s_folder = folder;
   extern void I_MD_MusicSetFolder(const char *folder);
   I_MD_MusicSetFolder(s_folder); /* the songs live beside the packs */
-  /* Without DMA sound: whether the music plays too (keypad )). Read
-   * before the first pack loads, whose screen depends on it. */
-  extern bool I_MD_MusicSetYm(bool music);
-  {
-    SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);
-    I_MD_MusicSetYm(!e || atoi(e->value) != 0);
-  }
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
    * makes the firmware's screens legible: 0 black, 1..15 white, then
@@ -248,7 +241,7 @@ void doomgame_start(const char *folder) {
   D_DoomMain(); /* never returns */
 }
 
-/* Remember the dither, screen size and music choice across sessions.
+/* Remember the dither and screen size across sessions.
  * The keys are seen from the input poll, which the renderer also runs
  * mid-frame while Core 1 is busy in its render job, so the write is only
  * requested here and done from I_MD_PresentFrame, where Core 1 is idle
@@ -263,8 +256,6 @@ void I_MD_FlushVideoSettings(void) {
   SettingsContext *ctx = aconfig_getContext();
   settings_put_integer(ctx, ACONFIG_PARAM_DITHER, (int)doom_video_get_dither());
   settings_put_integer(ctx, ACONFIG_PARAM_SCRNSIZE, (int)screenblocks);
-  extern bool I_MD_MusicGetYm(void);
-  settings_put_integer(ctx, ACONFIG_PARAM_YMMUSIC, I_MD_MusicGetYm() ? 1 : 0);
   fb_core1_park();
   settings_save(ctx, true);
   fb_core1_unpark();
