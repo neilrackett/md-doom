@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.0.0 (2026-11-09)
+
+- The music is now Doom's own, played the way a PC with an AdLib or
+  Sound Blaster played it: the cartridge synthesises an OPL2 FM chip,
+  with Doom's instruments, and mixes it into the sound effects, so every
+  ST hears both together — through DMA sound on an STE, and through the
+  YM2149 on a plain ST, which manages a rougher version. It replaces
+  v0.9.0's square-wave YM renderings, and keypad ) is gone with them.
+  The songs (`D_E1M1.MUS` and so on) and the instruments
+  (`GENMIDI.OP2`) live on the SD card next to the level packs; copy the
+  `doom` folder from this release's `mddoom-level-packs.zip` to your
+  card to hear them.
+- The 16 colours are now chosen for each frame from what is on screen,
+  and the status bar gets 16 of its own, switched in part-way down the
+  screen, so it no longer shimmers as the view's colours change. Each
+  in-between colour is drawn with whichever pair of colours really mixes
+  closest to it, which takes away the washed-out look of the old
+  dithering. Measured against Doom's 256-colour frames, an STE's picture
+  has about a third of the colour error it had with STDOOM's palette; a
+  plain ST, with half as many shades per channel, gains less.
+- The palette choices on keypad / and the halftone dither are gone: the
+  new palette beats all of them. Keypad \* still cycles nearest, 2×2,
+  4×4 (the default) and blue noise.
+- Your saved settings go back to the defaults the first time v1.0.0
+  starts, as the old ones no longer mean the same.
+- Fixed: tearing. A frame finished late could be written into the
+  cartridge while the ST was copying it to the screen, so part of the
+  screen showed the next frame, and with colours chosen per frame, in
+  the wrong colours. A frame now waits for the gap after the copy; one
+  that misses it waits for the next, so a game drawing in the low 30s
+  shows 25 frames a second.
+- On an ST without DMA sound the picture is copied over two screen
+  refreshes, as it is in mono, to leave room for the status bar's colour
+  switch beside the YM2149's sound, so it shows up to 25 frames a
+  second. Fixed there too: the end of every 50th of a second of sound
+  was overwritten by the start of the next before it played. Tried on a
+  Mega STE with DMA sound switched off.
+- Starting MD/DOOM from the desktop no longer bombs. It now runs on a
+  stack of its own, and checks that the memory it needs is free: if a
+  resident program or a RAM disk has it, MD/DOOM says so and goes back
+  to the desktop when you press a key. Tried in Hatari on TOS 1.02 to
+  2.06 with 512 KB to 4 MB, not yet on real hardware; gamepad support
+  stays off until it has been.
+- The release now builds the level packs and the music itself and
+  publishes them beside the firmware as `mddoom-level-packs.zip`, and
+  `make packs` builds the same zip on your own computer.
+
 ## v0.9.0 (2026-10-05)
 
 - Music! On an STE, or any other ST with DMA sound, the YM2149 now
