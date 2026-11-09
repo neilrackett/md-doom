@@ -298,10 +298,17 @@ mod_am1_fb1_pm1_fn:
     add  rl_tmp0, rl_tmp2
 .endm
 
+// MD/DOOM: alg1 adds the modulator's sample to the output, so it has to
+// be loaded signed. Upstream's ldrh made every negative one 65536 too big,
+// which its stereo output hid by keeping only the low 16 bits; the mono
+// mix (OPL_calc_buffer_linear) keeps all 32, and every additive
+// instrument (the toms, for one) became a full-scale square wave. alg0
+// adds it to a phase, of which only the low bits count, so ldrh is fine
+// there. Same instruction count: the offset goes in the index register.
 .macro alg1_a_mod
     lsrs rl_tmp1, rl_sample_out, #1
-    add  rl_tmp1, rh_buffer_mod_buffer_offset
-    ldrh rl_tmp2, [rl_tmp1]
+    mov  rl_tmp2, rh_buffer_mod_buffer_offset
+    ldrsh rl_tmp2, [rl_tmp1, rl_tmp2]
     add  rl_tmp0, rl_tmp2
 .endm
 
