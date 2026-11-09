@@ -35,8 +35,8 @@ extern "C" {
 #endif
 
 /* How a colour that falls between two of the 16 is drawn. Saved in the
- * app config by number (DITHER), so a removed mode renumbers the ones
- * after it: CFGVER 3 maps the old numbers (md_main.c). */
+ * app config by number (DITHER): renumbering them means raising
+ * ACONFIG_VERSION_NUMBER (aconfig.h). */
 typedef enum {
   DOOM_VIDEO_DITHER_NEAREST = 0, /* closest colour, no dither          */
   DOOM_VIDEO_DITHER_BAYER2,      /* 2x2 ordered                        */

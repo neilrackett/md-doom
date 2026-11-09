@@ -10,14 +10,8 @@ static SettingsConfigEntry defaultEntries[] = {
     {ACONFIG_PARAM_FOLDER, SETTINGS_TYPE_STRING, "/doom"},
     {ACONFIG_PARAM_MODE, SETTINGS_TYPE_INT, "255"},  // 255: Menu mode
     {ACONFIG_PARAM_DITHER, SETTINGS_TYPE_INT, "2"},   // 4x4 Bayer
-    // Retired: the palette is always adaptive now. Kept because the
-    // library reads back only as many stored entries as there are
-    // defaults, in stored order, so dropping it would lose CFGVER, the
-    // last, from every config saved with it.
-    {ACONFIG_PARAM_PALETTE, SETTINGS_TYPE_INT, "8"},
     {ACONFIG_PARAM_SCRNSIZE, SETTINGS_TYPE_INT, "10"},  // view + status bar
     {ACONFIG_PARAM_YMMUSIC, SETTINGS_TYPE_INT, "1"},    // no DMA sound: music with the effects
-    {ACONFIG_PARAM_CFGVER, SETTINGS_TYPE_INT, "0"},     // see ACONFIG_CFGVER
 };
 
 // Create a global context for our settings

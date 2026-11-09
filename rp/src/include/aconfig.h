@@ -23,13 +23,8 @@ extern "C" {
 #define ACONFIG_PARAM_FOLDER "FOLDER"
 #define ACONFIG_PARAM_MODE "MODE"
 #define ACONFIG_PARAM_DITHER "DITHER"   /* doom_video_dither_t, saved on change */
-#define ACONFIG_PARAM_PALETTE "PALETTE" /* retired with the palette choice: see aconfig.c */
 #define ACONFIG_PARAM_SCRNSIZE "SCRNSIZE" /* view blocks, 10 or 11, saved on change */
 #define ACONFIG_PARAM_YMMUSIC "YMMUSIC"   /* no DMA sound: 1 = music with the effects, saved on change */
-/* The one-off settings changes a firmware has made (md_main.c): 0 for a
- * config from before any, which is what flash without the key reads as. */
-#define ACONFIG_PARAM_CFGVER "CFGVER"
-#define ACONFIG_CFGVER 3 /* 1: the adaptive palette, 2: music without DMA sound, 3: dither renumbered; each once */
 
 #define ACONFIG_SUCCESS 0
 #define ACONFIG_INIT_ERROR -1
@@ -43,10 +38,15 @@ extern "C" {
 //   - 2 bytes for the sector (page number)
 #define ACONFIG_LOOKUP_ENTRY_SIZE 38
 
+/* Settings saved under another version are replaced by aconfig.c's
+ * defaults the first time the app runs (main.c's first-run path), so the
+ * version goes up whenever saved settings would no longer mean the same
+ * (2: the adaptive palette only, and the dither modes renumbered
+ * without halftone). */
 enum {
   ACONFIG_BUFFER_SIZE = 4096,
   ACONFIG_MAGIC_NUMBER = 0x1234,
-  ACONFIG_VERSION_NUMBER = 0x0001
+  ACONFIG_VERSION_NUMBER = 0x0002
 };
 
 enum {

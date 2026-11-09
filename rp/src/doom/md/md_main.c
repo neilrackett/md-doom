@@ -206,21 +206,11 @@ void doomgame_start(const char *folder) {
   extern void I_MD_MusicSetFolder(const char *folder);
   I_MD_MusicSetFolder(s_folder); /* the songs live beside the packs */
   /* Without DMA sound: whether the music plays too (keypad )). Read
-   * before the first pack loads, whose screen depends on it. It became
-   * the default with CFGVER 2, when the music began to play beside the
-   * effects rather than instead of them, and every install gets it once,
-   * as with the palette; from then on its own choice stands. */
+   * before the first pack loads, whose screen depends on it. */
   extern bool I_MD_MusicSetYm(bool music);
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_YMMUSIC);
-    bool music = !e || atoi(e->value) != 0;
-    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_CFGVER);
-    if (!e || atoi(e->value) < 2) {
-      extern void I_MD_SaveVideoSettings(void);
-      music = true;
-      I_MD_SaveVideoSettings(); /* written, with the CFGVER, at the first frame */
-    }
-    I_MD_MusicSetYm(music);
+    I_MD_MusicSetYm(!e || atoi(e->value) != 0);
   }
 
   /* Until the engine installs PLAYPAL, give the reducer a palette that
@@ -247,16 +237,6 @@ void doomgame_start(const char *folder) {
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DITHER);
     int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
-    /* CFGVER 3 removed the halftone dither, 3, and blue noise moved from
-     * 4 to 3: a dither saved before is mapped once, and saved with the
-     * CFGVER at the first frame. */
-    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_CFGVER);
-    if (!e || atoi(e->value) < 3) {
-      extern void I_MD_SaveVideoSettings(void);
-      if (v == 3) v = (int)DOOM_VIDEO_DITHER_BAYER4;
-      else if (v == 4) v = (int)DOOM_VIDEO_DITHER_BLUENOISE;
-      I_MD_SaveVideoSettings();
-    }
     if (v >= 0 && v < (int)DOOM_VIDEO_DITHER_COUNT) doom_video_set_dither((doom_video_dither_t)v);
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
     v = e ? atoi(e->value) : 10;
@@ -285,7 +265,6 @@ void I_MD_FlushVideoSettings(void) {
   settings_put_integer(ctx, ACONFIG_PARAM_SCRNSIZE, (int)screenblocks);
   extern bool I_MD_MusicGetYm(void);
   settings_put_integer(ctx, ACONFIG_PARAM_YMMUSIC, I_MD_MusicGetYm() ? 1 : 0);
-  settings_put_integer(ctx, ACONFIG_PARAM_CFGVER, ACONFIG_CFGVER);
   fb_core1_park();
   settings_save(ctx, true);
   fb_core1_unpark();
