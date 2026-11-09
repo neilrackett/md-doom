@@ -241,25 +241,23 @@ void doomgame_start(const char *folder) {
     program_pack("E1M1");
   }
 
-  /* The dither, palette and screen size chosen last time (keypad * and
-   * /, and - and +). The size has to be in before R_Init, which sizes
-   * the view from it. */
+  /* The dither and screen size chosen last time (keypad *, and - and
+   * +). The size has to be in before R_Init, which sizes the view from
+   * it. */
   {
     SettingsConfigEntry *e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_DITHER);
     int v = e ? atoi(e->value) : (int)DOOM_VIDEO_DITHER_BAYER4;
-    if (v >= 0 && v < (int)DOOM_VIDEO_DITHER_COUNT) doom_video_set_dither((doom_video_dither_t)v);
-    e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_PALETTE);
-    v = e ? atoi(e->value) : (int)DOOM_VIDEO_PAL_ADAPTIVE;
-    /* The adaptive palette became the default with CFGVER 1, and every
-     * install gets it once, whatever it had saved; from then on its own
-     * choice stands. Saved with the CFGVER at the first frame. */
+    /* CFGVER 3 removed the halftone dither, 3, and blue noise moved from
+     * 4 to 3: a dither saved before is mapped once, and saved with the
+     * CFGVER at the first frame. */
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_CFGVER);
-    if (!e || atoi(e->value) < 1) {
+    if (!e || atoi(e->value) < 3) {
       extern void I_MD_SaveVideoSettings(void);
-      v = (int)DOOM_VIDEO_PAL_ADAPTIVE;
+      if (v == 3) v = (int)DOOM_VIDEO_DITHER_BAYER4;
+      else if (v == 4) v = (int)DOOM_VIDEO_DITHER_BLUENOISE;
       I_MD_SaveVideoSettings();
     }
-    if (v >= 0 && v < (int)DOOM_VIDEO_PAL_COUNT) doom_video_set_palette_mode((doom_video_palette_t)v);
+    if (v >= 0 && v < (int)DOOM_VIDEO_DITHER_COUNT) doom_video_set_dither((doom_video_dither_t)v);
     e = settings_find_entry(aconfig_getContext(), ACONFIG_PARAM_SCRNSIZE);
     v = e ? atoi(e->value) : 10;
     screenblocks = (v >= 11) ? 11 : 10;
@@ -270,11 +268,11 @@ void doomgame_start(const char *folder) {
   D_DoomMain(); /* never returns */
 }
 
-/* Remember the dither and palette across sessions. The key is seen from
- * the input poll, which the renderer also runs mid-frame while Core 1 is
- * busy in its render job, so the write is only requested here and done
- * from I_MD_PresentFrame, where Core 1 is idle and can be parked for the
- * flash access. */
+/* Remember the dither, screen size and music choice across sessions.
+ * The keys are seen from the input poll, which the renderer also runs
+ * mid-frame while Core 1 is busy in its render job, so the write is only
+ * requested here and done from I_MD_PresentFrame, where Core 1 is idle
+ * and can be parked for the flash access. */
 static bool s_video_settings_dirty;
 
 void I_MD_SaveVideoSettings(void) { s_video_settings_dirty = true; }
@@ -284,7 +282,6 @@ void I_MD_FlushVideoSettings(void) {
   s_video_settings_dirty = false;
   SettingsContext *ctx = aconfig_getContext();
   settings_put_integer(ctx, ACONFIG_PARAM_DITHER, (int)doom_video_get_dither());
-  settings_put_integer(ctx, ACONFIG_PARAM_PALETTE, (int)doom_video_get_palette_mode());
   settings_put_integer(ctx, ACONFIG_PARAM_SCRNSIZE, (int)screenblocks);
   extern bool I_MD_MusicGetYm(void);
   settings_put_integer(ctx, ACONFIG_PARAM_YMMUSIC, I_MD_MusicGetYm() ? 1 : 0);

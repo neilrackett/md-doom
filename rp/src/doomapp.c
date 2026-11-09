@@ -7,7 +7,7 @@
  *              in place of the game with MDDOOM_TEST_CARD=1.
  *
  * Keys on the test card:
- *   F1        next dither mode        F2   next palette source
+ *   F1        next dither mode
  *   F3        program /doom/E1M1.whx from SD into the pack window
  *   Ctrl / joystick fire / pad South  play the test sound
  *   Esc       back to GEM (in the game proper Esc will be the menu)
@@ -190,9 +190,6 @@ void doomapp_init(void) {
   build_test_palette();
   build_blip();
   doom_video_init();
-  /* The synthetic palette has no meaningful STDOOM subset, so the card
-   * starts on the generated palette; F2 cycles to the others. */
-  doom_video_set_palette_mode(DOOM_VIDEO_PAL_GENERATED);
   doom_video_set_playpal(s_playpal);
   doom_sound_init();
 
@@ -215,10 +212,6 @@ void doomapp_handle_key(const ikbd_key_event_t *k) {
   switch (key) {
     case DOOM_KEY_F1:
       doom_video_set_dither((doom_video_get_dither() + 1) % DOOM_VIDEO_DITHER_COUNT);
-      break;
-    case DOOM_KEY_F2:
-      doom_video_set_palette_mode((doom_video_get_palette_mode() + 1) %
-                                  DOOM_VIDEO_PAL_COUNT);
       break;
     case DOOM_KEY_F3:
       load_pack();
@@ -263,11 +256,6 @@ void doomapp_render_frame(void) {
   font_print("F1 ");
   font_set_color(PEN_WHITE);
   font_print(doom_video_dither_name(doom_video_get_dither()));
-  font_set_color(PEN_GREY);
-  font_move(124, 12);
-  font_print("F2 ");
-  font_set_color(PEN_WHITE);
-  font_print(doom_video_palette_name(doom_video_get_palette_mode()));
   font_set_color(PEN_GREY);
   font_move(228, 12);
   font_print("F3 ");

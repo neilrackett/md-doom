@@ -10,7 +10,7 @@ The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
 MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too (without it, you choose music or sound effects).
 
-A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg because I borrowed a colour palette from [STDOOM](https://github.com/indyjo/STDOOM).
+A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg, whose [STDOOM](https://github.com/indyjo/STDOOM) colour palette MD/DOOM started out with.
 
 ## Installation
 
@@ -58,7 +58,7 @@ Controls match the original PC Doom:
 | Help            | Gamma (F11 on a PC)                                                                |
 | Undo            | Pause                                                                              |
 | - and +         | Screen size: the view with the status bar, or the full screen without it           |
-| Keypad \* and / | Cycle through dither and palette options (see below); your choice is remembered    |
+| Keypad \*       | Cycle through the dither options (see below); your choice is remembered            |
 | Keypad )        | On an ST without DMA sound: music or sound effects (see Music below); remembered   |
 
 **Gamepad support is off in this release.** MD/DOOM can read an
@@ -91,20 +91,18 @@ cost of the status bar, exactly as the original did at its largest
 setting; your choice is remembered. The sizes in between are not
 available, because this renderer cannot draw a narrower view.
 
-Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), halftone, blue noise.
-Colour palettes: adaptive (default), STDOOM, generated, greyscale, EGA, CGA, C64, ZX Spectrum, PICO-8.
+Dither options: nearest colour, 2×2 Bayer, 4×4 Bayer (default), blue noise.
 
-The adaptive palette picks the 16 colours for each frame from what is on screen. Dark corridors get dark shades and brown rooms get browns, so there is less dither and less colour cast than with a fixed palette. The status bar gets 16 colours of its own as well, switched in part-way down the screen.
+The palette is adaptive: it picks the 16 colours for each frame from what is on screen. Dark corridors get dark shades and brown rooms get browns, so there is less dither and less colour cast than with a fixed palette. The status bar gets 16 colours of its own as well, switched in part-way down the screen.
 
 ### Mono monitors
 
 On a mono monitor (the SM124, or anything else in ST high res) MD/DOOM
 runs in black and white at 640×400. Every Doom pixel becomes a 2×2
 block, but the dither works at the full resolution, so its pattern is
-twice as fine as the picture. Keypad \* still cycles the dither options;
-keypad / does nothing, as there are no colours to choose. A mono screen
-refreshes at 71 Hz and copying a whole screen takes longer than one of
-those, so the picture updates every other refresh: about 36 times a
+twice as fine as the picture. Keypad \* still cycles the dither options.
+A mono screen refreshes at 71 Hz and copying a whole screen takes longer
+than one of those, so the picture updates every other refresh: about 36 times a
 second, which is still more often than the game itself moves on (35).
 
 ### Music
@@ -152,7 +150,7 @@ Xpad gamepad buttons       ──$FB88xx──►  hi byte, then lo at $FB8Axx
 Sound chip report (_SND)   ──$FB86xx──►  picks STE DMA or YM2149
 Display report (mono?)     ──$FB90xx──►  picks 16 colours or 640x400 mono
 Screen: blit + page flip   ◄──$FA8300──  256 → 16 colours + c2p, both cores
-Palette: 16 shifter words  ◄──$FA4040──  per tint, or per frame (adaptive)
+Palette: 16 shifter words  ◄──$FA4040──  chosen for each frame
 Sound: DMA refill or YM    ◄──$FA4100──  8-channel sfx + OPL2 music on Core 1
 ```
 

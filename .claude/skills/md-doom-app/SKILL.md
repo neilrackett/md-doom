@@ -36,11 +36,11 @@ colours travel with the frame. `doom_video_set_playpal()` is Doom's
   `emul.c` hands over to `doomgame_start()` in `md/md_main.c`.
 - `rp/src/doomapp.c` -- the pipeline test card, compiled only with
   `MDDOOM_TEST_CARD=1`.
-- `rp/src/doom_video.c` -- palette sources, dither modes, the fused LUT +
+- `rp/src/doom_video.c` -- the adaptive palette, dither modes, the fused LUT +
   c2p. `rp/src/doom_input.c` -- scancode -> Doom key, joystick + Xpad.
   `rp/src/doom_sound.c` -- the sfx mixer. `rp/src/pack.c` -- SD -> flash.
-  `rp/src/doom/md/i_mdmusic.c` -- YM2149 music from `D_*.STM` files on
-  the SD card (`tools/ymmusic.py` makes them).
+  `rp/src/doom/md/i_mdmusic.c` + `i_mdopl.c` -- OPL2 music from `D_*.MUS`
+  and `GENMIDI.OP2` on the SD card (`tools/levelpack.py` writes them).
 - `rp/src/emul.c` -- boot sequence and the main loop.
 - `rp/src/memmap_rp.ld` -- the `FLASH` / `PACK_FLASH` split (372 K / 780 K).
 - `target/atarist/src/userfw.s` -- the m68k side (per-VBL blit, palette,
@@ -52,8 +52,8 @@ colours travel with the frame. `doom_video_set_playpal()` is Doom's
 
 ```c
 // video: doom_video.h
-doom_video_set_playpal(rgb768);          // rebuild 16 colours + LUT
-doom_video_set_dither(mode); doom_video_set_palette_mode(mode);
+doom_video_set_playpal(rgb768);          // 16 colours + LUT chosen from the next frame
+doom_video_set_dither(mode);
 doom_video_publish();                    // LUT + c2p + VBL-synced hand-off
 // input: doom_input.h
 int key = doom_input_translate(scancode);   // doomkeys.h value or 0

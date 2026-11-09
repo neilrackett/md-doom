@@ -13,23 +13,15 @@
  * into the cart framebuffer, and hands the frame to the m68k. The 16 hardware
  * colours travel with it through the cart palette slot.
  *
- * The 16 colours come from one of a few sources (doom_video_palette_t)
- * and are re-derived from whichever PLAYPAL page Doom asks for, so the
- * damage, bonus and radiation-suit tints still work: the same 16 slots
- * are picked out of the tinted page and the LUT is rebuilt against them.
- * The fixed retro palettes match by hue and shade by brightness instead
- * of by plain distance, or Doom's dark colours would all come out black.
- * The adaptive source chooses its 16 for each frame from the colours on
- * screen, and the m68k shows them with the frame they were chosen for.
- *
- * This is the same reduction the DOOM Accelerator microfirmware for
- * STDOOM does, carried over here; the default 16-colour subset is the
- * one hand-picked for STDOOM by Jonas Eschenburg.
+ * The 16 colours are chosen for each frame from the colours on screen
+ * (the adaptive palette), out of whichever PLAYPAL page Doom asks for,
+ * so the damage, bonus and radiation-suit tints still work; the m68k
+ * shows them with the frame they were chosen for. With the status bar
+ * on screen it gets 16 of its own.
  *
  * In ST high res (fb_st_mono()) the same calls draw a 640x400 one-bit
  * picture instead: each colour's brightness, dithered at the full
- * resolution with the same dither modes. The palette source is kept and
- * saved but has no effect there.
+ * resolution with the same dither modes.
  */
 
 #ifndef DOOM_VIDEO_H_INCLUDED
@@ -42,56 +34,35 @@
 extern "C" {
 #endif
 
-/* How the 16 on-screen colours are chosen from the current 256. */
-typedef enum {
-  DOOM_VIDEO_PAL_SUBSET = 0, /* STDOOM's hand-picked PLAYPAL subset  */
-  DOOM_VIDEO_PAL_GENERATED,  /* median cut + k-means over the page   */
-  DOOM_VIDEO_PAL_GREY,       /* 16-step grey ramp                    */
-  DOOM_VIDEO_PAL_EGA,        /* the famous fixed palettes, for fun:  */
-  DOOM_VIDEO_PAL_CGA,        /*   CGA palette 1 (4 colours)          */
-  DOOM_VIDEO_PAL_C64,
-  DOOM_VIDEO_PAL_ZX,
-  DOOM_VIDEO_PAL_PICO8,
-  DOOM_VIDEO_PAL_ADAPTIVE,   /* 16 chosen for each frame (default)   */
-  DOOM_VIDEO_PAL_COUNT
-} doom_video_palette_t;
-
-/* How a colour that falls between two of the 16 is drawn. */
+/* How a colour that falls between two of the 16 is drawn. Saved in the
+ * app config by number (DITHER), so a removed mode renumbers the ones
+ * after it: CFGVER 3 maps the old numbers (md_main.c). */
 typedef enum {
   DOOM_VIDEO_DITHER_NEAREST = 0, /* closest colour, no dither          */
   DOOM_VIDEO_DITHER_BAYER2,      /* 2x2 ordered                        */
   DOOM_VIDEO_DITHER_BAYER4,      /* 4x4 ordered (default)              */
-  DOOM_VIDEO_DITHER_HALFTONE,    /* 4x4 clustered dot                  */
   DOOM_VIDEO_DITHER_BLUENOISE,   /* 32x32 void-and-cluster tile        */
   DOOM_VIDEO_DITHER_COUNT
 } doom_video_dither_t;
 
-/* Reset to the defaults (adaptive palette, 4x4 Bayer) with no PLAYPAL
- * installed; nothing publishes until doom_video_set_playpal(). */
+/* Reset to the default dither (4x4 Bayer) with no PLAYPAL installed;
+ * nothing publishes until doom_video_set_playpal(). */
 void doom_video_init(void);
 
-/* Install a 256-entry palette (768 bytes of RGB, one PLAYPAL page) and
- * rebuild the 16 ST colours + the dither LUT from it. Doom calls this
- * via I_SetPalette at level start and on every tint change; it costs
- * well under a millisecond, so no caching is done. The bytes are copied;
- * the caller's buffer need not stay live. (The adaptive source builds
- * at the next publish instead, from the frame.) */
+/* Install a 256-entry palette (768 bytes of RGB, one PLAYPAL page). Doom
+ * calls this via I_SetPalette at level start and on every tint change.
+ * The bytes are copied; the caller's buffer need not stay live. The 16
+ * colours and the dither LUT are built from it at the next publish,
+ * from the frame. */
 void doom_video_set_playpal(const uint8_t *rgb768);
 
-/* Change the palette source or dither mode. Both rebuild the LUT from
- * the last installed PLAYPAL. doom_video_next_palette is the order
- * keypad / steps through them. */
-void doom_video_set_palette_mode(doom_video_palette_t mode);
+/* Change the dither mode, from the next frame. */
 void doom_video_set_dither(doom_video_dither_t mode);
-doom_video_palette_t doom_video_get_palette_mode(void);
-doom_video_palette_t doom_video_next_palette(doom_video_palette_t mode);
 doom_video_dither_t doom_video_get_dither(void);
-const char *doom_video_palette_name(doom_video_palette_t mode);
 const char *doom_video_dither_name(doom_video_dither_t mode);
 
-/* Whether this frame has the status bar in rows 168..199. With the
- * adaptive palette the bar then gets 16 colours of its own, switched in
- * by the m68k at line 168. */
+/* Whether this frame has the status bar in rows 168..199. The bar then
+ * gets 16 colours of its own, switched in by the m68k at line 168. */
 void doom_video_set_status_bar(bool shown);
 
 /* Doom's screen melt. doom_video_wipe_begin() takes the last published

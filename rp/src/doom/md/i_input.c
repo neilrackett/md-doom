@@ -28,23 +28,21 @@
 #include "fb.h"
 #include "ikbd.h"
 
-/* Keypad * and / cycle the dither mode and the palette source at run
- * time, as the DOOM Accelerator did, and say so in the HUD. Neither key
- * means anything to Doom, and in ST high res / means nothing at all. */
+/* Keypad * cycles the dither mode at run time, as the DOOM Accelerator
+ * did, and says so in the HUD. The key means nothing to Doom. */
 #define SCAN_KP_MULTIPLY 0x66
-#define SCAN_KP_DIVIDE 0x65
 /* Keypad ), on an ST without DMA sound, gives the YM2149 to the music
  * instead of the sound effects, or back (both play anyway with DMA
  * sound, which leaves the YM free). Saved with the video options. */
 #define SCAN_KP_RPAREN 0x64
 /* Debug builds only: keypad - cycles the audio refill interrupt off /
  * Core 0 / Core 1 for A/B tests. Core 0 stalls the renderer, so a
- * release build must not offer it one key away from * and /. */
+ * release build must not offer it one key away from *. */
 #define SCAN_KP_MINUS 0x4A
 
 extern void I_MD_SaveVideoSettings(void);
 
-/* The next dither / palette to switch to, or -1 for "no change". The
+/* The next dither to switch to, or -1 for "no change". The
  * key is seen from the input poll, which the renderer also runs
  * mid-frame from NetUpdate: rebuilding the 4 KB dither LUT there costs
  * a millisecond of the frame's budget and does it on the renderer's
@@ -52,27 +50,18 @@ extern void I_MD_SaveVideoSettings(void);
  * I_MD_ApplyVideoMode does the work from I_MD_PresentFrame, between
  * frames, with Core 1 idle. */
 static int8_t s_pending_dither = -1;
-static int8_t s_pending_palette = -1;
 static int8_t s_pending_ym_music = -1; /* keypad ): 1 music on, 0 off (no DMA sound) */
 
 extern bool I_MD_MusicSetYm(bool music);
 extern bool I_MD_MusicGetYm(void);
 
-static void cycle_video_mode(uint8_t scancode) {
-  if (scancode == SCAN_KP_MULTIPLY) {
-    int cur = s_pending_dither >= 0 ? s_pending_dither : (int)doom_video_get_dither();
-    s_pending_dither = (int8_t)((cur + 1) % DOOM_VIDEO_DITHER_COUNT);
-    players[consoleplayer].message =
-        doom_video_dither_name((doom_video_dither_t)s_pending_dither);
-  } else if (!fb_st_mono()) { /* a mono monitor has no colours to choose */
-    int cur = s_pending_palette >= 0 ? s_pending_palette : (int)doom_video_get_palette_mode();
-    s_pending_palette = (int8_t)doom_video_next_palette((doom_video_palette_t)cur);
-    players[consoleplayer].message =
-        doom_video_palette_name((doom_video_palette_t)s_pending_palette);
-  }
+static void cycle_dither(void) {
+  int cur = s_pending_dither >= 0 ? s_pending_dither : (int)doom_video_get_dither();
+  s_pending_dither = (int8_t)((cur + 1) % DOOM_VIDEO_DITHER_COUNT);
+  players[consoleplayer].message = doom_video_dither_name((doom_video_dither_t)s_pending_dither);
 }
 
-/* Apply a dither / palette / sound change asked for since the last
+/* Apply a dither / sound change asked for since the last
  * frame. Called from I_MD_PresentFrame, where the music module may also
  * read the SD card: switching to the music opens the song, so the HUD
  * can say if there is none. */
@@ -84,15 +73,9 @@ void I_MD_ApplyVideoMode(void) {
     players[consoleplayer].message = got ? "MUSIC ON" : want ? "NO MUSIC FILES" : "MUSIC OFF";
     I_MD_SaveVideoSettings();
   }
-  if (s_pending_dither < 0 && s_pending_palette < 0) return;
-  if (s_pending_dither >= 0) {
-    doom_video_set_dither((doom_video_dither_t)s_pending_dither);
-    s_pending_dither = -1;
-  }
-  if (s_pending_palette >= 0) {
-    doom_video_set_palette_mode((doom_video_palette_t)s_pending_palette);
-    s_pending_palette = -1;
-  }
+  if (s_pending_dither < 0) return;
+  doom_video_set_dither((doom_video_dither_t)s_pending_dither);
+  s_pending_dither = -1;
   I_MD_SaveVideoSettings(); /* survives the next power-up (written at frame end) */
 }
 
@@ -213,8 +196,8 @@ void I_GetEvent(void) {
 
   ikbd_key_event_t k;
   while (ikbd_pop_key(&k)) {
-    if (k.scancode == SCAN_KP_MULTIPLY || k.scancode == SCAN_KP_DIVIDE) {
-      if (k.is_press) cycle_video_mode(k.scancode);
+    if (k.scancode == SCAN_KP_MULTIPLY) {
+      if (k.is_press) cycle_dither();
       continue;
     }
     if (k.scancode == SCAN_KP_RPAREN) {

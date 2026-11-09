@@ -8,16 +8,13 @@
  *
  * Two halves:
  *
- *  1. Palette work, done whenever the PLAYPAL page or a mode changes
- *     (and for every frame with the adaptive source, from its colours):
- *     pick 16 reference colours, snap them to what the ST can display,
- *     and build s_lut[16][256] -- for each of the 16 dither cells, the
- *     pen every PLAYPAL index maps to. A dithered index is drawn as its
- *     nearest reference on some cells and its second-nearest on the
- *     rest, the split decided by where the colour falls on the line
- *     between the two (t in 0..16) against the cell's threshold. The
- *     fixed retro palettes use a different pairing (see "vivid" below):
- *     a pen chosen by hue alone, shaded against black by brightness.
+ *  1. Palette work, for every frame: choose 16 colours for the ones on
+ *     screen (the adaptive palette, below), snapped to what the ST can
+ *     display, and build s_lut[16][256] -- for each of the 16 dither
+ *     cells, the pen every PLAYPAL index maps to. A dithered index is
+ *     drawn as one pen on some cells and another on the rest, the split
+ *     decided by its mix level (t in 0..16) against the cell's
+ *     threshold (see best_pair).
  *
  *  2. Per frame: doom_video_publish() walks fb_chunked_buffer 16 pixels
  *     at a time, maps each pixel through the LUT for its cell, and packs
@@ -33,7 +30,6 @@
 
 #include "doom_video.h"
 
-#include <stdlib.h>
 #include <string.h>
 
 #include "audio.h"
@@ -55,14 +51,11 @@
 
 static uint8_t s_playpal[768];   /* last installed page, RGB           */
 static bool s_have_playpal;
-static doom_video_palette_t s_pal_mode = DOOM_VIDEO_PAL_ADAPTIVE;
 static doom_video_dither_t s_dither = DOOM_VIDEO_DITHER_BAYER4;
 
 static bool s_mono;               /* ST high res: 640x400, one bit a pixel */
 
 static uint8_t s_ref_rgb[16][3];  /* the 16 colours as the ST shows them */
-static int s_ref_count = 16;      /* fewer for the 4-colour CGA palette   */
-static bool s_vivid;              /* fixed palette: hue-first matching   */
 static uint16_t s_st_colors[16];  /* the same, as ST palette words       */
 
 /* [cell][index] -> pen, cell = ((y & 3) << 2) | (x & 3). 4 KB. In ST
@@ -81,39 +74,6 @@ static uint16_t s_pair[256];
 
 static uint32_t s_convert_us;
 
-/* STDOOM's hand-picked 16 PLAYPAL indices (Jonas Eschenburg): black, two
- * blues, two greens, dark red, greys, flesh, yellow, browns, bright red,
- * olive. Refined against the shareware WAD over a long time; it holds
- * up well on flesh tones, the sky and the status bar. */
-static const uint8_t s_subset[16] = {0,   201, 205, 117, 123, 185, 87,  100,
-                                     60,  95,  227, 104, 69,  79,  179, 159};
-
-/* Fixed palettes, RGB 0..255, snapped to the ST hardware palette. The 16
- * ST colours become the famous palette and every PLAYPAL colour maps to
- * its nearest two. From the DOOM Accelerator, plus CGA. */
-static const uint8_t s_pal_ega[16][3] = {
-    {0, 0, 0},     {0, 0, 170},     {0, 170, 0},     {0, 170, 170},
-    {170, 0, 0},   {170, 0, 170},   {170, 85, 0},    {170, 170, 170},
-    {85, 85, 85},  {85, 85, 255},   {85, 255, 85},   {85, 255, 255},
-    {255, 85, 85}, {255, 85, 255},  {255, 255, 85},  {255, 255, 255}};
-static const uint8_t s_pal_cga[4][3] = { /* palette 1, high intensity */
-    {0, 0, 0}, {85, 255, 255}, {255, 85, 255}, {255, 255, 255}};
-static const uint8_t s_pal_c64[16][3] = { /* Pepto reconstruction */
-    {0, 0, 0},       {255, 255, 255}, {104, 55, 43},   {112, 164, 178},
-    {111, 61, 134},  {88, 141, 67},   {53, 40, 121},   {184, 199, 111},
-    {111, 79, 37},   {67, 57, 0},     {154, 103, 89},  {68, 68, 68},
-    {108, 108, 108}, {154, 210, 132}, {108, 94, 181},  {149, 149, 149}};
-static const uint8_t s_pal_zx[16][3] = { /* non-bright 0xD7, bright 0xFF */
-    {0, 0, 0},       {0, 0, 215},     {215, 0, 0},     {215, 0, 215},
-    {0, 215, 0},     {0, 215, 215},   {215, 215, 0},   {215, 215, 215},
-    {0, 0, 0},       {0, 0, 255},     {255, 0, 0},     {255, 0, 255},
-    {0, 255, 0},     {0, 255, 255},   {255, 255, 0},   {255, 255, 255}};
-static const uint8_t s_pal_pico8[16][3] = {
-    {0, 0, 0},       {29, 43, 83},    {126, 37, 83},   {0, 135, 81},
-    {171, 82, 54},   {95, 87, 79},    {194, 195, 199}, {255, 241, 232},
-    {255, 0, 77},    {255, 163, 0},   {255, 236, 39},  {0, 228, 54},
-    {41, 173, 255},  {131, 118, 156}, {255, 119, 168}, {255, 204, 170}};
-
 /* Everything from here to the public API runs per palette or per frame,
  * not per pixel: size matters more than speed (the debug build's flash
  * ran out at -O3). */
@@ -121,28 +81,7 @@ static const uint8_t s_pal_pico8[16][3] = {
 #pragma GCC optimize("Os")
 
 /* ------------------------------------------------------------------ */
-/* ST colour helpers                                                   */
-
-/* 8-bit channel -> ST/STE palette nibble. The ST's own 3 bits are the
- * top three of the value; the STE's fourth, finer bit sits in bit 3 of
- * the nibble, which a plain ST ignores. */
-static uint16_t channel_nibble(uint8_t v) {
-  uint16_t r = (uint16_t)((v & 0xE0u) >> 5);
-  r |= (uint16_t)((v & 0x10u) >> 1);
-  return r;
-}
-
-static uint16_t st_color_word(uint8_t r, uint8_t g, uint8_t b) {
-  return (uint16_t)((channel_nibble(r) << 8) | (channel_nibble(g) << 4) |
-                    channel_nibble(b));
-}
-
-/* What the STE actually displays for a channel value: the top nibble,
- * spread back to 0..255. (Not channel_nibble(v) * 17 -- the STE's
- * nibble bit order is not the value's.) */
-static uint8_t displayed_channel(uint8_t v) {
-  return (uint8_t)((v >> 4) * 17u);
-}
+/* Colour helpers                                                      */
 
 /* Perceptual distance, the "redmean" approximation: green-weighted and
  * red-adjusted so skies and browns pick sensible neighbours. */
@@ -223,220 +162,16 @@ static uint16_t best_pair(const uint8_t *c, const uint8_t (*rgb)[3], const uint1
 }
 
 /* ------------------------------------------------------------------ */
-/* "Vivid" matching for the fixed palettes                             */
-
-/* Doom's PLAYPAL is mostly dark, desaturated browns and greys, and the
- * light-diminishing colormaps push the visible pixels darker still.
- * Matched by plain distance against a set of saturated primaries,
- * nearly everything lands on black with a sprinkle of colour, which is
- * not what anyone picking the ZX Spectrum palette wanted. So the fixed
- * palettes match differently:
- *
- *  - the pen is chosen by hue alone (the colour and each pen scaled to
- *    full brightness before comparing), so a dark brown wall is still a
- *    brown/yellow wall;
- *  - the colour's brightness is stretched (gamma 0.75; 0.5 turned the
- *    walls into white dither) so Doom's mid-tones reach further up a
- *    pen instead of sitting at a quarter of one;
- *  - the dither then runs along a brightness ladder: black, plus every
- *    pen of the chosen hue (EGA's dark/bright pairs, C64's greys), and
- *    the colour dithers between the two rungs bracketing its brightness.
- *
- * All of it happens in the LUT rebuild; the per-pixel path is unchanged. */
-
-static int luma(const uint8_t *c) {
-  return (c[0] * 77 + c[1] * 151 + c[2] * 28) >> 8;
-}
-
-/* Scale a colour so its brightest channel is 255. Black has no hue;
- * treat it as neutral so it pairs with the greys. */
-static void chroma_of(const uint8_t *c, int *out) {
-  int m = c[0];
-  if (c[1] > m) m = c[1];
-  if (c[2] > m) m = c[2];
-  for (int k = 0; k < 3; k++) out[k] = m ? (c[k] * 255) / m : 255;
-}
-
-static int chroma_dist(const int *p, const int *q) {
-  int dr = p[0] - q[0], dg = p[1] - q[1], db = p[2] - q[2];
-  return dr * dr + dg * dg + db * db;
-}
-
-static int isqrt16(int n) {
-  int r = 0;
-  for (int bit = 1 << 8; bit; bit >>= 1) {
-    if ((r + bit) * (r + bit) <= n) r += bit;
-  }
-  return r;
-}
-
-#define VIVID_BLACK_LUMA 24     /* pens darker than this are "black"    */
-#define VIVID_LADDER_TOL 16000  /* chroma distance to share a ladder    */
-
-/* Pick the two pens and the mix level for colour `c`. */
-static void vivid_pair(const uint8_t *c, uint8_t *out_a, uint8_t *out_b,
-                       int *out_t16) {
-  int ref_y[16], ref_ch[16][3], ch[3];
-  for (int k = 0; k < s_ref_count; k++) {
-    ref_y[k] = luma(s_ref_rgb[k]);
-    chroma_of(s_ref_rgb[k], ref_ch[k]);
-  }
-  chroma_of(c, ch);
-
-  /* The hue pen: nearest chroma among the pens that are not black. */
-  int h = -1, best = 0x7FFFFFFF;
-  for (int k = 0; k < s_ref_count; k++) {
-    if (ref_y[k] < VIVID_BLACK_LUMA) continue;
-    int d = chroma_dist(ch, ref_ch[k]);
-    if (d < best) {
-      best = d;
-      h = k;
-    }
-  }
-  if (h < 0) h = 0;
-
-  /* Stretched brightness, y = 255 * (Y/255)^0.75 as two square roots,
-   * then the ladder rungs bracketing it. */
-  int y = isqrt16(luma(c) * 255);
-  y = (y * isqrt16(y * 255)) / 255;
-  int a = -1, b = -1;
-  for (int k = 0; k < s_ref_count; k++) {
-    if (ref_y[k] >= VIVID_BLACK_LUMA &&
-        chroma_dist(ref_ch[k], ref_ch[h]) > VIVID_LADDER_TOL)
-      continue;
-    if (ref_y[k] <= y) {
-      if (a < 0 || ref_y[k] > ref_y[a]) a = k;
-    } else {
-      if (b < 0 || ref_y[k] < ref_y[b]) b = k;
-    }
-  }
-  if (a < 0) a = b;
-  if (b < 0) b = a;
-  *out_a = (uint8_t)a;
-  *out_b = (uint8_t)b;
-  *out_t16 = (a == b) ? 0 : ((y - ref_y[a]) * 16) / (ref_y[b] - ref_y[a]);
-}
-
-/* ------------------------------------------------------------------ */
-/* Generated palette: median cut + k-means over the 256 colours        */
-
-static uint8_t s_palgen_idx[256];
-static int s_palgen_axis;
-
-static int palgen_cmp(const void *pa, const void *pb) {
-  uint8_t a = *(const uint8_t *)pa;
-  uint8_t b = *(const uint8_t *)pb;
-  int va = s_playpal[(uint32_t)a * 3u + (uint32_t)s_palgen_axis];
-  int vb = s_playpal[(uint32_t)b * 3u + (uint32_t)s_palgen_axis];
-  return va - vb;
-}
-
-static void median_cut(uint8_t out_rgb[16][3]) {
-  static const int axis_w[3] = {2, 4, 3}; /* favour the axes the eye resolves */
-  uint16_t box_start[16], box_count[16];
-  uint8_t nboxes = 1;
-
-  for (int i = 0; i < 256; i++) s_palgen_idx[i] = (uint8_t)i;
-  box_start[0] = 0;
-  box_count[0] = 256;
-
-  while (nboxes < 16u) {
-    int best = -1, best_axis = 0;
-    long best_score = -1;
-    for (int b = 0; b < nboxes; b++) {
-      int mn[3] = {255, 255, 255}, mx[3] = {0, 0, 0};
-      if (box_count[b] < 2u) continue;
-      for (uint16_t k = 0; k < box_count[b]; k++) {
-        const uint8_t *c = &s_playpal[(uint32_t)s_palgen_idx[box_start[b] + k] * 3u];
-        for (int ch = 0; ch < 3; ch++) {
-          if (c[ch] < mn[ch]) mn[ch] = c[ch];
-          if (c[ch] > mx[ch]) mx[ch] = c[ch];
-        }
-      }
-      long arange = -1;
-      int axis = 0;
-      for (int ch = 0; ch < 3; ch++) {
-        long r = (long)(mx[ch] - mn[ch]) * axis_w[ch];
-        if (r > arange) {
-          arange = r;
-          axis = ch;
-        }
-      }
-      if (arange > best_score) {
-        best_score = arange;
-        best = b;
-        best_axis = axis;
-      }
-    }
-    if (best < 0) break;
-    s_palgen_axis = best_axis;
-    qsort(&s_palgen_idx[box_start[best]], box_count[best], 1, palgen_cmp);
-    uint16_t half = (uint16_t)(box_count[best] / 2u);
-    box_start[nboxes] = (uint16_t)(box_start[best] + half);
-    box_count[nboxes] = (uint16_t)(box_count[best] - half);
-    box_count[best] = half;
-    nboxes++;
-  }
-
-  for (int b = 0; b < 16; b++) {
-    out_rgb[b][0] = out_rgb[b][1] = out_rgb[b][2] = 0;
-    if (b < nboxes && box_count[b] > 0u) {
-      uint32_t s[3] = {0, 0, 0};
-      for (uint16_t k = 0; k < box_count[b]; k++) {
-        const uint8_t *c = &s_playpal[(uint32_t)s_palgen_idx[box_start[b] + k] * 3u];
-        s[0] += c[0];
-        s[1] += c[1];
-        s[2] += c[2];
-      }
-      for (int ch = 0; ch < 3; ch++) out_rgb[b][ch] = (uint8_t)(s[ch] / box_count[b]);
-    }
-  }
-}
-
-#define KMEANS_ITERS 8
-static void kmeans(uint8_t cen[16][3]) {
-  for (int it = 0; it < KMEANS_ITERS; it++) {
-    uint32_t sum[16][3] = {{0}};
-    uint32_t count[16] = {0};
-    for (int i = 0; i < 256; i++) {
-      const uint8_t *c = &s_playpal[i * 3];
-      long best = 0x7FFFFFFFL;
-      int bk = 0;
-      for (int k = 0; k < 16; k++) {
-        long d = color_dist(c[0], c[1], c[2], cen[k][0], cen[k][1], cen[k][2]);
-        if (d < best) {
-          best = d;
-          bk = k;
-        }
-      }
-      sum[bk][0] += c[0];
-      sum[bk][1] += c[1];
-      sum[bk][2] += c[2];
-      count[bk]++;
-    }
-    for (int k = 0; k < 16; k++) {
-      if (count[k]) {
-        for (int ch = 0; ch < 3; ch++) cen[k][ch] = (uint8_t)(sum[k][ch] / count[k]);
-      }
-    }
-  }
-}
-
-/* ------------------------------------------------------------------ */
 /* Dither thresholds                                                   */
 
 static const uint8_t s_bayer4[16] = {0, 8,  2,  10, 12, 4,  14, 6,
                                      3, 11, 1,  9,  15, 7,  13, 5};
 static const uint8_t s_bayer2[4] = {2, 10, 14, 6}; /* scaled to 0..15 */
-static const uint8_t s_halftone[16] = {6,  7,  8,  9,  5,  0,  1,  10,
-                                       4,  3,  2,  11, 15, 14, 13, 12};
 
 static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
   switch (mode) {
     case DOOM_VIDEO_DITHER_BAYER2:
       return s_bayer2[(((cell >> 2) & 1u) << 1) | (cell & 1u)];
-    case DOOM_VIDEO_DITHER_HALFTONE:
-      return s_halftone[cell & 15u];
     default:
       return s_bayer4[cell & 15u];
   }
@@ -445,14 +180,14 @@ static uint8_t dither_threshold(doom_video_dither_t mode, uint8_t cell) {
 /* ------------------------------------------------------------------ */
 /* Adaptive palette: 16 pens for each frame                            */
 
-/* The other sources choose 16 colours for the whole of PLAYPAL, and so
- * spend pens on colours that are not on screen. This one chooses them
- * for the frame being shown: a histogram of the PLAYPAL indices in it,
- * clustered into 16 by weighted k-means, each centre snapped to a
- * colour the shifter can show (16 levels a channel on an STE, 8 on an
- * ST, told apart by DMA sound). Measured offline against the original
- * 256-colour frames (tools/bandpal.py), it more than halves the error
- * of STDOOM's subset on an STE.
+/* A fixed set of 16 for the whole of PLAYPAL spends pens on colours that
+ * are not on screen. These are chosen for the frame being shown: a
+ * histogram of the PLAYPAL indices in it, clustered into 16 by weighted
+ * k-means, each centre snapped to a colour the shifter can show (16
+ * levels a channel on an STE, 8 on an ST, told apart by DMA sound).
+ * Measured offline against the original 256-colour frames
+ * (tools/bandpal.py), it more than halves the error of STDOOM's
+ * hand-picked subset, the fixed set this replaced, on an STE.
  *
  * Pens chosen afresh every frame would shimmer, so a frame starts from
  * the last one's centres and takes ADAPT_ITERS k-means steps, and a
@@ -715,7 +450,7 @@ static bool adapt_snap(adapt_t *a, const int16_t (*cen)[3], uint16_t frozen, boo
     uint16_t w = 0;
     for (unsigned ch = 0; ch < 3u; ch++) {
       const unsigned l = a->lvl[k][ch];
-      /* An STE level's lowest bit is the nibble's bit 3 (channel_nibble). */
+      /* An STE level's lowest, finest bit is the nibble's bit 3. */
       w = (uint16_t)((w << 4) | (max == 15u ? ((l >> 1) | ((l & 1u) << 3)) : l));
       a->rgb[k][ch] = level_value(l, max);
     }
@@ -745,7 +480,6 @@ static bool adapt_update(adapt_t *a, unsigned y0, unsigned y1, uint16_t frozen, 
 
 /* The view's pens are the reducer's references. */
 static void adapt_install_view(void) {
-  s_ref_count = 16;
   memcpy(s_ref_rgb, s_view.rgb, sizeof(s_ref_rgb));
   memcpy(s_st_colors, s_view.st, sizeof(s_st_colors));
 }
@@ -765,50 +499,6 @@ static void build_hud_pens(void) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Palette + LUT build                                                 */
-
-static void set_refs_from_rgb(const uint8_t (*src)[3], int count) {
-  s_ref_count = count;
-  for (uint8_t k = 0; k < 16u; k++) {
-    /* Pens past `count` are never chosen by the LUT; park them on the
-     * first colour so the ST palette slot holds nothing surprising. */
-    const uint8_t *c = src[k < count ? k : 0];
-    s_st_colors[k] = st_color_word(c[0], c[1], c[2]);
-    s_ref_rgb[k][0] = displayed_channel(c[0]);
-    s_ref_rgb[k][1] = displayed_channel(c[1]);
-    s_ref_rgb[k][2] = displayed_channel(c[2]);
-  }
-}
-
-static void build_refs(void) {
-  uint8_t pal[16][3];
-  s_vivid = false;
-  switch (s_pal_mode) {
-    case DOOM_VIDEO_PAL_GENERATED:
-      median_cut(pal);
-      kmeans(pal);
-      break;
-    case DOOM_VIDEO_PAL_GREY:
-      for (int k = 0; k < 16; k++) pal[k][0] = pal[k][1] = pal[k][2] = (uint8_t)(k * 17);
-      break;
-    case DOOM_VIDEO_PAL_EGA: set_refs_from_rgb(s_pal_ega, 16); s_vivid = true; return;
-    case DOOM_VIDEO_PAL_CGA: set_refs_from_rgb(s_pal_cga, 4); s_vivid = true; return;
-    case DOOM_VIDEO_PAL_C64: set_refs_from_rgb(s_pal_c64, 16); s_vivid = true; return;
-    case DOOM_VIDEO_PAL_ZX: set_refs_from_rgb(s_pal_zx, 16); s_vivid = true; return;
-    case DOOM_VIDEO_PAL_PICO8: set_refs_from_rgb(s_pal_pico8, 16); s_vivid = true; return;
-    default:
-      for (int k = 0; k < 16; k++) {
-        const uint8_t *c = &s_playpal[(uint32_t)s_subset[k] * 3u];
-        pal[k][0] = c[0];
-        pal[k][1] = c[1];
-        pal[k][2] = c[2];
-      }
-      break;
-  }
-  set_refs_from_rgb(pal, 16);
-}
-
-/* ------------------------------------------------------------------ */
 /* ST high res                                                         */
 
 /* A mono monitor shows 640x400 at one bit a pixel and has no palette: a
@@ -818,8 +508,7 @@ static void build_refs(void) {
  * pixels that can take up to four different thresholds, and a flat
  * colour gets all 17 levels of a 4x4 matrix rather than 17 levels'
  * worth of blocks. An output pixel is white where the colour's level,
- * 0..16, beats the threshold under it. The palette sources mean nothing
- * here and are not consulted.
+ * 0..16, beats the threshold under it. There is no palette to choose.
  *
  * The level is the colour's brightest channel, not its luminance.
  * Saturated colours look brighter than their luminance says, and Doom
@@ -870,22 +559,13 @@ static void build_mono(void) {
 /* s_lut and s_pair from s_ref_rgb and the installed page. */
 static void build_lut(void) {
   uint16_t lin[16][3];
-  for (int k = 0; k < s_ref_count; k++) {
+  for (int k = 0; k < 16; k++) {
     for (int ch = 0; ch < 3; ch++) lin[k][ch] = gamma_lin[s_ref_rgb[k][ch]];
   }
   const bool dither = (s_dither != DOOM_VIDEO_DITHER_NEAREST);
   for (uint32_t i = 0; i < 256u; i++) {
     const uint8_t *c = &s_playpal[i * 3u];
-    uint16_t v;
-    if (s_vivid) {
-      uint8_t a, b;
-      int t16;
-      vivid_pair(c, &a, &b, &t16);
-      v = dither ? (uint16_t)(a | (b << 4) | (t16 << 8))
-                 : (uint16_t)((t16 >= 8 ? b : a) * 0x11u);
-    } else {
-      v = best_pair(c, (const uint8_t(*)[3])s_ref_rgb, (const uint16_t(*)[3])lin, s_ref_count, dither);
-    }
+    const uint16_t v = best_pair(c, (const uint8_t(*)[3])s_ref_rgb, (const uint16_t(*)[3])lin, 16, dither);
     s_pair[i] = v;
     const uint8_t a = v & 15u, b = (v >> 4) & 15u;
     for (uint8_t cell = 0; cell < 16u; cell++) {
@@ -905,12 +585,7 @@ static void rebuild(void) {
     build_mono(); /* no palette to publish: the m68k does not copy it */
     return;
   }
-  if (s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
-    s_lut_dirty = s_hud_dirty = true; /* the pens come from the frame: built at the publish */
-    return;
-  }
-  build_refs();
-  build_lut();
+  s_lut_dirty = s_hud_dirty = true; /* the pens come from the frame: built at the publish */
 }
 
 #pragma GCC pop_options
@@ -920,7 +595,6 @@ static void rebuild(void) {
 
 void doom_video_init(void) {
   s_have_playpal = false;
-  s_pal_mode = DOOM_VIDEO_PAL_ADAPTIVE;
   s_dither = DOOM_VIDEO_DITHER_BAYER4;
   s_convert_us = 0;
 }
@@ -931,54 +605,21 @@ void doom_video_set_playpal(const uint8_t *rgb768) {
   rebuild();
 }
 
-void doom_video_set_palette_mode(doom_video_palette_t mode) {
-  if (mode >= DOOM_VIDEO_PAL_COUNT) return;
-  s_pal_mode = mode;
-  s_view.lvl_max = s_hud.lvl_max = 0; /* adaptive: start from scratch */
-  s_frozen = 0;
-  rebuild();
-}
-
 void doom_video_set_dither(doom_video_dither_t mode) {
   if (mode >= DOOM_VIDEO_DITHER_COUNT) return;
   s_dither = mode;
   rebuild();
 }
 
-doom_video_palette_t doom_video_get_palette_mode(void) { return s_pal_mode; }
-
-/* From the adaptive default to STDOOM's, the two worth comparing, then
- * the rest in order and round to adaptive again. */
-doom_video_palette_t doom_video_next_palette(doom_video_palette_t mode) {
-  if (mode == DOOM_VIDEO_PAL_ADAPTIVE) return DOOM_VIDEO_PAL_SUBSET;
-  return (doom_video_palette_t)((mode + 1) % DOOM_VIDEO_PAL_COUNT);
-}
-
 doom_video_dither_t doom_video_get_dither(void) { return s_dither; }
 
 void doom_video_set_status_bar(bool shown) { s_status_bar = shown; }
-
-const char *doom_video_palette_name(doom_video_palette_t mode) {
-  switch (mode) {
-    case DOOM_VIDEO_PAL_SUBSET: return "STDOOM 16";
-    case DOOM_VIDEO_PAL_GENERATED: return "GENERATED";
-    case DOOM_VIDEO_PAL_GREY: return "GREYSCALE";
-    case DOOM_VIDEO_PAL_EGA: return "EGA";
-    case DOOM_VIDEO_PAL_CGA: return "CGA";
-    case DOOM_VIDEO_PAL_C64: return "C64";
-    case DOOM_VIDEO_PAL_ZX: return "ZX SPECTRUM";
-    case DOOM_VIDEO_PAL_PICO8: return "PICO-8";
-    case DOOM_VIDEO_PAL_ADAPTIVE: return "ADAPTIVE";
-    default: return "?";
-  }
-}
 
 const char *doom_video_dither_name(doom_video_dither_t mode) {
   switch (mode) {
     case DOOM_VIDEO_DITHER_NEAREST: return "NEAREST";
     case DOOM_VIDEO_DITHER_BAYER2: return "BAYER 2X2";
     case DOOM_VIDEO_DITHER_BAYER4: return "BAYER 4X4";
-    case DOOM_VIDEO_DITHER_HALFTONE: return "HALFTONE";
     case DOOM_VIDEO_DITHER_BLUENOISE: return "BLUE NOISE";
     default: return "?";
   }
@@ -1213,7 +854,7 @@ void doom_video_publish(void) {
    * game's time rather than the m68k's slack. With the split the view
    * and the bar each get their own. */
   s_split = false;
-  if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
+  if (!s_mono && s_have_playpal) {
     s_split = s_status_bar;
     const unsigned view_h = s_split ? SPLIT_ROW : FB_CHUNKED_H;
     const bool mix = (s_dither != DOOM_VIDEO_DITHER_NEAREST);
@@ -1591,7 +1232,7 @@ void doom_video_wipe_begin(void) {
    * in the old one's; the next frame after the melt chooses its own.
    * If the old frame had the split, its bar is in the bar's pens: each
    * is mapped to the nearest of the melt's at the first step. */
-  if (!s_mono && s_have_playpal && s_pal_mode == DOOM_VIDEO_PAL_ADAPTIVE) {
+  if (!s_mono && s_have_playpal) {
     if (s_view.lvl_max) {
       s_frozen = s_view_used;
       for (unsigned k = 0; k < 16u; k++) {
