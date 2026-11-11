@@ -175,7 +175,9 @@ vsync_wait          macro
 ; same memory comes out as stripes. Autostart never saw this because
 ; the cartridge runs before TOS applies the saved desktop resolution,
 ; so it is always low res there -- but a desktop launch inherits
-; whatever the user is in.
+; whatever the user is in, and a TT or a Falcon starts in the mode saved
+; in its NVRAM (in TT medium the picture lands in the top fifth of the
+; screen, two rows to a line).
 set_lowres			macro
 					move.w #0,-(sp)			; rez 0 = low
 					move.l #-1,-(sp)		; physical screen unchanged
@@ -191,6 +193,40 @@ get_rez				macro
 					move.w #4,-(sp)
 					trap #14
 					addq.l #2,sp
+					endm
+
+; Getrez for a machine that may not be an ST. TOS 4 answers Getrez with
+; an ST resolution even in a Falcon's own modes (640x480 in 16 colours
+; reads as 2, ST high), so on a Falcon (_VDO $0003xxxx) VsetMode(-1) is
+; asked first: with STMODES (bit 7) clear the mode is not an ST one, and
+; this returns 3, which no ST mode is, so it gets switched to low res.
+; Otherwise it is Getrez. Result in D0; uses D0-D2/A0-A2 like any XBIOS
+; call. Supervisor mode only: it reads the cookie jar pointer at $5A0.
+get_rez_checked		macro
+					move.l $5a0.w, d0			; _p_cookies
+					beq.s .\@getrez				; no cookie jar: an ST
+					move.l d0, a0
+.\@find_vdo:
+					move.l (a0)+, d0
+					beq.s .\@getrez				; end of the jar, no _VDO
+					cmp.l #'_VDO', d0
+					beq.s .\@found_vdo
+					addq.l #4, a0
+					bra.s .\@find_vdo
+.\@found_vdo:
+					cmp.w #3, (a0)				; $0003xxxx: Falcon VIDEL
+					bne.s .\@getrez
+					move.w #-1, -(sp)
+					move.w #88, -(sp)			; XBIOS VsetMode(-1): read the mode
+					trap #14
+					addq.l #4, sp
+					btst #7, d0					; STMODES: an ST mode, Getrez is right
+					bne.s .\@getrez
+					moveq #3, d0				; a Falcon mode of its own
+					bra.s .\@done
+.\@getrez:
+					get_rez
+.\@done:
 					endm
 
 ; XBIOS Get Screen Base
@@ -303,6 +339,8 @@ pre_auto:
 	; Copy the code out of the ROM to avoid unstable behavior
     move.l #end_rom_code - start_rom_code, d6
     lea start_rom_code, a1    ; a1 points to the start of the code in ROM
+    addq.l #3, d6			; round up: a size that is not a whole
+    						; number of longs must not lose its tail
     lsr.w #2, d6
     subq #1, d6
 .copy_rom_code:
@@ -320,9 +358,11 @@ start_rom_code:
 ; Get the resolution of the screen. Low res and high res (640x400 on a
 ; mono monitor) both have a picture of their own; userfw sees which it
 ; is from the shifter and the RP draws that. Anything else is switched
-; to low res.
-	get_rez
+; to low res, except TT high, whose mono monitor cannot show it.
+	get_rez_checked
 	cmp.w #2, d0
+	beq.s .rez_ok
+	cmp.w #6, d0				; TT high
 	beq.s .rez_ok
 	tst.w d0
 	beq.s .rez_ok
@@ -501,10 +541,12 @@ cart_run:
 .cart_run_ours:
 
 	; Unlike the autostart path, this one inherits whatever resolution
-	; the desktop is in. Low and high (mono) run as they are; medium
-	; just needs switching.
-	get_rez
+	; the desktop is in. Low and high (mono) run as they are; anything
+	; else is switched to low, except TT high (see the autostart path).
+	get_rez_checked
 	cmp.w #2, d0
+	beq.s .cart_run_rez_ok
+	cmp.w #6, d0				; TT high
 	beq.s .cart_run_rez_ok
 	tst.w d0
 	beq.s .cart_run_rez_ok

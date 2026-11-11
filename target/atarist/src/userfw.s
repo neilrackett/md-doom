@@ -71,7 +71,8 @@ BLIT_MARK_RUNNING     equ $777               ; white: cart->ST copy in flight
 BLIT_MARK_DONE        equ $070               ; green: FBDRV_INLINE returned
 
 ; Shifter resolution: 0 = low, 1 = medium, 2 = high (mono). main.s has
-; already switched medium to low, so this tells colour from mono.
+; already switched anything but low and high to low, so this tells
+; colour from mono.
 SHIFTER_RES           equ $FFFF8260
 SHIFTER_RES_HIGH      equ 2
 ; In mono only bit 0 of colour 0 counts: set, and a 0 pixel is white
