@@ -120,6 +120,10 @@ UFW_HUD_SHOW          equ $00077F60          ; 32 B: and of the page on screen
 UFW_SPLIT_NEXT        equ $00077F80          ; word: non-zero = that page has one
 UFW_SPLIT_SHOW        equ $00077F82          ; word: as UFW_SPLIT_NEXT, for the page on screen
 UFW_SPLIT_MID         equ $00077F84          ; byte: video counter bits 8..15 at the split
+UFW_CPU               equ $00077F86          ; word: the _CPU cookie, 0/10/20/30/40/60
+UFW_OLD_CACR          equ $00077F88          ; longword: a 68020 or later's CACR, at start
+UFW_FALCON_SND        equ $00077F8C          ; byte: $FF = a Falcon's sound (_SND bit 2, the codec)
+UFW_OLD_8900          equ $00077F8D          ; byte: its $FF8900 as TOS left it
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -460,6 +464,13 @@ VIDEO_WINDOW_BASE     equ $FB9000
 ; Byte registers live at ODD addresses in the $FFFF89xx block.
 ; (Design shared with md-mjpeg's userfw.s.)
 STE_DMA_CTRL          equ $FFFF8901          ; bit0 = play, bit1 = loop
+; A Falcon routes its sound frames to the MFP only if asked: bit 2 of
+; $FF8900 puts the play frames on Timer-A's input, and TOS 4.04 leaves it
+; clear, so without it userfw_snd_irq never ran and the chip looped on
+; buffer A for good. (The edge comes at the start of a frame there, the
+; end on an STE or a TT -- in loop mode the same moment.)
+SND_INT_CTRL          equ $FFFF8900
+SND_INT_PLAY_TIMERA   equ 2
 STE_DMA_START_HI      equ $FFFF8903
 STE_DMA_START_MID     equ $FFFF8905
 STE_DMA_START_LO      equ $FFFF8907
@@ -514,21 +525,32 @@ STE_SND_BUF_MASK      equ $7D00              ; low 16 bits of either base, bit 1
 ; END is a byte address, so the length itself need not be a multiple of
 ; anything -- only the copy does, and that is fixed.
 ;
-; Mono VBLs come at 71.47 Hz, so the chip eats about 350 bytes a VBL
-; there: the same steering, from a different starting guess. The minimum
-; covers both and keeps the report inside one byte (512 - 320 = 192).
+; The starting length is measured at boot (snd_measure): the samples
+; the chip plays over SND_MEASURE_VBLS VBLs, a quarter of them. A guess
+; would have to know the VBL rate, and it is not one rate: 50 Hz on an
+; STE in colour, 71 in mono, 60 or 70 on a TT's or a Falcon's VGA
+; monitor. A guess far enough out never converges, because the steer
+; below takes a drift of more than 64 for a handover and ignores it:
+; a TT started from 500 at 60 Hz (~417 a VBL) stayed at 500. The
+; minimum covers 71 Hz (~350) and keeps the report inside one byte
+; (512 - 320 = 192).
 STE_SND_COPY          equ 512                ; bytes copied per VBL (mult of 4)
     ifgt  STE_SND_COPY-(YM_PKT_ADDR-AUDIO_BUFFER_ADDR)
     fail  "the DMA sample copy would reach the YM music packet"
     endc
-STE_SND_LEN_INIT      equ 500                ; starting guess, steered from here
-STE_SND_LEN_INIT_MONO equ 350                ; the same at 71 Hz
 STE_SND_LEN_MIN       equ 320
 STE_SND_LEN_MAX       equ 512                ; must not exceed STE_SND_COPY
+; The measurement plays this much silence once, from the start of screen
+; page A (which the first frame overwrites): one VBL to line up and four
+; timed ones at 50 Hz, the slowest rate, are ~2,500 bytes.
+SND_MEASURE_BYTES     equ 4096
+SND_MEASURE_VBLS      equ 4                  ; a power of two: the result is a shift
+SND_MEASURE_SHIFT     equ 2
 
 ; Cookie jar (_p_cookies) + _SND cookie for DMA-sound detection.
 COOKIE_JAR_PTR        equ $000005A0          ; longword: cookie jar base (0 = none)
 COOKIE_SND            equ $5F534E44          ; '_SND'; value bit 1 = DMA/PCM sound
+COOKIE_CPU            equ $5F435055          ; '_CPU'; 0, 10, 20, 30, 40 or 60
 
 ; Sound-capability report window: the m68k reads (SNDCAP_WINDOW_BASE +
 ; has_dma) each VBL; the RP commemul ring decodes the low bit and
@@ -677,6 +699,13 @@ userfw:
     addq.l  #2, sp
     move.l  d0, UFW_PHYSBASE_SAVE    ; saved screen base lives in RAM now
 
+    ; A 68030's data cache off before the first cartridge read: one the
+    ; cache answered would never reach the RP (caches_off).
+    move.l  #COOKIE_CPU, d1
+    bsr     find_cookie
+    move.w  d0, UFW_CPU
+    bsr     caches_off
+
     ; --- Low res or high res? ---------------------------------------
     ; main.s has switched medium to low, so the shifter is now in one of
     ; the two modes with a picture of their own. In mono, colour 0 is
@@ -699,35 +728,19 @@ userfw:
 .res_colour:
 
     ; --- Detect STE DMA sound via the _SND cookie (bit 1) ---------
-    ; Walk the cookie jar; a null jar or a missing _SND (plain ST /
-    ; early TOS) leaves has_dma = 0 -> YM fallback. FORCE_NO_DMA=1
-    ; skips the walk entirely so the fallback can be tested on an STE.
-    ; Clobbers D0/D1/A0 -- all reloaded by the boot code that follows.
-    ;
-    ; Written out rather than shared with the Xpad walk below: a bsr
-    ; into the cartridge region is the pattern that was isolated as a
-    ; source of cart-bus instability when the framebuffer copy was a
-    ; called routine (see the fbdrv note in userfw.ld), and deduplicating
-    ; ten instructions is not worth reintroducing it.
+    ; A null jar or a missing _SND (plain ST / early TOS) leaves
+    ; has_dma = 0 -> YM fallback. FORCE_NO_DMA=1 skips the lookup
+    ; entirely so the fallback can be tested on an STE.
     moveq   #0, d0                   ; assume no DMA sound
+    clr.b   UFW_FALCON_SND
     ifeq    FORCE_NO_DMA
-    move.l  COOKIE_JAR_PTR.w, d1     ; cookie jar base
-    beq.s   .snd_detect_done         ; null jar -> no cookies
-    movea.l d1, a0
-.snd_cookie_loop:
-    move.l  (a0), d1                 ; cookie tag
-    beq.s   .snd_detect_done         ; tag 0 = end of jar, _SND not found
-    cmp.l   #COOKIE_SND, d1
-    beq.s   .snd_found
-    addq.l  #8, a0                   ; next 8-byte entry (tag, value)
-    bra.s   .snd_cookie_loop
-.snd_found:
-    move.l  4(a0), d1               ; _SND value
-    btst    #1, d1                  ; bit 1 = DMA / PCM sound
-    beq.s   .snd_detect_done
-    moveq   #1, d0                  ; DMA sound present
+    move.l  #COOKIE_SND, d1
+    bsr     find_cookie
+    btst    #2, d0                   ; bit 2 = a Falcon's codec (SND_INT_CTRL)
+    sne     UFW_FALCON_SND
+    lsr.l   #1, d0                   ; bit 1 = DMA / PCM sound
+    andi.l  #1, d0
     endc
-.snd_detect_done:
     move.b  d0, UFW_HAS_DMA
 
     ; A frame is two VBLs in mono, where the copy is longer than a VBL,
@@ -950,9 +963,10 @@ userfw:
 
 .boot_audio_dma:
     ; --- STE DMA sound init: mono 25033 Hz, loop mode, double-buffered.
-    ; Silence both buffers, program start/end to buffer A, start the
-    ; loop. The DMA free-runs; .after_copy refills whichever buffer the
-    ; DMA isn't reading and points the loop at it. No YM.
+    ; Silence both buffers, measure the length a VBL plays, program
+    ; start/end to buffer A, start the loop. The DMA free-runs;
+    ; .after_copy refills whichever buffer the DMA isn't reading and
+    ; points the loop at it. No YM.
     lea     STE_SND_BUF_A, a0
     move.w  #(STE_SND_COPY/4)-1, d0
 .ste_snd_clr_a:
@@ -963,14 +977,15 @@ userfw:
 .ste_snd_clr_b:
     clr.l   (a0)+
     dbf     d0, .ste_snd_clr_b
-    move.w  #STE_SND_LEN_INIT, UFW_SND_LEN
-    tst.b   UFW_MONO
-    beq.s   .ste_snd_len_set
-    move.w  #STE_SND_LEN_INIT_MONO, UFW_SND_LEN
-.ste_snd_len_set:
+    move.b  #STE_DMA_MODE_VAL, STE_DMA_MODE.w
+    tst.b   UFW_FALCON_SND
+    beq.s   .not_falcon_snd
+    move.b  SND_INT_CTRL.w, UFW_OLD_8900
+    bset    #SND_INT_PLAY_TIMERA, SND_INT_CTRL.w
+.not_falcon_snd:
+    bsr     snd_measure                   ; UFW_SND_LEN: what a VBL plays here
     clr.w   UFW_SND_PREVPOS
     clr.b   UFW_SND_TICK
-    move.b  #STE_DMA_MODE_VAL, STE_DMA_MODE.w
     move.b  #((STE_SND_BUF_A>>16)&$FF), STE_DMA_START_HI.w
     move.b  #((STE_SND_BUF_A>>8)&$FF), STE_DMA_START_MID.w
     move.b  #(STE_SND_BUF_A&$FF), STE_DMA_START_LO.w
@@ -1513,6 +1528,9 @@ userfw:
     tst.b   UFW_HAS_DMA
     beq.s   .no_dma_stop
     move.b  #$00, STE_DMA_CTRL.w
+    tst.b   UFW_FALCON_SND
+    beq.s   .no_dma_stop
+    move.b  UFW_OLD_8900, SND_INT_CTRL.w
 .no_dma_stop:
     move.b  #8, YM_SELECT.w
     move.b  #0, YM_DATA.w                ; ch A volume
@@ -1546,6 +1564,11 @@ userfw:
 
     ; Restore TOS's VBL vector ($70 save from UFW_VBL_VEC_SAVE).
     move.l  UFW_VBL_VEC_SAVE, VBL_VECTOR.w
+
+    ; And the caches as TOS had them. D0 carries the command: kept.
+    move.l  d0, d1
+    bsr     caches_back
+    move.l  d1, d0
 
     ; Restore SR to TOS's usual IPL=3 (matches md-oric main.s:230).
     ; From here on TOS handles HBL / Timer / ACIA again -- IKBD will
@@ -1603,6 +1626,128 @@ ym_dac_init:
     move.b  #0, YM_DATA.w                 ; ch B vol = 0 (silence)
     move.b  #YM_REG_CHA_VOL, YM_SELECT.w  ; latch reg 8 (next YM_DATA writes hit ch A volume)
     move.b  #0, YM_DATA.w                 ; ch A vol = 0 (silence)
+    rts
+
+; -------------------------------------------------------------------
+; find_cookie -- the value of the cookie named D1 in D0, or 0 if there is
+; no jar or no such cookie. Clobbers D2/A2. (A bsr is safe: userfw runs
+; from ST RAM, never from the cartridge.)
+find_cookie:
+    moveq   #0, d0
+    move.l  COOKIE_JAR_PTR.w, d2
+    beq.s   .done
+    movea.l d2, a2
+.next:
+    move.l  (a2), d2
+    beq.s   .done                         ; tag 0 = end of the jar
+    cmp.l   d1, d2
+    beq.s   .found
+    addq.l  #8, a2
+    bra.s   .next
+.found:
+    move.l  4(a2), d0
+.done:
+    rts
+
+; -------------------------------------------------------------------
+; caches_off / caches_back -- as md-xt (MD/SuperCharger) does it. A
+; 68020 or 68030 (a TT, a Falcon): its data cache off, so that every
+; cartridge read reaches the bus -- one the cache answered would never
+; reach the RP, and a stale one shows an old picture -- and its
+; instruction cache on, both emptied. TOS 3.06's PMMU makes the
+; cartridge cache-inhibited on a TT, but nothing promises that of
+; every TOS. A 68040 or 68060: both off, written back first. And on the
+; way out, the caches as TOS had them, emptied first. Clobber D0.
+caches_off:
+    cmpi.w  #20, UFW_CPU
+    blo.s   .done
+    dc.w    $4E7A, $0002                  ; movec cacr, d0
+    move.l  d0, UFW_OLD_CACR
+    cmpi.w  #40, UFW_CPU
+    bhs.s   .later
+    move.l  #$0809, d0                    ; EI, CI, CD
+    dc.w    $4E7B, $0002                  ; movec d0, cacr
+    rts
+.later:
+    dc.w    $F4F8                         ; cpusha bc
+    moveq   #0, d0
+    dc.w    $4E7B, $0002                  ; movec d0, cacr
+.done:
+    rts
+
+caches_back:
+    cmpi.w  #20, UFW_CPU
+    blo.s   .done
+    move.l  UFW_OLD_CACR, d0
+    cmpi.w  #40, UFW_CPU
+    bhs.s   .later
+    ori.w   #$0808, d0                    ; CI, CD
+    dc.w    $4E7B, $0002                  ; movec d0, cacr
+    rts
+.later:
+    dc.w    $F4D8                         ; cinva bc
+    dc.w    $4E7B, $0002                  ; movec d0, cacr
+.done:
+    rts
+
+; -------------------------------------------------------------------
+; snd_measure -- UFW_SND_LEN's starting point: how many samples the DMA
+; plays in a VBL on this machine (see STE_SND_LEN_MIN). Plays
+; SND_MEASURE_BYTES of silence once from screen page A, reads the frame
+; counter at a VBL and SND_MEASURE_VBLS VBLs later, and takes the
+; average, clamped to the steer's range. The counter's three bytes are
+; read one at a time, so the mid byte is read again and the whole read
+; repeated if a carry got in between. The waits need the VBL: interrupts
+; are let in for them (no MFP source is enabled yet) and the caller's SR
+; is put back. STE_DMA_MODE must be set. Clobbers D0-D3/A0/A1 (A0 by
+; userfw_vbl).
+snd_measure:
+    move.w  sr, -(sp)
+    lea     UFW_SCREEN_A, a1
+    move.w  #(SND_MEASURE_BYTES/4)-1, d0
+.clear:
+    clr.l   (a1)+
+    dbf     d0, .clear
+    move.b  #((UFW_SCREEN_A>>16)&$FF), STE_DMA_START_HI.w
+    move.b  #((UFW_SCREEN_A>>8)&$FF), STE_DMA_START_MID.w
+    move.b  #(UFW_SCREEN_A&$FF), STE_DMA_START_LO.w
+    move.b  #(((UFW_SCREEN_A+SND_MEASURE_BYTES)>>16)&$FF), STE_DMA_END_HI.w
+    move.b  #(((UFW_SCREEN_A+SND_MEASURE_BYTES)>>8)&$FF), STE_DMA_END_MID.w
+    move.b  #((UFW_SCREEN_A+SND_MEASURE_BYTES)&$FF), STE_DMA_END_LO.w
+    move.b  #$01, STE_DMA_CTRL.w          ; play once, no loop
+    moveq   #SND_MEASURE_VBLS, d2         ; the first VBL lines up, then N timed
+.vbl:
+    move.w  #-1, UFW_VBL_FLAG.w
+.wait:
+    stop    #$2300
+    tst.w   UFW_VBL_FLAG.w
+    bne.s   .wait
+.read:
+    move.b  STE_DMA_CNT_MID.w, d0
+    lsl.w   #8, d0
+    move.b  STE_DMA_CNT_LO.w, d0
+    move.w  d0, d1
+    lsr.w   #8, d1
+    cmp.b   STE_DMA_CNT_MID.w, d1
+    bne.s   .read                         ; the low byte carried: again
+    cmpi.w  #SND_MEASURE_VBLS, d2
+    bne.s   .timed
+    move.w  d0, d3                        ; where it was at the first VBL
+.timed:
+    dbf     d2, .vbl
+    clr.b   STE_DMA_CTRL.w                ; stop
+    move.w  (sp)+, sr
+    sub.w   d3, d0
+    lsr.w   #SND_MEASURE_SHIFT, d0
+    cmpi.w  #STE_SND_LEN_MIN, d0
+    bhs.s   .not_short
+    move.w  #STE_SND_LEN_MIN, d0
+.not_short:
+    cmpi.w  #STE_SND_LEN_MAX, d0
+    bls.s   .not_long
+    move.w  #STE_SND_LEN_MAX, d0
+.not_long:
+    move.w  d0, UFW_SND_LEN
     rts
 
 ; -------------------------------------------------------------------
