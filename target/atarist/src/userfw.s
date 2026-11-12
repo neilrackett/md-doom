@@ -124,6 +124,7 @@ UFW_CPU               equ $00077F86          ; word: the _CPU cookie, 0/10/20/30
 UFW_OLD_CACR          equ $00077F88          ; longword: a 68020 or later's CACR, at start
 UFW_FALCON_SND        equ $00077F8C          ; byte: $FF = a Falcon's sound (_SND bit 2, the codec)
 UFW_OLD_8900          equ $00077F8D          ; byte: its $FF8900 as TOS left it
+UFW_EIGHT             equ $00077F8E          ; byte: 0, or 256 colours: EIGHT_TT / EIGHT_FALCON
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -281,12 +282,13 @@ UFW_SCREEN_B          equ $00078000
 ; Where main.s copies this module before running it. userfw executes
 ; from ST RAM rather than in place from the cartridge, so that the RP
 ; can reclaim the cartridge's 16 KB code area as ordinary SRAM for the
-; Doom zone -- see "Memory layout" in AGENTS.md. 8 KB immediately below
+; Doom zone -- see "Memory layout" in AGENTS.md. 16 KB immediately below
 ; screen page A, which is the block userfw already commandeers; GEMDOS
-; has nothing here at CA_INIT time, before any disk boot.
+; has nothing here at CA_INIT time, before any disk boot. (8 KB at
+; $6E000 until the 256-colour path outgrew it.)
 ; KEEP IN STEP with main.s.
-UFW_RAM_DEST          equ $0006E000
-UFW_RAM_SIZE          equ $2000
+UFW_RAM_DEST          equ $0006C000
+UFW_RAM_SIZE          equ $4000
 ; userfw's own stack, at the top of that window above the image. It
 ; cannot keep the one it was entered on: from the desktop that is the
 ; top of the program's TPA, which on a 512 KB machine is $77FF8, in the
@@ -449,6 +451,70 @@ VBLSYNC_BANK          equ (YM_BANK_BYTES >> 8)
 ; VBL takes, and when the frame ack's window has closed. Distinct from
 ; every other window here.
 VIDEO_WINDOW_BASE     equ $FB9000
+
+; --- 256 colours: a TT's TT Low or a Falcon's 8-plane mode ----------
+; Doom's own 256 colours from 8 interleaved bitplanes, on a TT or a
+; Falcon with a colour monitor (and DMA sound, and the ST RAM for two
+; pages above $80000). The picture is 64,000 bytes, twice the cart FB,
+; so the RP sends it in two parts of 100 rows (cart_shared.h, "256
+; colours"): it writes a part and bumps PART_SEQ_ADDR; the m68k copies
+; it, up to UFW8_BUDGET rows a VBL, and acks it at PARTACK_WINDOW_BASE +
+; the sequence's low byte, and only then does the RP write the next. The
+; page goes on screen when part 1 is in, double-buffered as ever, with
+; the palette the RP sent with part 0. A TT shows each row on two lines
+; of TT Low's 480 (lines 40..439); a Falcon's VIDEL doubles them itself
+; on VGA (320x240, lines 20..219) and an RGB monitor or a TV gets
+; 320x200 as it is. The display report says which: VIDEO_WINDOW_BASE +
+; EIGHT_TT or EIGHT_FALCON (bit 1, eight planes; bit 2, the Falcon's
+; palette format), and ROWS_WINDOW_BASE + the budget, every VBL.
+EIGHT_TT              equ 2
+EIGHT_FALCON          equ 6
+PART_SEQ_ADDR         equ $00FA401C          ; word: bumped by the RP for each part
+PART_IDX_ADDR         equ $00FA401E          ; word: 0 = rows 0..99, 1 = rows 100..199
+PAL8_SEQ_ADDR         equ $00FA4020          ; word: bumped when PAL8_ADDR has changed
+PAL8_ADDR             equ $00FA4300          ; 256 words: YM bank 1's space (see cart_shared.h)
+PARTACK_WINDOW_BASE   equ $FB9200
+ROWS_WINDOW_BASE      equ $FB9400
+CART_EIGHT_ROWS       equ 100                ; rows a part
+CART_EIGHT_ROW_BYTES  equ 320                ; 20 groups of 16 pixels, 8 plane words each
+CART_PAL8_ENTRIES     equ 256
+COOKIE_VDO            equ $5F56444F          ; '_VDO'; high word 2 = TT, 3 = Falcon
+VDO_TT                equ 2
+VDO_FALCON            equ 3
+MFP_GPIP              equ $FFFFFA01
+MFP_GPIP_MONO         equ 7                  ; low on a TT with a mono monitor
+VIDEO_BASE_ADDR_LOW   equ $FFFF820D
+TT_SHIFT              equ $FFFF8262          ; TT shift mode
+TT_LOW                equ $0700              ; TT Low, palette bank 0
+TT_PALETTE            equ $FFFF8400          ; 256 words, 0000RRRR GGGGBBBB
+FALCON_PALETTE        equ $FFFF9800          ; 256 longs, RRRRRR00 GGGGGG00 00000000 BBBBBB00
+VM_BPS8               equ $0003              ; VsetMode: 8 planes, 40 columns
+VM_VGA                equ $0010
+VM_PAL                equ $0020
+VM_VERTFLAG           equ $0100              ; on VGA, every line twice
+MON_VGA               equ 2                  ; VgetMonitor
+UFW8_PAGE_A           equ $00080000
+UFW8_SIZE_TT          equ 153600             ; 320x480
+UFW8_SIZE_FALCON      equ 76800              ; 320x240; RGB uses the first 64,000
+UFW8_FIRST_TT         equ 40*CART_EIGHT_ROW_BYTES
+UFW8_FIRST_VGA        equ 20*CART_EIGHT_ROW_BYTES
+; State, in the part of screen page A the 8-plane mode does not show
+; (after snd_measure's 4 KB of silence), so touched only in that mode.
+UFW8_STATE            equ $00071000
+UFW8_SEQ              equ UFW8_STATE+0       ; word: the last part copied
+UFW8_PART             equ UFW8_STATE+2       ; word: the part under way, 0 or 1
+UFW8_ROW              equ UFW8_STATE+4       ; word: its rows copied so far, 0 = none under way
+UFW8_LEFT             equ UFW8_STATE+6       ; word: rows this VBL may still copy
+UFW8_BUDGET           equ UFW8_STATE+8       ; word: rows a VBL, measured at boot
+UFW8_STEP             equ UFW8_STATE+10      ; word: bytes from one picture row to the next
+UFW8_PALSEQ           equ UFW8_STATE+12      ; word: the palette last latched
+UFW8_OLD_MODE         equ UFW8_STATE+14      ; word: TOS's TT shift mode, or Falcon VsetMode word
+UFW8_FLIPPED          equ UFW8_STATE+16      ; byte: a page went up: its palette at the next VBL
+UFW8_TWICE            equ UFW8_STATE+17      ; byte: $FF = every row on two lines (a TT)
+UFW8_FIRST            equ UFW8_STATE+20      ; longword: offset of the picture's first line
+UFW8_XOR              equ UFW8_STATE+24      ; longword: page A ^ page B
+UFW8_PAL_LATCH        equ $00071100          ; 1 KB: the palette for the page being copied
+UFW8_TOS_PAL          equ $00071500          ; 1 KB: TOS's 256 colours, for the way out
 
 ; --- STE/Mega STE DMA sound (auto-detected at runtime) -----------
 ; STE-class machines play 8-bit SIGNED PCM from ST RAM by DMA with no
@@ -754,6 +820,110 @@ userfw:
     beq.s   .two_vbl_done
     sf      UFW_TWO_VBL
 .two_vbl_done:
+
+    ; --- 256 colours on a TT or a Falcon? ---------------------------
+    ; See "256 colours" in the equates. Needs a colour monitor, DMA
+    ; sound (the palette travels in YM bank 1's space) and two pages of
+    ; ST RAM from $80000 that nothing owns: main.s passes the top of what
+    ; is free in D7. Otherwise this machine gets the ST Low or mono
+    ; picture like any other. Done while TOS still runs, which a
+    ; Falcon's VsetMode needs; its palette is saved first, for the way
+    ; out (eight_restore), and both machines' then go black until the
+    ; first frame brings its own. Clobbers D0-D4/A1/A2; XBIOS keeps D7.
+    clr.b   UFW_EIGHT
+    tst.b   UFW_HAS_DMA
+    beq     .eight_done
+    move.l  #COOKIE_VDO, d1
+    bsr     find_cookie
+    swap    d0                       ; the high word: 2 TT, 3 Falcon
+    cmpi.w  #VDO_FALCON, d0
+    beq.s   .eight_falcon
+    cmpi.w  #VDO_TT, d0
+    bne     .eight_done
+    btst    #MFP_GPIP_MONO, MFP_GPIP.w  ; the monitor, not the mode: a
+    beq     .eight_done              ; TT's colour one shows ST High too
+    cmpi.l  #UFW8_PAGE_A+2*UFW8_SIZE_TT, d7
+    blo     .eight_done
+    move.b  #EIGHT_TT, UFW_EIGHT
+    lea     UFW8_TOS_PAL, a2
+    bsr     pal8_get
+    move.w  TT_SHIFT.w, UFW8_OLD_MODE
+    move.l  #UFW8_SIZE_TT, d3
+    move.l  #UFW8_FIRST_TT, UFW8_FIRST
+    move.w  #2*CART_EIGHT_ROW_BYTES, UFW8_STEP
+    st      UFW8_TWICE
+    bra     .eight_pages
+.eight_falcon:
+    cmpi.l  #UFW8_PAGE_A+2*UFW8_SIZE_FALCON, d7
+    blo     .eight_done
+    move.w  #89, -(sp)               ; XBIOS VgetMonitor
+    trap    #14
+    addq.l  #2, sp
+    tst.w   d0
+    beq     .eight_done              ; 0: an SM124
+    move.w  d0, d3
+    move.b  #EIGHT_FALCON, UFW_EIGHT
+    lea     UFW8_TOS_PAL, a2
+    bsr     pal8_get
+    move.w  #-1, -(sp)
+    move.w  #88, -(sp)               ; XBIOS VsetMode(-1): the mode now
+    trap    #14
+    addq.l  #4, sp
+    move.w  d0, UFW8_OLD_MODE
+    andi.w  #VM_PAL, d0              ; RGB or a TV: 320x200, at the desktop's 50 or 60 Hz
+    clr.l   UFW8_FIRST
+    cmpi.w  #MON_VGA, d3
+    bne.s   .eight_falcon_mode
+    move.w  #VM_VGA|VM_VERTFLAG, d0  ; VGA: 320x240, every line twice
+    move.l  #UFW8_FIRST_VGA, UFW8_FIRST
+.eight_falcon_mode:
+    ori.w   #VM_BPS8, d0
+    move.w  d0, -(sp)
+    move.w  #88, -(sp)               ; XBIOS VsetMode
+    trap    #14
+    addq.l  #4, sp
+    ; TOS 4.04 writes the VIDEL in a VBL after the next (md-xt found):
+    ; wait for two before anything else is changed.
+    move.w  #37, -(sp)               ; XBIOS Vsync
+    trap    #14
+    addq.l  #2, sp
+    move.w  #37, -(sp)
+    trap    #14
+    addq.l  #2, sp
+    move.l  #UFW8_SIZE_FALCON, d3
+    move.w  #CART_EIGHT_ROW_BYTES, UFW8_STEP
+    sf      UFW8_TWICE
+.eight_pages:
+    ; Both pages black, borders and all: only the picture's lines are
+    ; written after this. D3 is a page; 16 bytes an iteration.
+    lea     UFW8_PAGE_A, a1
+    move.l  d3, d0
+    lsr.l   #3, d0
+    subq.w  #1, d0
+.eight_clear:
+    clr.l   (a1)+
+    clr.l   (a1)+
+    clr.l   (a1)+
+    clr.l   (a1)+
+    dbf     d0, .eight_clear
+    ; Page A on screen, black, so page B is drawn first.
+    lea     UFW8_PAGE_A, a1          ; zeroes: a black palette
+    bsr     pal8_put
+    move.b  #((UFW8_PAGE_A>>16)&$FF), VIDEO_BASE_ADDR_HIGH.w
+    move.b  #((UFW8_PAGE_A>>8)&$FF), VIDEO_BASE_ADDR_MID.w
+    clr.b   VIDEO_BASE_ADDR_LOW.w
+    cmpi.b  #EIGHT_TT, UFW_EIGHT
+    bne.s   .eight_mode_set
+    move.w  #TT_LOW, TT_SHIFT.w
+.eight_mode_set:
+    move.l  #UFW8_PAGE_A, d0
+    add.l   d3, d0
+    move.l  d0, UFW_SCREEN_PAGE      ; page B
+    eori.l  #UFW8_PAGE_A, d0
+    move.l  d0, UFW8_XOR
+    clr.b   UFW_MONO                 ; a TT's colour monitor may have been in ST High
+    sf      UFW_TWO_VBL
+.eight_done:
 
     ; --- Locate an Xpad provider (optional) -----------------------
     ; Walk the jar for 'XPAD', then validate the block the way
@@ -1071,6 +1241,11 @@ userfw:
     ; Doom's forward axis. See md-sidepad's sidepong example, which
     ; drives two paddles from a mouse and a joystick the same way.
 
+    ; 256 colours: the pages and the mode were set up with the rest
+    ; above (.eight_pages).
+    tst.b   UFW_EIGHT
+    bne.s   .first_page_set
+
     ; The first VBL shows whatever palette the RP has published so far.
     lea     PALETTE_ADDR, a6
     movem.l (a6), d0-d7
@@ -1085,6 +1260,7 @@ userfw:
     ; ($70000 and $78000), so we write it ONCE here and only update
     ; the MID byte per VBL in .after_copy below (saves ~20 cyc/VBL).
     move.b  #(UFW_SCREEN_A >> 16), VIDEO_BASE_ADDR_HIGH.w
+.first_page_set:
 
     ; Pin IRQ state for the duration of .vbl_loop:
     ;   SR = $2300: supervisor mode, IPL=3. Blocks levels 1-3 (HBL
@@ -1092,6 +1268,13 @@ userfw:
     ;   Timer-B and the ACIA (see the timer list above
     ;   YM_TIMER_COUNT).
     move.w  #$2300, sr
+
+    ; 256 colours: how many rows a VBL can copy here, now that the
+    ; interrupts are running.
+    tst.b   UFW_EIGHT
+    beq.s   .calibrated
+    bsr     eight_calibrate
+.calibrated:
 
     ; --- Per-VBL loop ---
 .vbl_loop:
@@ -1114,12 +1297,17 @@ userfw:
     ; the frame ack opened (fb_wait_blit_ack). A1/D1 are scratch.
     moveq   #0, d1
     move.b  UFW_MONO, d1
+    or.b    UFW_EIGHT, d1
     lea     VIDEO_WINDOW_BASE, a1
     tst.b   (a1, d1.w)
 
     ifne    FBDRV_DEBUG_MARKS
     move.w  #BLIT_MARK_VSYNC, PALETTE_IDX0.w   ; border = vsync mark
     endc
+
+    ; 256 colours: a loop of its own up to the sound (.vbl8_palette).
+    tst.b   UFW_EIGHT
+    bne     .vbl8_palette
 
     ; The palette travels with its frame. The page going on screen now
     ; is the one copied last VBL, so it gets the palette latched then;
@@ -1406,6 +1594,8 @@ userfw:
     move.b  UFW_YM_BANK+2, d1
     andi.b  #VBLSYNC_BANK, d1
     lea     VBLSYNC_ADDR, a1
+    tst.b   UFW_EIGHT
+    bne     .vbl8_copy
 
     ; Half a two-VBL frame: no flip, and an ack that only says "a VBL
     ; went by" -- the RP keys its audio refill off it, but must not take
@@ -1591,6 +1781,16 @@ userfw:
 
 .back_to_gem:
 
+    ; 256 colours: TOS's colours back, and on a TT its mode.
+    tst.b   UFW_EIGHT
+    beq.s   .gem_screen
+    lea     UFW8_TOS_PAL, a1
+    bsr     pal8_put
+    cmpi.b  #EIGHT_TT, UFW_EIGHT
+    bne.s   .gem_screen
+    move.w  UFW8_OLD_MODE, TT_SHIFT.w
+.gem_screen:
+
     ; Restore screen base via XBIOS Setscreen.
     move.w  #-1, -(sp)                ; no rez change
     move.l  UFW_PHYSBASE_SAVE, -(sp)  ; physical screen
@@ -1598,8 +1798,114 @@ userfw:
     move.w  #5, -(sp)                 ; XBIOS Setscreen
     trap    #14
     lea     12(sp), sp
+
+    ; A Falcon's mode back through TOS, which has its VBL again.
+    cmpi.b  #EIGHT_FALCON, UFW_EIGHT
+    bne.s   .gem_return
+    move.w  UFW8_OLD_MODE, -(sp)
+    move.w  #88, -(sp)                ; XBIOS VsetMode
+    trap    #14
+    addq.l  #4, sp
+.gem_return:
     movea.l UFW_SP_SAVE, sp           ; the caller's stack, for its return address
     rts
+
+; --- 256 colours: the VBL loop's own parts ----------------------------
+; Reached from .vbl_loop and back into it, in place of the palette
+; latches, the 16-colour copy and its acks and flip; everything else in
+; the loop -- the reports, the sound, the command -- is shared. See
+; "256 colours" in the equates.
+
+    ; Top of the VBL: the page that has just gone on screen takes the
+    ; palette latched with it.
+.vbl8_palette:
+    tst.b   UFW8_FLIPPED
+    beq     .after_copy
+    sf      UFW8_FLIPPED
+    lea     UFW8_PAL_LATCH, a1
+    bsr     pal8_put
+    bra     .after_copy
+
+    ; After the sound: the VBL's ack (A1/D1 from the loop), which the
+    ; audio refill keys on, then as much of a part as the VBL has room
+    ; for. Nothing here touches the YM: the music packet's space is the
+    ; palette's, so the loop goes on from after it.
+.vbl8_copy:
+    tst.b   (a1, d1.w)
+    moveq   #0, d0
+    move.w  UFW8_BUDGET, d0
+    move.w  d0, UFW8_LEFT
+    lea     ROWS_WINDOW_BASE, a1
+    tst.b   (a1, d0.w)                    ; for the debug line: <= 100, a byte
+    tst.w   UFW8_ROW
+    bne.s   .rows8                        ; a part under way
+    move.w  PART_SEQ_ADDR, d0
+    cmp.w   UFW8_SEQ, d0
+    beq     .reack8                       ; nothing new
+    move.w  d0, UFW8_SEQ
+    moveq   #1, d0
+    and.w   PART_IDX_ADDR, d0
+    move.w  d0, UFW8_PART
+    bne.s   .rows8
+    move.w  PAL8_SEQ_ADDR, d0             ; part 0 brings the frame's palette
+    cmp.w   UFW8_PALSEQ, d0
+    beq.s   .rows8
+    move.w  d0, UFW8_PALSEQ
+    bsr     latch_pal8
+.rows8:
+    ; The part's next row: from its place in the FB, to row
+    ; part * 100 + row of the picture in the page being drawn.
+    move.w  UFW8_ROW, d0
+    mulu    #CART_EIGHT_ROW_BYTES, d0
+    movea.l #UFW_FB_SRC, a6
+    adda.l  d0, a6
+    move.w  UFW8_PART, d0
+    mulu    #CART_EIGHT_ROWS, d0
+    add.w   UFW8_ROW, d0
+    mulu    UFW8_STEP, d0
+    movea.l UFW_SCREEN_PAGE, a5
+    adda.l  UFW8_FIRST, a5
+    adda.l  d0, a5
+.row8:
+    bsr     copy_row8                     ; A6 on to the next row, A5 kept
+    adda.w  UFW8_STEP, a5
+    addq.w  #1, UFW8_ROW
+    cmpi.w  #CART_EIGHT_ROWS, UFW8_ROW
+    beq.s   .part8_done
+    subq.w  #1, UFW8_LEFT
+    bne.s   .row8
+    bra     .ym_done                      ; the rest next VBL
+.part8_done:
+    clr.w   UFW8_ROW
+    moveq   #0, d0
+    move.b  UFW8_SEQ+1, d0
+    lea     PARTACK_WINDOW_BASE, a1
+    tst.b   (a1, d0.w)                    ; copied: the RP may write the FB again
+    tst.w   UFW8_PART
+    beq     .ym_done                      ; part 1 no sooner than next VBL
+    ; Part 1: the frame is whole. Its page goes on screen at the next
+    ; VBL and its palette with it (.vbl8_palette). Nothing more is
+    ; copied in this VBL, so the next frame's palette cannot be latched
+    ; before this one is applied.
+    move.b  UFW_SCREEN_PAGE+1, VIDEO_BASE_ADDR_HIGH.w
+    move.b  UFW_SCREEN_PAGE+2, VIDEO_BASE_ADDR_MID.w
+    clr.b   VIDEO_BASE_ADDR_LOW.w
+    move.l  UFW_SCREEN_PAGE, d0
+    move.l  UFW8_XOR, d1
+    eor.l   d1, d0
+    move.l  d0, UFW_SCREEN_PAGE
+    st      UFW8_FLIPPED
+    bra     .ym_done
+.reack8:
+    ; Nothing new: the last part's ack again. The RP drains its capture
+    ; ring only when it gets the chance, and a pack's flash erase holds it
+    ; off for about a second, long enough for the ring to lap and lose
+    ; the first one; it would then wait out its timeout for nothing.
+    moveq   #0, d0
+    move.b  UFW8_SEQ+1, d0
+    lea     PARTACK_WINDOW_BASE, a1
+    tst.b   (a1, d0.w)
+    bra     .ym_done
 
 ; -------------------------------------------------------------------
 ; ym_dac_init -- the YM as the sound effects' DAC (no DMA sound): tones
@@ -1688,6 +1994,148 @@ caches_back:
     dc.w    $F4D8                         ; cinva bc
     dc.w    $4E7B, $0002                  ; movec d0, cacr
 .done:
+    rts
+
+; -------------------------------------------------------------------
+; pal8_put / pal8_get -- 256 colours into the palette registers from A1,
+; or out of them into A2: a TT's words at $FF8400, a Falcon's longs at
+; $FF9800, by UFW_EIGHT. Clobber D0/A1/A2.
+pal8_put:
+    move.w  #CART_PAL8_ENTRIES-1, d0
+    cmpi.b  #EIGHT_FALCON, UFW_EIGHT
+    beq.s   .falcon
+    lea     TT_PALETTE.w, a2
+.tt:
+    move.w  (a1)+, (a2)+
+    dbf     d0, .tt
+    rts
+.falcon:
+    lea     FALCON_PALETTE.w, a2
+.falcon_loop:
+    move.l  (a1)+, (a2)+
+    dbf     d0, .falcon_loop
+    rts
+
+pal8_get:
+    move.w  #CART_PAL8_ENTRIES-1, d0
+    cmpi.b  #EIGHT_FALCON, UFW_EIGHT
+    beq.s   .falcon
+    lea     TT_PALETTE.w, a1
+.tt:
+    move.w  (a1)+, (a2)+
+    dbf     d0, .tt
+    rts
+.falcon:
+    lea     FALCON_PALETTE.w, a1
+.falcon_loop:
+    move.l  (a1)+, (a2)+
+    dbf     d0, .falcon_loop
+    rts
+
+; -------------------------------------------------------------------
+; latch_pal8 -- the palette the RP sent with part 0, kept in
+; UFW8_PAL_LATCH until its frame goes on screen. A TT's words as they
+; are. A Falcon's RRRRRRbb GGGGGGbb words (cart_shared.h) made into the
+; longs $FF9800 takes: red and green move up a word as they are, and
+; blue's two pairs of bits go to 7..6 and 5..4 of the low word.
+; Clobbers D0-D3/A1/A2.
+latch_pal8:
+    lea     PAL8_ADDR, a1
+    lea     UFW8_PAL_LATCH, a2
+    move.w  #CART_PAL8_ENTRIES-1, d3
+    cmpi.b  #EIGHT_FALCON, UFW_EIGHT
+    beq.s   .falcon
+    lsr.w   #1, d3                        ; 256 words = 128 longs
+.tt:
+    move.l  (a1)+, (a2)+
+    dbf     d3, .tt
+    rts
+.falcon:
+    move.w  (a1)+, d0                     ; RRRRRRbb GGGGGGbb
+    move.w  d0, d1
+    andi.w  #$FCFC, d1
+    swap    d1
+    clr.w   d1                            ; RRRRRR00 GGGGGG00 00000000 00000000
+    move.w  d0, d2
+    lsr.w   #2, d2
+    andi.w  #$00C0, d2                    ; blue 5..4 from 9..8
+    or.w    d2, d1
+    andi.w  #$0003, d0
+    lsl.w   #4, d0                        ; blue 3..2 from 1..0
+    or.w    d0, d1
+    move.l  d1, (a2)+
+    dbf     d3, .falcon
+    rts
+
+; -------------------------------------------------------------------
+; copy_row8 -- one 320-byte row of 8 planes from the cartridge (A6, left
+; on the next row) to the screen (A5, kept), and on a TT to the line
+; below it as well, from the same registers rather than a second read
+; of the cartridge. A loop of 40-byte MOVEMs, small enough for a
+; 68030's 256-byte instruction cache, where FBDRV_INLINE's unrolled 5 KB
+; would be fetched from RAM all over again. Clobbers D0-D7/A1-A3.
+copy_row8:
+    moveq   #(CART_EIGHT_ROW_BYTES/40)-1, d7
+    tst.b   UFW8_TWICE
+    bne.s   .twice
+.once:
+    movem.l (a6)+, d0-d6/a1-a3
+    movem.l d0-d6/a1-a3, (a5)
+    lea     40(a5), a5
+    dbf     d7, .once
+    lea     -CART_EIGHT_ROW_BYTES(a5), a5
+    rts
+.twice:
+    movem.l (a6)+, d0-d6/a1-a3
+    movem.l d0-d6/a1-a3, (a5)
+    movem.l d0-d6/a1-a3, CART_EIGHT_ROW_BYTES(a5)
+    lea     40(a5), a5
+    dbf     d7, .twice
+    lea     -CART_EIGHT_ROW_BYTES(a5), a5
+    rts
+
+; -------------------------------------------------------------------
+; eight_calibrate -- 256 colours: how many rows of a part a VBL has room
+; to copy on this machine (UFW8_BUDGET), and the copy state from
+; scratch. Counts the rows copied between two VBLs -- the same row, into
+; the page not on screen, which the first frame overwrites -- and keeps
+; three quarters for the rest of the VBL's work: the palette, the sound,
+; the reports, the interrupts. Never more than a part, as a VBL copies
+; one at most. Needs interrupts at $2300. Clobbers D0-D7/A1-A6.
+eight_calibrate:
+    move.w  PART_SEQ_ADDR, UFW8_SEQ       ; only parts posted from now on
+    move.w  PAL8_SEQ_ADDR, d0
+    not.w   d0
+    move.w  d0, UFW8_PALSEQ               ; so the first part 0's palette is new
+    clr.w   UFW8_ROW
+    sf      UFW8_FLIPPED
+    move.w  #-1, UFW_VBL_FLAG.w
+.sync:
+    stop    #$2300
+    tst.w   UFW_VBL_FLAG.w
+    bne.s   .sync
+    move.w  #-1, UFW_VBL_FLAG.w
+    suba.l  a4, a4
+.row:
+    movea.l #UFW_FB_SRC, a6
+    movea.l UFW_SCREEN_PAGE, a5
+    adda.l  UFW8_FIRST, a5
+    bsr     copy_row8
+    addq.l  #1, a4
+    tst.w   UFW_VBL_FLAG.w
+    bne.s   .row
+    move.l  a4, d0
+    move.w  d0, d1
+    lsr.w   #2, d1
+    sub.w   d1, d0                        ; three quarters
+    bne.s   .some
+    moveq   #1, d0
+.some:
+    cmpi.w  #CART_EIGHT_ROWS, d0
+    bls.s   .most
+    move.w  #CART_EIGHT_ROWS, d0
+.most:
+    move.w  d0, UFW8_BUDGET
     rts
 
 ; -------------------------------------------------------------------

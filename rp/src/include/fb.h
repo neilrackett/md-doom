@@ -88,7 +88,8 @@ void fb_publish(void);
 void fb_wait_blit_ack(void);
 void fb_frame_done(void);
 
-/* Debug: longest fb_wait_blit_ack since the last call, in microseconds. */
+/* Debug: longest fb_wait_blit_ack (or, in 256 colours, wait for a part's
+ * ack) since the last call, in microseconds. */
 uint32_t fb_debug_wait_max_us(void);
 
 /** @brief Drain the ROM3 commemul ring once, routing each captured
@@ -116,6 +117,32 @@ bool fb_wait_st_reloc(uint32_t timeout_ms);
  * the same chunk-reversed layout -- 80-byte rows, 400 of them -- and a
  * frame is two VBLs long; fb_publish draws the right one either way. */
 bool fb_st_mono(void);
+
+/* 256 colours (cart_shared.h, "256 colours"): true when the ST is a TT
+ * or a Falcon showing 8 interleaved bitplanes, 320x200, from the same
+ * display report; fb_st_falcon() says which palette format. The pixels
+ * of fb_chunked_buffer are then palette indices 0..255 as they are, and
+ * fb_publish() sends them in two parts. */
+bool fb_st_eight(void);
+bool fb_st_falcon(void);
+
+/* One 8-plane palette entry in the format the ST in front of us takes,
+ * from 8-bit RGB: a TT's 0000RRRR GGGGBBBB, or a Falcon's RRRRRRbb
+ * GGGGGGbb (cart_shared.h). */
+uint16_t fb_eight_colour(uint8_t r, uint8_t g, uint8_t b);
+
+/* Publish fb_chunked_buffer as 256 colours: wait until the m68k has
+ * copied the last part, write the palette if `palette` is given (256
+ * words, from fb_eight_colour, into the slot it is handed) and part 0,
+ * then wait again and write part 1. Returns once part 1 is in the cart
+ * FB, while the m68k is still copying it, so the buffer is free to draw
+ * the next frame into. The result is the conversion's time in
+ * microseconds, both parts, without the waits. */
+uint32_t fb_eight_publish(void (*palette)(uint16_t *slot));
+
+/* Debug: the rows of a part the m68k copies in a VBL, as it measured at
+ * boot (0 before the first report). */
+unsigned fb_eight_rows_per_vbl(void);
 
 /* Called from fb_pump_rom3 when the heartbeat has been gone long enough
  * to mean the ST was reset. The handler does not return: the cartridge

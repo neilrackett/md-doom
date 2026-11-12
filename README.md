@@ -8,7 +8,7 @@ Microfirmware for the [SidecarTridge Multi-device](https://sidecartridge.com) by
 
 The SidecarTridge Multi-device is brilliant, but can it run DOOM?
 
-MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too (without it, you choose music or sound effects).
+MD/DOOM brings full speed, fully playable Doom to your Atari ST via your SidecarT, in 16 colours on a colour monitor, in Doom's own 256 colours on a TT or a Falcon, or in 640×400 on a mono monitor like the SM124. Sound effects use the STE DMA chip if you have one or the YM2149 if you don't, and with DMA sound the YM2149 plays Doom's music too (without it, you choose music or sound effects).
 
 A big thanks to Graham Sanderson for [rp2040-doom](https://github.com/kilograham/rp2040-doom), which helped make this possible, and Jonas Eschenburg, whose [STDOOM](https://github.com/indyjo/STDOOM) colour palette MD/DOOM started out with.
 
@@ -103,6 +103,17 @@ twice as fine as the picture. Keypad \* still cycles the dither options.
 A mono screen refreshes at 71 Hz and copying a whole screen takes longer
 than one of those, so the picture updates every other refresh: about 36 times a
 second, which is still more often than the game itself moves on (35).
+
+### TT and Falcon
+
+On a TT or a Falcon with a colour monitor, MD/DOOM shows Doom in its
+own 256 colours, with no dithering: TT Low on a TT, and the Falcon's
+256-colour mode at 320×240 on a VGA monitor or 320×200 on an RGB monitor
+or a TV. A 256-colour screen is twice the size of a 16-colour one, so
+each frame reaches your machine in two halves and the frame rate is
+lower than in 16 colours. There's no melt between screens in 256
+colours yet, and keypad \* does nothing. On a mono monitor both
+machines use the mono picture as above.
 
 ### Music
 

@@ -22,6 +22,11 @@
  * In ST high res (fb_st_mono()) the same calls draw a 640x400 one-bit
  * picture instead: each colour's brightness, dithered at the full
  * resolution with the same dither modes.
+ *
+ * On a TT or a Falcon with a colour monitor (fb_st_eight()) there is no
+ * reduction at all: the frame goes out as 8 bitplanes with PLAYPAL as
+ * its 256 colours (fb_eight_publish), the dither does not apply, and
+ * there is no melt (doom_video_eight()).
  */
 
 #ifndef DOOM_VIDEO_H_INCLUDED
@@ -55,6 +60,11 @@ void doom_video_init(void);
  * colours and the dither LUT are built from it at the next publish,
  * from the frame. */
 void doom_video_set_playpal(const uint8_t *rgb768);
+
+/* True when the ST shows Doom's own 256 colours (fb_st_eight): the melt
+ * and the dither modes, which work on the 16-colour picture, do not
+ * apply. */
+bool doom_video_eight(void);
 
 /* Change the dither mode, from the next frame. */
 void doom_video_set_dither(doom_video_dither_t mode);

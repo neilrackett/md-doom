@@ -251,7 +251,9 @@ void emul_start() {
   if (fb_init(&fb_mode_320x200) < 0) {
     panic("fb_init failed");
   }
-  DPRINTF("fb_init OK (%s)\n", fb_st_mono() ? "ST high res, mono" : "ST low res");
+  DPRINTF("fb_init OK (%s)\n", fb_st_eight()  ? (fb_st_falcon() ? "Falcon, 256 colours" : "TT Low, 256 colours")
+                                : fb_st_mono() ? "ST high res, mono"
+                                               : "ST low res");
   cart_check("post-fb");
 
   // Cart audio buffer producer. The back-end (STE DMA or YM2149) is

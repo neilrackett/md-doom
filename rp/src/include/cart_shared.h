@@ -141,6 +141,42 @@
 #define CART_YM_PACKET_OFFSET                                                 \
   (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_BUFFER_SIZE - CART_YM_PACKET_SIZE)
 
+/* --- 256 colours: a TT's TT Low or a Falcon's 8-plane mode ----------
+ *
+ * When the display report says so (fb_st_eight), the picture is 320x200
+ * in 8 interleaved bitplanes: 64,000 bytes, twice the cart FB. It
+ * crosses in two parts of 100 rows, each exactly the 32,000-byte FB,
+ * row-major and in natural order (no chunk reversal: the m68k's copy
+ * runs forwards); a row is 20 groups of 16 pixels, each 8 plane words,
+ * plane 0 first, leftmost pixel in bit 15.
+ *
+ * Slot 3: the RP writes the part (+2: 0 = rows 0..99, 1 = 100..199),
+ * then bumps the sequence word (+0) last, once the part is in the FB.
+ * The m68k copies a part when the sequence changes and acks it by
+ * reading PARTACK_WINDOW_BASE + the sequence's low byte; only then may
+ * the RP write the FB again. It repeats that ack every VBL until the
+ * next part, so one lost to a lapped capture ring is not waited on. The
+ * page goes on screen once part 1 is in.
+ *
+ * Slot 4: bumped when the palette below has changed, which the RP only
+ * writes with part 0; the m68k latches it as it starts that part and
+ * applies it when the frame goes on screen. 256 words in the space of
+ * YM bank 1 and the YM packet, which only machines without DMA sound
+ * use: 8-plane mode needs DMA sound (every TT and Falcon has it).
+ *   TT:     0000RRRR GGGGBBBB, as $FF8400 takes it.
+ *   Falcon: RRRRRRbb GGGGGGbb, red and green to six bits and blue's top
+ *           four in the two bb pairs (5..4, then 3..2); the m68k makes
+ *           $FF9800's RRRRRR00 GGGGGG00 00000000 BBBB0000 from it.
+ * Mirrored as PART_SEQ_ADDR, PART_IDX_ADDR, PAL8_SEQ_ADDR and PAL8_ADDR
+ * in userfw.s. */
+#define CART_PART_SEQ_OFFSET             (CART_SHARED_VARIABLES_OFFSET + 12)
+#define CART_PART_IDX_OFFSET             (CART_SHARED_VARIABLES_OFFSET + 14)
+#define CART_PAL8_SEQ_OFFSET             (CART_SHARED_VARIABLES_OFFSET + 16)
+#define CART_PAL8_OFFSET                 (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_YM_BANK_BYTES)
+#define CART_PAL8_ENTRIES                256
+#define CART_EIGHT_ROWS                  100 /* rows a part */
+#define CART_EIGHT_ROW_BYTES             320
+
 /* APP_FREE arena starts after the audio buffer. */
 #define CART_APP_FREE_OFFSET                                                  \
   (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_BUFFER_SIZE)

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- On a TT or a Falcon with a colour monitor, MD/DOOM now shows Doom in
+  its own 256 colours, undithered: TT Low on a TT, and on a Falcon its
+  256-colour mode at 320×240 on VGA or 320×200 on RGB or a TV. A
+  256-colour screen is twice the size of a 16-colour one, so each frame
+  crosses in two halves and the frame rate is lower than in 16 colours.
+  There is no melt between screens in 256 colours yet. Tried in Hatari
+  only.
+- A TT or a Falcon that starts in one of its own screen modes is now
+  switched to low resolution first (v1.0.1); before, a TT in TT medium
+  showed the picture in the top fifth of the screen.
+- Sound on a TT or a Falcon. At their 60 or 70 Hz the sound buffer's
+  length started from the 50 Hz value and never moved off it; it is now
+  measured when the game starts. A Falcon never told the ST when a
+  buffer had finished playing, so it played the same buffer over and
+  over; it now does.
+- On a 68030 (a TT or a Falcon) the data cache is switched off while
+  MD/DOOM runs, so the ST never reads an old copy of the cartridge.
+
 ## v1.0.0 (2026-11-09)
 
 - The music is now Doom's own, played the way a PC with an AdLib or

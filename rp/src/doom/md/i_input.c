@@ -48,6 +48,7 @@ extern void I_MD_SaveVideoSettings(void);
 static int8_t s_pending_dither = -1;
 
 static void cycle_dither(void) {
+  if (doom_video_eight()) return; /* 256 colours: nothing to dither */
   int cur = s_pending_dither >= 0 ? s_pending_dither : (int)doom_video_get_dither();
   s_pending_dither = (int8_t)((cur + 1) % DOOM_VIDEO_DITHER_COUNT);
   players[consoleplayer].message = doom_video_dither_name((doom_video_dither_t)s_pending_dither);

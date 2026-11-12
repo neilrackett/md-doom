@@ -30,6 +30,7 @@
 
 #include "doom_video.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "audio.h"
@@ -599,10 +600,24 @@ void doom_video_init(void) {
   s_convert_us = 0;
 }
 
+/* 256 colours: the page changed since the hardware palette was last
+ * sent, which fb_eight_publish does with the next frame's first part. */
+static bool s_pal8_dirty;
+
 void doom_video_set_playpal(const uint8_t *rgb768) {
   memcpy(s_playpal, rgb768, sizeof(s_playpal));
   s_have_playpal = true;
+  s_pal8_dirty = true;
   rebuild();
+}
+
+bool doom_video_eight(void) { return fb_st_eight(); }
+
+/* The page as 256 hardware colours, into the cart's 8-plane slot. */
+static void write_pal8(uint16_t *slot) {
+  for (unsigned i = 0; i < 256u; i++) {
+    slot[i] = fb_eight_colour(s_playpal[3u * i], s_playpal[3u * i + 1u], s_playpal[3u * i + 2u]);
+  }
 }
 
 void doom_video_set_dither(doom_video_dither_t mode) {
@@ -844,6 +859,13 @@ static void __not_in_flash_func(mono_bottom_job)(void *arg) {
 #pragma GCC optimize("Os")
 
 void doom_video_publish(void) {
+  if (fb_st_eight()) {
+    /* 256 colours: the indices as they are, PLAYPAL as the palette. */
+    s_convert_us = fb_eight_publish(s_pal8_dirty && s_have_playpal ? write_pal8 : NULL);
+    if (s_have_playpal) s_pal8_dirty = false;
+    goto published;
+  }
+
   /* The ST says which it is long before the first frame; rebuilding on
    * a change here just means the LUT and the layout can never disagree. */
   if (fb_st_mono() != s_mono) rebuild();
@@ -900,6 +922,7 @@ void doom_video_publish(void) {
   s_convert_us = time_us_32() - t0;
   fb_frame_done();
 
+published:
 #ifdef EMUMD
   /* emu/framedump.c: the frame and its page, for offline experiments. */
   extern void emu_frame_dump(const uint8_t *frame, const uint8_t *playpal);
@@ -920,10 +943,15 @@ void doom_video_publish(void) {
     audio_debug_stats(&fill_max, &fills, &cb_max, &cbs);
     extern void md_prof_report(char *buf, int len);
     extern volatile uint32_t md_sound_dbg_starts, md_sound_dbg_max_playing;
-    char prof[96];
+    char prof[96], mode[24];
     md_prof_report(prof, sizeof(prof));
+    if (fb_st_eight()) {
+      snprintf(mode, sizeof(mode), "256 %urows", fb_eight_rows_per_vbl()); /* a part's rows a VBL */
+    } else {
+      snprintf(mode, sizeof(mode), "%s", doom_video_dither_name(s_dither));
+    }
     DPRINTF("c2p %s %lu us | frame max %lu ms | ack wait max %lu us | audio core %d mode %d len %lu: cbs %lu, fills %lu, fill max %lu us, cb max %lu us, starts %lu, max playing %lu | max ms: %s\n",
-            doom_video_dither_name(s_dither), (unsigned long)s_convert_us,
+            mode, (unsigned long)s_convert_us,
             (unsigned long)(s_frame_max_us / 1000u), (unsigned long)fb_debug_wait_max_us(),
             audio_vbl_timer_core(), (int)audio_get_mode(), (unsigned long)audio_get_fill_bytes(), (unsigned long)cbs,
             (unsigned long)fills, (unsigned long)fill_max, (unsigned long)cb_max,
