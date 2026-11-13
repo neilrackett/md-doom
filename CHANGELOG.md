@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- On a TT, keypad ( turns the internal speaker on or off, as in
+  MD/Speccy, MD/Lynx and MD/MJPEG. It is off whenever MD/DOOM starts,
+  and goes back to how TOS had it when you leave.
 - On a TT or a Falcon with a colour monitor, MD/DOOM now shows Doom in
   its own 256 colours, undithered: TT Low on a TT, and on a Falcon its
   256-colour mode at 320×240 on VGA or 320×200 on RGB or a TV. A

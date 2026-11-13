@@ -31,6 +31,9 @@
 /* Keypad * cycles the dither mode at run time, as the DOOM Accelerator
  * did, and says so in the HUD. The key means nothing to Doom. */
 #define SCAN_KP_MULTIPLY 0x66
+/* Keypad ( switches a TT's internal speaker, off at every start, as
+ * MD/Speccy, MD/Lynx and MD/MJPEG have it. Nothing on another machine. */
+#define SCAN_KP_LPAREN 0x63
 /* Debug builds only: keypad - cycles the audio refill interrupt off /
  * Core 0 / Core 1 for A/B tests. Core 0 stalls the renderer, so a
  * release build must not offer it one key away from *. */
@@ -182,6 +185,13 @@ void I_GetEvent(void) {
   while (ikbd_pop_key(&k)) {
     if (k.scancode == SCAN_KP_MULTIPLY) {
       if (k.is_press) cycle_dither();
+      continue;
+    }
+    if (k.scancode == SCAN_KP_LPAREN) {
+      if (k.is_press && audio_has_tt_speaker()) {
+        players[consoleplayer].message =
+            audio_toggle_tt_speaker() ? "TT SPEAKER ON" : "TT SPEAKER OFF";
+      }
       continue;
     }
 #if defined(_DEBUG) && (_DEBUG != 0)

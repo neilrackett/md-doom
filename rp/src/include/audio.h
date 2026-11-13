@@ -60,6 +60,12 @@ void audio_set_fill_bytes(uint32_t bytes);
  * buffer-length report windows and applies what it finds. */
 void audio_consume_rom3_sample(uint16_t addr_lsb);
 
+/* The TT's internal speaker (cart_shared.h CART_SPEAKER_OFFSET): whether
+ * the m68k has reported a TT, and a toggle, returning the new setting.
+ * Off at every start; the m68k does the switching. */
+bool audio_has_tt_speaker(void);
+bool audio_toggle_tt_speaker(void);
+
 typedef void (*audio_fill_cb_t)(uint8_t *buf, uint32_t bytes);
 
 /* Initialise the cart audio buffer pointer; clear any previously

@@ -59,6 +59,7 @@ Controls match the original PC Doom:
 | Undo            | Pause                                                                              |
 | - and +         | Screen size: the view with the status bar, or the full screen without it           |
 | Keypad \*       | Cycle through the dither options (see below); your choice is remembered            |
+| Keypad (        | On a TT, turn its internal speaker on or off (off whenever MD/DOOM starts; TOS's setting comes back when you leave) |
 
 **Gamepad support is off in this release.** MD/DOOM can read an
 [Xpad](https://github.com/neilrackett/atarist-xpad) gamepad, but only a

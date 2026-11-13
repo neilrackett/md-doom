@@ -73,6 +73,7 @@ uint32_t audio_get_fill_bytes(void) { return s_fill_bytes; }
  * keeps the window address and the bit-to-back-end mapping with the
  * module that owns audio_mode_t and the refill sizes. */
 #define AUDIO_SNDCAP_HIBYTE 0x8600u
+#define AUDIO_SNDCAP_TT 0x02u /* bit 1: a TT, whose speaker keypad ( switches */
 #define AUDIO_WINDOW_HIMASK 0xFF00u
 
 /* Buffer-length report (SNDLEN_WINDOW_BASE in userfw.s): while STE DMA
@@ -111,10 +112,22 @@ void audio_set_fill_bytes(uint32_t bytes) {
   s_fill_bytes = bytes;
 }
 
+static bool s_tt;
+
+bool audio_has_tt_speaker(void) { return s_tt; }
+
+bool audio_toggle_tt_speaker(void) {
+  volatile uint16_t *w =
+      (volatile uint16_t *)((uint8_t *)&__rom_in_ram_start__ + CART_SPEAKER_OFFSET);
+  *w = *w ? 0u : 1u;
+  return *w != 0u;
+}
+
 void audio_consume_rom3_sample(uint16_t addr_lsb) {
   const uint16_t window = addr_lsb & AUDIO_WINDOW_HIMASK;
   if (window == AUDIO_SNDCAP_HIBYTE) {
     audio_set_mode((addr_lsb & 1u) ? AUDIO_MODE_DMA : AUDIO_MODE_YM);
+    s_tt = (addr_lsb & AUDIO_SNDCAP_TT) != 0u;
   } else if (window == AUDIO_SNDLEN_HIBYTE) {
     audio_set_fill_bytes(AUDIO_SNDLEN_BIAS + (uint32_t)(addr_lsb & 0xFFu));
   } else if (window == AUDIO_VIDEO_HIBYTE) {

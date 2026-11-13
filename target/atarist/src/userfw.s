@@ -125,6 +125,9 @@ UFW_OLD_CACR          equ $00077F88          ; longword: a 68020 or later's CACR
 UFW_FALCON_SND        equ $00077F8C          ; byte: $FF = a Falcon's sound (_SND bit 2, the codec)
 UFW_OLD_8900          equ $00077F8D          ; byte: its $FF8900 as TOS left it
 UFW_EIGHT             equ $00077F8E          ; byte: 0, or 256 colours: EIGHT_TT / EIGHT_FALCON
+UFW_TT                equ $00077F8F          ; byte: SNDCAP_TT on a TT, else 0
+UFW_SPK_STATE         equ $00077F90          ; byte: TT speaker setting last applied ($00 off, $FF on, $01 none yet)
+UFW_SPK_PORTA         equ $00077F91          ; byte: YM port A as TOS left it (TT: bit 6 put back on exit)
 UFW_XPAD_HDR          equ $00077FD0          ; longword: Xpad block base, 0 = no provider
 UFW_XPAD_BUF0         equ $00077FD4          ; longword: address of pad 0 in buffer 0
 UFW_XPAD_BUF1         equ $00077FD8          ; longword: address of pad 0 in buffer 1
@@ -314,6 +317,8 @@ YM_DATA               equ $FFFF8802
 YM_REG_MIXER          equ 7                  ; tone+noise enables
 YM_REG_CHA_VOL        equ 8                  ; channel A volume (low 4 bits)
 YM_REG_CHB_VOL        equ 9                  ; channel B volume (low 4 bits)
+YM_REG_PORT_A         equ 14                 ; I/O port A: floppy selects, RTS/DTR, printer strobe, bits 6/7 per machine
+YM_PORTA_TT_SPEAKER   equ 6                  ; TT: internal speaker enable, active low (0 = speaker off)
 YM_MIXER_DAC_CHA      equ $FE                ; tone A enabled, all other tones/noise off, ports out
 YM_MIXER_DAC_AB       equ $FC                ; tones A AND B enabled, tone C off, all noise off, ports out (Ghostbusters dual-channel fake DAC)
 
@@ -617,12 +622,22 @@ SND_MEASURE_SHIFT     equ 2
 COOKIE_JAR_PTR        equ $000005A0          ; longword: cookie jar base (0 = none)
 COOKIE_SND            equ $5F534E44          ; '_SND'; value bit 1 = DMA/PCM sound
 COOKIE_CPU            equ $5F435055          ; '_CPU'; 0, 10, 20, 30, 40 or 60
+COOKIE_MCH            equ $5F4D4348          ; '_MCH'; high word 2 = TT
+MCH_TT                equ 2
 
 ; Sound-capability report window: the m68k reads (SNDCAP_WINDOW_BASE +
-; has_dma) each VBL; the RP commemul ring decodes the low bit and
-; produces the matching audio format. Distinct from IKBD ($FB8200)
-; and VBLSYNC ($FB8400).
+; has_dma + UFW_TT) each VBL; the RP commemul ring decodes the low bit
+; and produces the matching audio format, and bit 1 tells it this is a
+; TT, whose internal speaker keypad ( switches. Distinct from IKBD
+; ($FB8200) and VBLSYNC ($FB8400).
 SNDCAP_WINDOW_BASE    equ $FB8600
+SNDCAP_TT             equ 2                  ; bit 1: a TT
+
+; The TT's internal speaker (cart_shared.h CART_SPEAKER_OFFSET, slot 5;
+; must match): a word the RP sets with keypad (, 0 = off (as the cart
+; region starts), else on. Applied by ufw_speaker_apply each VBL, on a
+; TT only.
+SPEAKER_ADDR          equ $00FA4024
 
 ; Relocation heartbeat: the m68k reads (RELOC_WINDOW_BASE + protocol
 ; version) once per VBL, from the display loop and therefore only ever
@@ -820,6 +835,19 @@ userfw:
     beq.s   .two_vbl_done
     sf      UFW_TWO_VBL
 .two_vbl_done:
+
+    ; --- A TT? (_MCH high word 2) Its internal speaker follows keypad (
+    ; (ufw_speaker_apply), and the RP learns that it is one from the
+    ; sound report, which is why the flag is that report's bit.
+    clr.b   UFW_TT
+    move.l  #COOKIE_MCH, d1
+    bsr     find_cookie
+    swap    d0
+    cmpi.w  #MCH_TT, d0
+    bne.s   .tt_done
+    move.b  #SNDCAP_TT, UFW_TT
+.tt_done:
+    move.b  #1, UFW_SPK_STATE        ; neither off nor on: the first VBL applies the setting
 
     ; --- 256 colours on a TT or a Falcon? ---------------------------
     ; See "256 colours" in the equates. Needs a colour monitor, DMA
@@ -1038,6 +1066,14 @@ userfw:
     move.b  MFP_IMRA.w, 26(a5)
     move.b  MFP_IMRB.w, 27(a5)
     move.b  MFP_VR.w, 28(a5)             ; TOS uses S=1 (software EOI); we override below
+
+    ; A TT: save port A as TOS left it, so the exit can put the internal
+    ; speaker back the way it found it (ufw_speaker_apply switches it).
+    tst.b   UFW_TT
+    beq.s   .spk_saved
+    move.b  #YM_REG_PORT_A, YM_SELECT.w
+    move.b  YM_SELECT.w, UFW_SPK_PORTA   ; a read of the select register reads the latched one
+.spk_saved:
 
     ; Install dummies at HBL / Timer-A / Timer-B / Timer-C / Timer-D
     ; / ACIA. userfw_dummy_irq is a single rte; PC-relative for the
@@ -1422,13 +1458,20 @@ userfw:
 .after_copy:
 
     ; Report sound capability to the RP every VBL: one cart-bus read at
-    ; SNDCAP_WINDOW_BASE + has_dma. The RP's commemul ring decodes the
-    ; low bit and produces the matching audio format (signed PCM for
-    ; DMA, (vA,vB) YM pairs otherwise). A1/D1 are scratch.
+    ; SNDCAP_WINDOW_BASE + has_dma + UFW_TT. The RP's commemul ring
+    ; decodes the low bit and produces the matching audio format (signed
+    ; PCM for DMA, (vA,vB) YM pairs otherwise); bit 1 says a TT. A1/D1
+    ; are scratch.
     moveq   #0, d1
     move.b  UFW_HAS_DMA, d1
+    or.b    UFW_TT, d1
     lea     SNDCAP_WINDOW_BASE, a1
     tst.b   (a1, d1.w)
+
+    ; The TT's internal speaker, as keypad ( has it (a no-op unless this
+    ; is a TT and the setting changed). Clobbers D0/D1/A2, all scratch
+    ; here.
+    bsr     ufw_speaker_apply
 
     ; Relocation heartbeat, one read per VBL. Reached only from the
     ; relocated copy, which is the whole point: it is the RP's proof
@@ -1700,7 +1743,7 @@ userfw:
     ; rebooting, so the Booster's cartridge code is what the ST finds
     ; when it looks. Any other value (NOP, future commands) leaves the
     ; loop running. D0 carries the command through the restore below,
-    ; which uses no data registers.
+    ; which leaves it alone.
     move.l  CMD_MAGIC_SENTINEL, d0
     cmp.l   #CMD_BOOT_GEM, d0
     beq.s   .exit_requested
@@ -1728,6 +1771,20 @@ userfw:
     move.b  #0, YM_DATA.w                ; ch B volume
     move.b  #10, YM_SELECT.w
     move.b  #0, YM_DATA.w                ; ch C volume
+
+    ; A TT: its internal speaker back as TOS had it. Only bit 6: the rest
+    ; of port A (the floppy selects among them) is left as it now stands.
+    tst.b   UFW_TT
+    beq.s   .spk_restored
+    move.b  #YM_REG_PORT_A, YM_SELECT.w
+    move.b  YM_SELECT.w, d1
+    bclr    #YM_PORTA_TT_SPEAKER, d1
+    btst    #YM_PORTA_TT_SPEAKER, UFW_SPK_PORTA
+    beq.s   .spk_restore
+    bset    #YM_PORTA_TT_SPEAKER, d1
+.spk_restore:
+    move.b  d1, YM_DATA.w
+.spk_restored:
 
     ; Reload the save-area pointer in case anything clobbered A5
     ; during the run.
@@ -1953,6 +2010,47 @@ find_cookie:
 .found:
     move.l  4(a2), d0
 .done:
+    rts
+
+; -------------------------------------------------------------------
+; ufw_speaker_apply -- once per VBL, on a TT only: switch its internal
+; speaker to follow keypad ( (SPEAKER_ADDR), as MD/Speccy, MD/Lynx and
+; MD/MJPEG do. The speaker's enable is bit 6 of the YM's port A, active
+; low: the TT030 hardware reference lists it as "*Speaker Disable (0
+; disables internal speaker)". The other port A bits are the floppy
+; selects, the printer strobe, RTS/DTR and the LAN select, so this is a
+; read-modify-write, and only when the setting has changed
+; (UFW_SPK_STATE starts at neither, so the first VBL applies the
+; default, off).
+;
+; The YM is only touched at IPL 7, and reg 8 is latched again last, for
+; the YM sample handler, which shares the register latch and relies on
+; reg 8 being latched between fires (it only runs on a TT in a
+; FORCE_NO_DMA build).
+;
+; Clobbers D0/D1/A2. A0 (the YM sample cursor) is left alone.
+ufw_speaker_apply:
+    tst.b   UFW_TT
+    beq.s   .spk_ret                      ; not a TT
+    tst.w   SPEAKER_ADDR
+    sne     d1                            ; d1: $FF on, $00 off
+    cmp.b   UFW_SPK_STATE, d1
+    beq.s   .spk_ret                      ; as it is already
+    move.b  d1, UFW_SPK_STATE
+    lea     YM_SELECT.w, a2
+    move.w  sr, -(sp)
+    ori.w   #$0700, sr
+    move.b  #YM_REG_PORT_A, (a2)
+    move.b  (a2), d0                      ; port A as it stands
+    bclr    #YM_PORTA_TT_SPEAKER, d0      ; off...
+    tst.b   d1
+    beq.s   .spk_write
+    bset    #YM_PORTA_TT_SPEAKER, d0      ; ...or on
+.spk_write:
+    move.b  d0, 2(a2)
+    move.b  #YM_REG_CHA_VOL, (a2)         ; reg 8 latched again for the sample handler
+    move.w  (sp)+, sr
+.spk_ret:
     rts
 
 ; -------------------------------------------------------------------

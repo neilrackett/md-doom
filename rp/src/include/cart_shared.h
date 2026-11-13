@@ -177,6 +177,13 @@
 #define CART_EIGHT_ROWS                  100 /* rows a part */
 #define CART_EIGHT_ROW_BYTES             320
 
+/* Shared-variable slot 5: the TT's internal speaker, a word the RP sets
+ * with keypad ( -- 0 off (as the region starts), else on. On a TT only
+ * (bit 1 of the sound report), the m68k switches it through bit 6 of the
+ * YM's port A and puts TOS's setting back on the way out. Mirrored as
+ * SPEAKER_ADDR in userfw.s. */
+#define CART_SPEAKER_OFFSET              (CART_SHARED_VARIABLES_OFFSET + 20)
+
 /* APP_FREE arena starts after the audio buffer. */
 #define CART_APP_FREE_OFFSET                                                  \
   (CART_AUDIO_BUFFER_OFFSET + CART_AUDIO_BUFFER_SIZE)

@@ -40,7 +40,7 @@ ROM4_ADDR			equ $FA0000
 ;   $FA400C  FB_FRAME_COUNTER_ADDR	4 B
 ;   $FA4010  SHARED_VARIABLES		240 B (60 x 4-byte slots. Slots 12..19
 ;					      hold PALETTE_ADDR below and 20..27
-;					      the status bar's; slots 0..2 are
+;					      the status bar's; slots 0..5 are
 ;					      flags (userfw.s); the rest are
 ;					      app-free.)
 ;   $FA4040    PALETTE_ADDR		32 B  (slots 12..19; 16 ST colour words
