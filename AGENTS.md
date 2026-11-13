@@ -879,9 +879,12 @@ revisited in order of visible payoff.
   colours: the old picture is not in the cart FB to melt from. An
   ST-side melt (the front page is the old frame, the new one could be
   sent to the back page first) is the way to get it back. The TT's
-  copy is the limit, at a part every two VBLs: writing each row once
-  with a black line between (scanlines) halves its writes and should
-  fit a part a VBL.
+  copy is the limit, at a part every two VBLs, and **writing each row
+  once does not fix it**: scanlines and interlacing were tried on a
+  real TT (13 Nov 2026, a keypad `*` choice on a branch since deleted)
+  and only took the budget from 72 rows a VBL to 94, still under the
+  part's 100, so `frame max` stayed at 66-83 ms. The cartridge reads,
+  not the screen writes, are most of the cost.
 - **EmuMD's clock runs fast on 68030 machines.** Hatari's
   `MultiDevice_NowUs` gives the RP its time, and on a TT every RP-side
   figure comes out about 4× (a Falcon 2×) the emulated time: a 256-colour
