@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 (2026-11-13)
 
 - On a TT, keypad ( turns the internal speaker on or off, as in
   MD/Speccy, MD/Lynx and MD/MJPEG. It is off whenever MD/DOOM starts,
@@ -10,8 +10,9 @@
   256-colour mode at 320×240 on VGA or 320×200 on RGB or a TV. A
   256-colour screen is twice the size of a 16-colour one, so each frame
   crosses in two halves and the frame rate is lower than in 16 colours.
-  There is no melt between screens in 256 colours yet. Tried in Hatari
-  only.
+  There is no melt between screens in 256 colours yet. Played on a real
+  TT, at about 12 to 15 frames a second; the Falcon has only been tried
+  in Hatari.
 - A TT or a Falcon that starts in one of its own screen modes is now
   switched to low resolution first (v1.0.1); before, a TT in TT medium
   showed the picture in the top fifth of the screen.

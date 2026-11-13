@@ -536,7 +536,12 @@ keypad `*` does nothing. Leaving through `CMD_BOOT_GEM` puts TOS's 256
 colours back, and the TT's shift mode or the Falcon's `VsetMode` word.
 In Hatari (TOS 3.06 TT, TOS 4.04 Falcon on VGA and RGB) the title and
 E1M1 show right, a frame takes the minimum two VBLs, and STE, mono and
-plain-ST screenshots are byte-identical to before.
+plain-ST screenshots are byte-identical to before. On a real TT (TT Low,
+60 Hz; v1.0.5, 13 Nov 2026) it plays from the title to the
+intermission: `256 75rows` (the copy fits ~100 doubled rows a VBL, a
+quarter kept back), so a part takes two VBLs and a frame four or five
+(`frame max` 67 ms on the title, 83 ms in play), `ack wait max` ~37 ms,
+`len` 414-427.
 
 ### Input (`doom_input.c`)
 `doom_input_translate(scancode)` returns the Doom key code (doomkeys.h
@@ -865,15 +870,18 @@ revisited in order of visible payoff.
   in the level packs. Restoring them means all of that plus rebuilt
   packs. Note the keys must keep falling through to `AM_Responder`
   while the automap is up, where they zoom.
-- **256 colours on a TT or Falcon is untested on hardware.** The figures
-  to ask for are the 64-frame line's `256 NNrows` (the boot-measured
-  rows a VBL; 100 means a part a VBL), `frame max` and `ack wait max`
-  (here, the longest wait for a part's ack). There is no melt in 256
+- **256 colours on a Falcon is untested on hardware**; a real TT plays
+  it at 12-15 frames a second (figures under "TT and Falcon: 256
+  colours"). The figures to ask for are the 64-frame line's
+  `256 NNrows` (the boot-measured rows a VBL; 100 means a part a VBL),
+  `frame max` and `ack wait max` (here, the longest wait for a part's
+  ack). There is no melt in 256
   colours: the old picture is not in the cart FB to melt from. An
   ST-side melt (the front page is the old frame, the new one could be
-  sent to the back page first) is the way to get it back. If a TT's
-  copy turns out too slow, writing each row once with a black line
-  between (scanlines) halves its writes.
+  sent to the back page first) is the way to get it back. The TT's
+  copy is the limit, at a part every two VBLs: writing each row once
+  with a black line between (scanlines) halves its writes and should
+  fit a part a VBL.
 - **EmuMD's clock runs fast on 68030 machines.** Hatari's
   `MultiDevice_NowUs` gives the RP its time, and on a TT every RP-side
   figure comes out about 4× (a Falcon 2×) the emulated time: a 256-colour
