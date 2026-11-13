@@ -908,9 +908,9 @@ revisited in order of visible payoff.
   colours"). The figures to ask for are the 64-frame line's
   `256 NNrows` (the boot-measured rows a VBL; 100 means a part a VBL),
   `frame max` and `ack wait max` (here, the longest wait for a part's
-  ack). The melt in 256 colours is the ST's and untested on hardware
-  (the log's `melt done, N steps, step max` line is the figure to ask
-  for). The TT's
+  ack). The melt in 256 colours is the ST's; it works on a real TT
+  (v1.1.2, 13 Nov 2026), and the log's `melt done, N steps, step max`
+  line is the figure to ask for if it looks slow. The TT's
   copy is the limit, at a part every two VBLs, and **writing each row
   once does not fix it**: scanlines and interlacing were tried on a
   real TT (13 Nov 2026, a keypad `*` choice on a branch since deleted)

@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased
+## v1.1.3 (2026-11-13)
 
 - Screens melt into each other in 256 colours on a TT or a Falcon too,
   as Doom's do. The cartridge has no room for the old picture there, so
   the TT or Falcon moves the pixels itself, step by step, as the
-  cartridge tells it to.
+  cartridge tells it to. Played on a real TT; the Falcon has only been
+  tried in Hatari.
 
 ## v1.1.0 (2026-11-13)
 
