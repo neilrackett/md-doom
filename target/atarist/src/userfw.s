@@ -318,7 +318,7 @@ YM_REG_MIXER          equ 7                  ; tone+noise enables
 YM_REG_CHA_VOL        equ 8                  ; channel A volume (low 4 bits)
 YM_REG_CHB_VOL        equ 9                  ; channel B volume (low 4 bits)
 YM_REG_PORT_A         equ 14                 ; I/O port A: floppy selects, RTS/DTR, printer strobe, bits 6/7 per machine
-YM_PORTA_TT_SPEAKER   equ 6                  ; TT: internal speaker enable, active low (0 = speaker off)
+YM_PORTA_TT_SPEAKER   equ 6                  ; TT: set = internal speaker off; TOS leaves it clear (on)
 YM_MIXER_DAC_CHA      equ $FE                ; tone A enabled, all other tones/noise off, ports out
 YM_MIXER_DAC_AB       equ $FC                ; tones A AND B enabled, tone C off, all noise off, ports out (Ghostbusters dual-channel fake DAC)
 
@@ -2015,12 +2015,14 @@ find_cookie:
 ; -------------------------------------------------------------------
 ; ufw_speaker_apply -- once per VBL, on a TT only: switch its internal
 ; speaker to follow keypad ( (SPEAKER_ADDR), as MD/Speccy, MD/Lynx and
-; MD/MJPEG do. The speaker's enable is bit 6 of the YM's port A, active
-; low: the TT030 hardware reference lists it as "*Speaker Disable (0
-; disables internal speaker)". The other port A bits are the floppy
-; selects, the printer strobe, RTS/DTR and the LAN select, so this is a
-; read-modify-write, and only when the setting has changed
-; (UFW_SPK_STATE starts at neither, so the first VBL applies the
+; MD/MJPEG do. Setting bit 6 of the YM's port A switches the speaker
+; off; TOS leaves it clear, with the speaker on. That is how the
+; Booster's own screen (rp2-booster-bootloader term/atarist/src/main.s)
+; has it, and a real TT agrees: the other way round, the first MD/DOOM
+; build to have the key started with the speaker on. The other port A
+; bits are the floppy selects, the printer strobe, RTS/DTR and the LAN
+; select, so this is a read-modify-write, and only when the setting has
+; changed (UFW_SPK_STATE starts at neither, so the first VBL applies the
 ; default, off).
 ;
 ; The YM is only touched at IPL 7, and reg 8 is latched again last, for
@@ -2042,10 +2044,10 @@ ufw_speaker_apply:
     ori.w   #$0700, sr
     move.b  #YM_REG_PORT_A, (a2)
     move.b  (a2), d0                      ; port A as it stands
-    bclr    #YM_PORTA_TT_SPEAKER, d0      ; off...
+    bset    #YM_PORTA_TT_SPEAKER, d0      ; off...
     tst.b   d1
     beq.s   .spk_write
-    bset    #YM_PORTA_TT_SPEAKER, d0      ; ...or on
+    bclr    #YM_PORTA_TT_SPEAKER, d0      ; ...or on
 .spk_write:
     move.b  d0, 2(a2)
     move.b  #YM_REG_CHA_VOL, (a2)         ; reg 8 latched again for the sample handler

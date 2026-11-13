@@ -680,10 +680,13 @@ from.
 - **TT speaker** (keypad `(`, ported from MD/Speccy, MD/Lynx and
   MD/MJPEG). On a TT only, keypad `(` turns the internal speaker on or
   off, with a HUD message; it is off at every start and not saved.
-  Its enable is bit 6 of the YM's port A, **active low**: the TT030
-  Hardware Reference Manual's port A table reads "*Speaker Disable (0
-  disables internal speaker)" (Hatari doesn't emulate the speaker).
-  Don't reuse this on a Falcon without checking its polarity.
+  **Setting bit 6 of the YM's port A switches it off**; TOS leaves the
+  bit clear, with the speaker on. That is the Booster's polarity
+  (`rp2-booster-bootloader`, `term/atarist/src/main.s`), and a real TT
+  confirmed it: v1.0.6 had it the other way round, as MD/Speccy, MD/Lynx
+  and MD/MJPEG do, and started with the speaker on. Hatari doesn't
+  emulate the speaker, so only hardware can tell. Don't reuse this on a
+  Falcon without checking its polarity.
   `userfw.s` finds a TT from `_MCH` (high word 2) and adds 2 to the
   sound report (`UFW_TT`), which `audio.c` latches
   (`audio_has_tt_speaker()`); `audio_toggle_tt_speaker()` flips the word
