@@ -177,6 +177,36 @@
 #define CART_EIGHT_ROWS                  100 /* rows a part */
 #define CART_EIGHT_ROW_BYTES             320
 
+/* 256 colours: the melt. The RP has no room for the old picture, but the
+ * ST has it on screen, so the ST moves the pixels and the RP plans each
+ * step. The part index (slot 3, +2) has two more bits:
+ *   CART_PART_TO_N  the part goes to the ST's new-frame buffer -- the two
+ *                   16-colour pages, unused in this mode: rows 0..99 at
+ *                   $70000, 100..199 at $78000, 320 B a row, undoubled --
+ *                   not to the page being drawn, and nothing is flipped.
+ *                   Part 0 still brings the palette.
+ *   CART_PART_MELT  a melt step: the cart FB holds a display list, which
+ *                   the ST runs into the page being drawn before it
+ *                   flips and acks as for part 1.
+ * A list is records of words, then a 0 word:
+ *   cost   in 16-byte transfers: rows x (sources + screen writes a row,
+ *          1 or 2 on a TT) + CART_MELT_REC_COST; never 0
+ *   rows   how many, from `top` down
+ *   top    the first picture row written
+ *   group  the 16-pixel group's byte offset in a row (0, 16 .. 304)
+ *   k      sources, then k pairs of words: the source, and the mask of
+ *          the group's 2-pixel columns it fills (the same bits in all 8
+ *          plane words)
+ * A source is CART_MELT_N, the new frame's same row (a record never
+ * spans rows 99 and 100), or a shift d: row - d of the page on screen.
+ * The masks of a record's sources cover all 16 bits. Planned by
+ * fb_eight_melt_step (fb.c); mirrored in userfw.s (PART8_*, MELT_*). */
+#define CART_PART_TO_N                   0x0002u
+#define CART_PART_MELT                   0x0004u
+#define CART_MELT_N                      0x8000u
+#define CART_MELT_REC_COST               4u   /* a record's own cost */
+#define CART_MELT_REC_MAX_COST           256u /* the most one record may cost */
+
 /* Shared-variable slot 5: the TT's internal speaker, a word the RP sets
  * with keypad ( -- 0 off (as the region starts), else on. On a TT only
  * (bit 1 of the sound report), the m68k switches it through bit 6 of the

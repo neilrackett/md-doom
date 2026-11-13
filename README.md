@@ -112,9 +112,9 @@ own 256 colours, with no dithering: TT Low on a TT, and the Falcon's
 256-colour mode at 320×240 on a VGA monitor or 320×200 on an RGB monitor
 or a TV. A 256-colour screen is twice the size of a 16-colour one, so
 each frame reaches your machine in two halves and the frame rate is
-lower than in 16 colours. There's no melt between screens in 256
-colours yet, and keypad \* does nothing. On a mono monitor both
-machines use the mono picture as above.
+lower than in 16 colours. Screens melt into each other as in 16
+colours; your machine does that part itself. Keypad \* does nothing. On
+a mono monitor both machines use the mono picture as above.
 
 ### Music
 

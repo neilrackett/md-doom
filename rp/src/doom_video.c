@@ -1252,7 +1252,67 @@ static void __not_in_flash_func(wipe_right_job)(void *arg) {
   }
 }
 
+/* Doom's columns at the start: a random walk from up to 15 tics' wait. */
+static void wipe_start_columns(void) {
+  s_wipe_rand = time_us_32() | 1u;
+  s_wipe_y[0] = -(int16_t)(wipe_random() % 16u);
+  for (unsigned i = 1; i < WIPE_COLS; i++) {
+    int v = s_wipe_y[i - 1] + (int)(wipe_random() % 3u) - 1;
+    if (v > 0) v = 0;
+    else if (v == -16) v = -15;
+    s_wipe_y[i] = (int16_t)v;
+  }
+  s_wipe_max_us = 0;
+}
+
+/* Doom's columns `tics` tics on; true once every one is at the bottom. */
+static bool wipe_advance(int tics) {
+  bool done = true;
+  while (tics-- > 0) {
+    for (unsigned i = 0; i < WIPE_COLS; i++) {
+      int y = s_wipe_y[i];
+      if (y < 0) {
+        y++;
+        done = false;
+      } else if (y < FB_CHUNKED_H) {
+        int dy = (y < 16) ? y + 1 : 8;
+        if (y + dy >= FB_CHUNKED_H) dy = FB_CHUNKED_H - y;
+        y += dy;
+        done = false;
+      }
+      s_wipe_y[i] = (int16_t)y;
+    }
+  }
+  return done;
+}
+
+/* 256 colours: the ST melts its old picture into the new frame, which
+ * goes to it first (fb_eight_melt_begin); each step here sends it the
+ * columns' heights. */
+static unsigned s_wipe_steps;
+
+static bool wipe_step_eight(int tics) {
+  const bool done = wipe_advance(tics);
+  const uint32_t t0 = time_us_32();
+  fb_eight_melt_step(s_wipe_y); /* waits for the step before to be copied */
+  const uint32_t us = time_us_32() - t0;
+  if (us > s_wipe_max_us) s_wipe_max_us = us;
+  s_wipe_steps++;
+  if (done) {
+    DPRINTF("melt done, %u steps, step max %lu us\n", s_wipe_steps, (unsigned long)s_wipe_max_us);
+  }
+  return done;
+}
+
 void doom_video_wipe_begin(void) {
+  if (fb_st_eight()) {
+    wipe_start_columns();
+    s_wipe_steps = 0;
+    fb_eight_melt_begin(s_pal8_dirty && s_have_playpal ? write_pal8 : NULL);
+    if (s_have_playpal) s_pal8_dirty = false;
+    return;
+  }
+
   /* One palette serves both pictures, and the whole screen. The old
    * one is in the cart FB as pens, so with the adaptive source the view
    * pens it uses keep their colours for the melt, and the others are
@@ -1289,35 +1349,13 @@ void doom_video_wipe_begin(void) {
     s_split_pix = ~0u;
   }
 
-  s_wipe_rand = time_us_32() | 1u;
-  s_wipe_y[0] = -(int16_t)(wipe_random() % 16u);
-  for (unsigned i = 1; i < WIPE_COLS; i++) {
-    int v = s_wipe_y[i - 1] + (int)(wipe_random() % 3u) - 1;
-    if (v > 0) v = 0;
-    else if (v == -16) v = -15;
-    s_wipe_y[i] = (int16_t)v;
-  }
+  wipe_start_columns();
   memset(s_wipe_off, 0, sizeof(s_wipe_off));
-  s_wipe_max_us = 0;
 }
 
 bool doom_video_wipe_step(int tics) {
-  bool done = true;
-  while (tics-- > 0) {
-    for (unsigned i = 0; i < WIPE_COLS; i++) {
-      int y = s_wipe_y[i];
-      if (y < 0) {
-        y++;
-        done = false;
-      } else if (y < FB_CHUNKED_H) {
-        int dy = (y < 16) ? y + 1 : 8;
-        if (y + dy >= FB_CHUNKED_H) dy = FB_CHUNKED_H - y;
-        y += dy;
-        done = false;
-      }
-      s_wipe_y[i] = (int16_t)y;
-    }
-  }
+  if (fb_st_eight()) return wipe_step_eight(tics);
+  const bool done = wipe_advance(tics);
 
   s_cart_fb = (uint8_t *)fb_screen.framebuffer;
   s_use_bn = (s_dither == DOOM_VIDEO_DITHER_BLUENOISE);

@@ -205,11 +205,6 @@ void I_MD_PresentFrame(void) {
 
   doom_video_set_status_bar(gamestate == GS_LEVEL && viewheight < SCREENHEIGHT);
 
-  /* In 256 colours there is no melt yet: the screens cut. It works on
-   * the 16-colour picture in the cart FB, which there holds only half
-   * of one (doom_video.h). */
-  if (wipe_pending && doom_video_eight()) wipe_pending = false;
-
   if (wipe_pending) {
     /* The last published frame melts into this one. Blocks for the
      * 1.2 s or so the melt takes, at Doom's tic rate, as the original

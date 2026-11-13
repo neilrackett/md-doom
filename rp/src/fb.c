@@ -410,6 +410,18 @@ static uint16_t s_part_seq, s_pal8_seq;
 static bool s_part_out;          /* a part posted, its ack not yet seen */
 static uint32_t s_part_acks_at_post;
 
+/* Posts what is in the cart FB with part index idx: the index, then the
+ * sequence last, as the m68k takes it (and the palette) when it sees the
+ * sequence change. */
+static void fb_eight_post(unsigned idx) {
+  uint8_t *cart = (uint8_t *)&__rom_in_ram_start__;
+  *(volatile uint16_t *)(cart + CART_PART_IDX_OFFSET) = (uint16_t)idx;
+  __sync_synchronize();
+  *(volatile uint16_t *)(cart + CART_PART_SEQ_OFFSET) = ++s_part_seq;
+  s_part_acks_at_post = s_part_acks;
+  s_part_out = true;
+}
+
 /* Until the m68k has copied the part last posted. */
 static void fb_eight_wait(void) {
   if (!s_part_out) return;
@@ -424,7 +436,11 @@ static void fb_eight_wait(void) {
   if (waited > s_dbg_wait_max_us) s_dbg_wait_max_us = waited;
 }
 
-static uint32_t fb_eight_part(unsigned part, void (*palette)(uint16_t *slot)) {
+/* Converts rows (idx & 1) * 100 on of fb_chunked_buffer into the cart FB
+ * and posts them with part index idx (cart_shared.h: the part, and
+ * CART_PART_TO_N for the melt's new-frame buffer). */
+static uint32_t fb_eight_part(unsigned idx, void (*palette)(uint16_t *slot)) {
+  const unsigned part = idx & 1u;
   fb_eight_wait();
   uint8_t *cart = (uint8_t *)&__rom_in_ram_start__;
   if (palette) {
@@ -437,19 +453,119 @@ static uint32_t fb_eight_part(unsigned part, void (*palette)(uint16_t *slot)) {
                fb_chunked_buffer + part * CART_EIGHT_ROWS * FB_CHUNKED_W, FB_EIGHT_HALF);
   fb_core1_wait();
   const uint32_t us = time_us_32() - t0;
-  /* The sequence last: the m68k takes the part, and the palette, when
-   * it sees it change. */
-  *(volatile uint16_t *)(cart + CART_PART_IDX_OFFSET) = (uint16_t)part;
-  __sync_synchronize();
-  *(volatile uint16_t *)(cart + CART_PART_SEQ_OFFSET) = ++s_part_seq;
-  s_part_acks_at_post = s_part_acks;
-  s_part_out = true;
+  fb_eight_post(idx);
   return us;
 }
 
 uint32_t fb_eight_publish(void (*palette)(uint16_t *slot)) {
   const uint32_t us = fb_eight_part(0u, palette);
   return us + fb_eight_part(1u, NULL);
+}
+
+/* --- 256 colours: the melt (cart_shared.h, "the melt") --------------- */
+
+#define MELT8_COLS 160u
+#define MELT8_H    (2u * CART_EIGHT_ROWS)
+
+/* The heights the page on screen shows, and the page being drawn (valid
+ * from the second step: before it, it holds whatever was there). */
+static uint8_t s_melt_front[MELT8_COLS], s_melt_back[MELT8_COLS];
+static bool s_melt_back_valid;
+
+/* MELT8_PLAN_BEGIN (extracted by the host test) */
+/* One melt step's display list into out: yk the heights to show, yf the
+ * page on screen's, yb the page being drawn's when back_valid, w the
+ * screen writes a row costs (2 on a TT, whose rows are doubled). A row r
+ * of a 2-pixel column c shows the new frame if r < yk[c], else the old
+ * frame moved down by yk[c] -- which the page on screen has at row
+ * r - (yk[c] - yf[c]). The page being drawn is only written, so nothing
+ * depends on order. Where it already shows a column right (yk == yb), and
+ * above every other column's yb (the new frame there already), nothing
+ * is written; below, each group is cut at its columns' heights and at
+ * row 100 (the new-frame buffer's two halves), and every column of a
+ * piece is written from its own source. Returns the words written. */
+static unsigned melt8_plan(uint16_t *out, const uint8_t *yk, const uint8_t *yf,
+                           const uint8_t *yb, bool back_valid, unsigned w) {
+  uint16_t *o = out;
+  for (unsigned g = 0; g < MELT8_COLS / 8u; g++) {
+    const unsigned c0 = 8u * g;
+    unsigned lo = MELT8_H;
+    for (unsigned c = c0; c < c0 + 8u; c++) {
+      if (!back_valid) lo = 0;
+      else if (yk[c] != yb[c] && yb[c] < lo) lo = yb[c];
+    }
+    for (unsigned a = lo; a < MELT8_H;) {
+      unsigned b = (a < CART_EIGHT_ROWS) ? CART_EIGHT_ROWS : MELT8_H;
+      for (unsigned c = c0; c < c0 + 8u; c++) {
+        if (yk[c] > a && yk[c] < b) b = yk[c];
+      }
+      /* Rows a..b-1: a column is the new frame throughout, or the old
+       * one throughout, moved by its own amount. */
+      uint16_t nmask = 0, fd[8], fm[8];
+      unsigned nf = 0;
+      for (unsigned i = 0; i < 8u; i++) {
+        const uint16_t m = (uint16_t)(0xC000u >> (2u * i));
+        if (yk[c0 + i] >= b) {
+          nmask |= m;
+          continue;
+        }
+        const uint16_t d = (uint16_t)(yk[c0 + i] - yf[c0 + i]);
+        unsigned j = 0;
+        while (j < nf && fd[j] != d) j++;
+        if (j == nf) {
+          fd[nf] = d;
+          fm[nf++] = 0;
+        }
+        fm[j] |= m;
+      }
+      const unsigned k = (nmask ? 1u : 0u) + nf;
+      const unsigned per_row = k + w;
+      const unsigned most = (CART_MELT_REC_MAX_COST - CART_MELT_REC_COST) / per_row;
+      for (unsigned t = a; t < b; t += most) {
+        const unsigned n = (b - t < most) ? b - t : most;
+        *o++ = (uint16_t)(n * per_row + CART_MELT_REC_COST);
+        *o++ = (uint16_t)n;
+        *o++ = (uint16_t)t;
+        *o++ = (uint16_t)(g * 16u);
+        *o++ = (uint16_t)k;
+        if (nmask) {
+          *o++ = CART_MELT_N;
+          *o++ = nmask;
+        }
+        for (unsigned j = 0; j < nf; j++) {
+          *o++ = fd[j];
+          *o++ = fm[j];
+        }
+      }
+      a = b;
+    }
+  }
+  *o++ = 0;
+  return (unsigned)(o - out);
+}
+/* MELT8_PLAN_END */
+
+void fb_eight_melt_begin(void (*palette)(uint16_t *slot)) {
+  (void)fb_eight_part(CART_PART_TO_N, palette);
+  (void)fb_eight_part(CART_PART_TO_N | 1u, NULL);
+  memset(s_melt_front, 0, sizeof(s_melt_front)); /* the old picture, unmoved */
+  s_melt_back_valid = false;
+}
+
+void fb_eight_melt_step(const int16_t *y) {
+  uint8_t yk[MELT8_COLS];
+  for (unsigned c = 0; c < MELT8_COLS; c++) {
+    const int v = y[c];
+    yk[c] = (uint8_t)(v < 0 ? 0 : v > (int)MELT8_H ? (int)MELT8_H : v);
+  }
+  fb_eight_wait(); /* the cart FB is free once the last step is copied */
+  /* At most ~10 K words, well inside the cart FB's 16 K. */
+  (void)melt8_plan((uint16_t *)fb_screen.framebuffer, yk, s_melt_front, s_melt_back,
+                   s_melt_back_valid, s_st_falcon ? 1u : 2u);
+  fb_eight_post(CART_PART_MELT);
+  memcpy(s_melt_back, s_melt_front, sizeof(s_melt_back));
+  memcpy(s_melt_front, yk, sizeof(s_melt_front));
+  s_melt_back_valid = true;
 }
 
 /* The framework's 16 ST colours (palette_set) as the first 16 of 256,

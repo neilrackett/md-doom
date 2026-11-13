@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Screens melt into each other in 256 colours on a TT or a Falcon too,
+  as Doom's do. The cartridge has no room for the old picture there, so
+  the TT or Falcon moves the pixels itself, step by step, as the
+  cartridge tells it to.
+
 ## v1.1.0 (2026-11-13)
 
 - On a TT, keypad ( turns the internal speaker on or off, as in

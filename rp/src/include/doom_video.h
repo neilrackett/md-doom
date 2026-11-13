@@ -25,8 +25,8 @@
  *
  * On a TT or a Falcon with a colour monitor (fb_st_eight()) there is no
  * reduction at all: the frame goes out as 8 bitplanes with PLAYPAL as
- * its 256 colours (fb_eight_publish), the dither does not apply, and
- * there is no melt (doom_video_eight()).
+ * its 256 colours (fb_eight_publish), and the dither does not apply
+ * (doom_video_eight()). The melt is the ST's there: see below.
  */
 
 #ifndef DOOM_VIDEO_H_INCLUDED
@@ -61,9 +61,8 @@ void doom_video_init(void);
  * from the frame. */
 void doom_video_set_playpal(const uint8_t *rgb768);
 
-/* True when the ST shows Doom's own 256 colours (fb_st_eight): the melt
- * and the dither modes, which work on the 16-colour picture, do not
- * apply. */
+/* True when the ST shows Doom's own 256 colours (fb_st_eight): the
+ * dither modes, which work on the 16-colour picture, do not apply. */
 bool doom_video_eight(void);
 
 /* Change the dither mode, from the next frame. */
@@ -81,7 +80,10 @@ void doom_video_set_status_bar(bool shown);
  * each doom_video_wipe_step(tics) advances the columns by Doom's rules
  * for `tics` game tics and publishes, and returns true once every
  * column has fallen off the bottom. The melt runs in place on the cart
- * FB, so it needs no second buffer. */
+ * FB, so it needs no second buffer. In 256 colours the cart FB holds
+ * only half a picture, so the ST melts its own: the new frame goes to it
+ * first and each step sends only the columns' heights
+ * (fb_eight_melt_begin / fb_eight_melt_step). */
 void doom_video_wipe_begin(void);
 bool doom_video_wipe_step(int tics);
 

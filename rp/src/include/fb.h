@@ -144,6 +144,15 @@ uint32_t fb_eight_publish(void (*palette)(uint16_t *slot));
  * boot (0 before the first report). */
 unsigned fb_eight_rows_per_vbl(void);
 
+/* 256 colours, the melt (cart_shared.h, "the melt"): send the new frame,
+ * in fb_chunked_buffer, to the ST's new-frame buffer (with the palette,
+ * as fb_eight_publish), and then each step's heights -- Doom's y[] of 160
+ * two-pixel columns, < 0 not yet moving, 200 done -- as a display list
+ * the ST runs into the page being drawn before it flips. A step waits
+ * for the one before to be on screen. */
+void fb_eight_melt_begin(void (*palette)(uint16_t *slot));
+void fb_eight_melt_step(const int16_t *y);
+
 /* Called from fb_pump_rom3 when the heartbeat has been gone long enough
  * to mean the ST was reset. The handler does not return: the cartridge
  * image has to be put back and the RP restarted alongside the ST.

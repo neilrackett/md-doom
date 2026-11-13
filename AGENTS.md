@@ -208,7 +208,7 @@ The Atari ST sees a 64 KB window at `$FA0000`–`$FAFFFF` (mirrored RP-side at `
 | `$FA4000` | `CMD_MAGIC_SENTINEL_ADDR` | 4 B | RP→m68k command word (`CMD_NOP`, `CMD_RESET`, `CMD_BOOT_GEM`, `CMD_START`). |
 | `$FA4004` | (reserved) | 8 B | Former handshake slots; unused. |
 | `$FA400C` | `FB_FRAME_COUNTER_ADDR` | 4 B | RP-incremented dirty-frame counter; `userfw.s` only blits when this changes. |
-| `$FA4010` | `SHARED_VARIABLES` | 240 B | 60 × 4 B indexed slots. Slot 0 is the skip-autostart word, slot 1 hands the YM to the music without DMA sound (`CART_YM_MUSIC_OFFSET`), slot 2 says the frame has a status-bar palette (`CART_SPLIT_OFFSET`), slot 3 is the 256-colour part sequence and index (`CART_PART_SEQ_OFFSET`/`CART_PART_IDX_OFFSET`), slot 4 the 256-colour palette's sequence (`CART_PAL8_SEQ_OFFSET`), slot 5 the TT speaker (`CART_SPEAKER_OFFSET`). **Slots 12–19 are the palette below and 20–27 (`$FA4060`, `CART_HUD_PALETTE_OFFSET`) the status bar's — not free.** |
+| `$FA4010` | `SHARED_VARIABLES` | 240 B | 60 × 4 B indexed slots. Slot 0 is the skip-autostart word, slot 1 hands the YM to the music without DMA sound (`CART_YM_MUSIC_OFFSET`), slot 2 says the frame has a status-bar palette (`CART_SPLIT_OFFSET`), slot 3 is the 256-colour part sequence and index (`CART_PART_SEQ_OFFSET`/`CART_PART_IDX_OFFSET`; the index also says the new frame for a melt, `CART_PART_TO_N`, or a melt step, `CART_PART_MELT`), slot 4 the 256-colour palette's sequence (`CART_PAL8_SEQ_OFFSET`), slot 5 the TT speaker (`CART_SPEAKER_OFFSET`). **Slots 12–19 are the palette below and 20–27 (`$FA4060`, `CART_HUD_PALETTE_OFFSET`) the status bar's — not free.** |
 | `$FA4040` | `PALETTE` (`CART_PALETTE_OFFSET`) | 32 B | 16 ST colour words (`0000.0RRR.0GGG.0BBB`, STE low bit in bit 3 of each nibble). The m68k latches them into `UFW_PAL_LATCH` ($77F20) as it starts each copy and applies the latch to `$FFFF8240..$FFFF825E` at the next VBL, with the page; `doom_video.c` writes them via `palette_set()` in the publish window only. |
 | `$FA4100` | `AUDIO_BUFFER_ADDR` | 1024 B | Audio buffer, refilled by the RP once per VBL in whichever format the detected back-end wants. Its last 32 bytes (`$FA44E0`, `CART_YM_PACKET_OFFSET`) are the YM music registers. With DMA sound only the first 512 are samples, and in 256 colours the second half (`$FA4300`, `CART_PAL8_OFFSET`) is the palette, which is why userfw skips the YM packet in that mode. |
 | `$FA4500` | `APP_FREE_ADDR` | ~15.5 KB | Contiguous arena, ends at FRAMEBUFFER. The ST never reads it, so the `CART_APP_FREE` linker region overlays it and RP-side buffers are parked there (`__cart_app_free`) — see "Memory layout". |
@@ -529,10 +529,43 @@ rows copied between two VBLs, three quarters kept, at most a part),
 reported every VBL at `$FB9400` + rows and printed on the 64-frame line
 (`256 NNrows`). The pages: `$80000` and `$80000 + 153,600` on a TT,
 `+ 76,800` on a Falcon, both cleared at boot so the borders stay black;
-the 8-plane state is in page A's unused first 32 KB (`$71000`), and the
-DMA sound buffers and the rest of `$6C000..$80000` do what they always
-did. The melt does not apply (`doom_video_eight()`: screens cut) and
-keypad `*` does nothing. Leaving through `CMD_BOOT_GEM` puts TOS's 256
+the 8-plane state is at the top of userfw's code window, below the
+stack (`$6F500..$6FE00`: 256 B of state, the palette latch, TOS's
+palette; the image guard at the end of `userfw.s` keeps the code
+below it), the two 16-colour pages' first 32,000 B are the melt's
+new-frame buffer, and the DMA sound buffers and the rest of
+`$6C000..$80000` do what they always did. Keypad `*` does nothing.
+**The melt is the ST's** (cart_shared.h, "the melt"): the RP has no room
+for the old picture, but the ST has it on screen. `doom_video_wipe_begin`
+sends the new frame first, as two parts with `CART_PART_TO_N`, into the
+16-colour pages (rows 0..99 at `$70000`, 100..199 at `$78000`, exactly
+100 rows each), with no flip; each `doom_video_wipe_step` advances
+Doom's 160 columns as in 16 colours and `fb_eight_melt_step` plans the
+step as a display list in the cart FB (`CART_PART_MELT`), which the ST
+runs (`melt8_record`) into the page being drawn, then flips and acks.
+A row r of a column shows the new frame if r < y, else the page on
+screen's row r - (y - y_front): the page being drawn is only written, so
+nothing depends on order, and columns it already shows right, and rows
+above every changed column's old height, are skipped. Each 16-pixel
+group is cut at its columns' heights and at row 100; a record's
+sources are the new frame or the page on screen moved by d, each with a
+2-bit-per-column mask in all 8 plane words (`AND.L`, two planes at a
+time), or one full-width source copied with `MOVEM`. A step costs
+`rows x (sources + 1 or 2 writes) + 4` a record, in 16-byte transfers;
+the ST runs records a VBL while `melt8_calibrate`'s budget lasts (two-
+source records for one VBL at boot, three quarters kept) and at least
+one, so the sound is refilled every VBL; the RP's step waits for the
+step before, and Doom's tics merge if the ST is slow, so the melt keeps
+its length. A0 is never used: `userfw_vbl` reloads it every VBL. The
+host model (planner from `fb.c` + a C copy of the records' meaning,
+checked word for word against the melt composed directly, on TT, VGA
+and RGB layouts) is how it was checked; a step averages ~6,700 units,
+the first (a whole page) ~23,000. In Hatari (a new game from the title,
+which melts the title into E1M1) a TT took 34-40 steps, the slowest
+52 ms, and a Falcon 35 on VGA and 26 on RGB, the slowest 76 and 84 ms
+(its 16 MHz 68030 is the limit there); the melt kept Doom's length
+either way, the sound stayed steady, and the STE's 16-colour melt is
+unchanged. Leaving through `CMD_BOOT_GEM` puts TOS's 256
 colours back, and the TT's shift mode or the Falcon's `VsetMode` word.
 In Hatari (TOS 3.06 TT, TOS 4.04 Falcon on VGA and RGB) the title and
 E1M1 show right, a frame takes the minimum two VBLs, and STE, mono and
@@ -875,10 +908,9 @@ revisited in order of visible payoff.
   colours"). The figures to ask for are the 64-frame line's
   `256 NNrows` (the boot-measured rows a VBL; 100 means a part a VBL),
   `frame max` and `ack wait max` (here, the longest wait for a part's
-  ack). There is no melt in 256
-  colours: the old picture is not in the cart FB to melt from. An
-  ST-side melt (the front page is the old frame, the new one could be
-  sent to the back page first) is the way to get it back. The TT's
+  ack). The melt in 256 colours is the ST's and untested on hardware
+  (the log's `melt done, N steps, step max` line is the figure to ask
+  for). The TT's
   copy is the limit, at a part every two VBLs, and **writing each row
   once does not fix it**: scanlines and interlacing were tried on a
   real TT (13 Nov 2026, a keypad `*` choice on a branch since deleted)

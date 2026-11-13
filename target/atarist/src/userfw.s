@@ -503,11 +503,12 @@ UFW8_SIZE_TT          equ 153600             ; 320x480
 UFW8_SIZE_FALCON      equ 76800              ; 320x240; RGB uses the first 64,000
 UFW8_FIRST_TT         equ 40*CART_EIGHT_ROW_BYTES
 UFW8_FIRST_VGA        equ 20*CART_EIGHT_ROW_BYTES
-; State, in the part of screen page A the 8-plane mode does not show
-; (after snd_measure's 4 KB of silence), so touched only in that mode.
-UFW8_STATE            equ $00071000
+; State, at the top of userfw's code window below the stack, which the
+; image leaves free (the guard at the end of the file): 256 B, then the
+; two palettes, up to UFW_STACK_TOP - UFW_STACK_SIZE ($6F500..$6FE00).
+UFW8_STATE            equ (UFW_STACK_TOP-UFW_STACK_SIZE-$900)
 UFW8_SEQ              equ UFW8_STATE+0       ; word: the last part copied
-UFW8_PART             equ UFW8_STATE+2       ; word: the part under way, 0 or 1
+UFW8_PART             equ UFW8_STATE+2       ; word: the part under way, 0 or 1, + PART8_TO_N for a melt's new frame
 UFW8_ROW              equ UFW8_STATE+4       ; word: its rows copied so far, 0 = none under way
 UFW8_LEFT             equ UFW8_STATE+6       ; word: rows this VBL may still copy
 UFW8_BUDGET           equ UFW8_STATE+8       ; word: rows a VBL, measured at boot
@@ -518,8 +519,25 @@ UFW8_FLIPPED          equ UFW8_STATE+16      ; byte: a page went up: its palette
 UFW8_TWICE            equ UFW8_STATE+17      ; byte: $FF = every row on two lines (a TT)
 UFW8_FIRST            equ UFW8_STATE+20      ; longword: offset of the picture's first line
 UFW8_XOR              equ UFW8_STATE+24      ; longword: page A ^ page B
-UFW8_PAL_LATCH        equ $00071100          ; 1 KB: the palette for the page being copied
-UFW8_TOS_PAL          equ $00071500          ; 1 KB: TOS's 256 colours, for the way out
+UFW8_MPOS             equ UFW8_STATE+28      ; longword: the melt step's next record
+UFW8_MBUDGET          equ UFW8_STATE+32      ; word: melt cost units a VBL, measured at boot
+UFW8_MLEFT            equ UFW8_STATE+34      ; word: units this VBL may still spend
+UFW8_MCOUNT           equ UFW8_STATE+36      ; longword: melt8_calibrate's count
+UFW8_MELT             equ UFW8_STATE+40      ; byte: $FF = a melt step under way
+UFW8_MCAL             equ UFW8_STATE+64      ; 20 B: melt8_calibrate's record
+UFW8_MTAB             equ UFW8_STATE+96      ; 80 B: a record's sources (melt8_record)
+UFW8_PAL_LATCH        equ UFW8_STATE+$100    ; 1 KB: the palette for the page being copied
+UFW8_TOS_PAL          equ UFW8_STATE+$500    ; 1 KB: TOS's 256 colours, for the way out
+; The melt (cart_shared.h, "the melt"). The new frame waits in the two
+; 16-colour screen pages, which this mode does not show: 100 rows of
+; 320 B each, the tails (DMA buffers, state) left alone.
+UFW8_N_A              equ $00070000          ; rows 0..99
+UFW8_N_B              equ $00078000          ; rows 100..199
+PART8_TO_N            equ 2                  ; part index bits (CART_PART_*)
+PART8_MELT            equ 4
+MELT_N                equ $8000              ; a record's source: the new frame
+MELT_REC_COST         equ 4                  ; CART_MELT_REC_COST
+MELT_CAL_ROWS         equ 22                 ; melt8_calibrate's record
 
 ; --- STE/Mega STE DMA sound (auto-detected at runtime) -----------
 ; STE-class machines play 8-bit SIGNED PCM from ST RAM by DMA with no
@@ -1894,16 +1912,21 @@ userfw:
     move.w  d0, UFW8_LEFT
     lea     ROWS_WINDOW_BASE, a1
     tst.b   (a1, d0.w)                    ; for the debug line: <= 100, a byte
+    tst.b   UFW8_MELT
+    bne     .melt8                        ; a melt step under way
     tst.w   UFW8_ROW
     bne.s   .rows8                        ; a part under way
     move.w  PART_SEQ_ADDR, d0
     cmp.w   UFW8_SEQ, d0
     beq     .reack8                       ; nothing new
     move.w  d0, UFW8_SEQ
-    moveq   #1, d0
+    moveq   #PART8_MELT|PART8_TO_N|1, d0
     and.w   PART_IDX_ADDR, d0
+    btst    #2, d0                        ; PART8_MELT
+    bne     .melt8_start
     move.w  d0, UFW8_PART
-    bne.s   .rows8
+    btst    #0, d0
+    bne.s   .rows8                        ; part 1
     move.w  PAL8_SEQ_ADDR, d0             ; part 0 brings the frame's palette
     cmp.w   UFW8_PALSEQ, d0
     beq.s   .rows8
@@ -1916,7 +1939,10 @@ userfw:
     mulu    #CART_EIGHT_ROW_BYTES, d0
     movea.l #UFW_FB_SRC, a6
     adda.l  d0, a6
-    move.w  UFW8_PART, d0
+    btst    #1, UFW8_PART+1               ; PART8_TO_N
+    bne.s   .rows8_n
+    moveq   #1, d0
+    and.w   UFW8_PART, d0
     mulu    #CART_EIGHT_ROWS, d0
     add.w   UFW8_ROW, d0
     mulu    UFW8_STEP, d0
@@ -1932,18 +1958,38 @@ userfw:
     subq.w  #1, UFW8_LEFT
     bne.s   .row8
     bra     .ym_done                      ; the rest next VBL
+.rows8_n:
+    ; A melt's new frame: to its buffer in the 16-colour pages, each row
+    ; once, and nothing is flipped.
+    movea.l #UFW8_N_A, a5
+    btst    #0, UFW8_PART+1
+    beq.s   .n8_half
+    movea.l #UFW8_N_B, a5
+.n8_half:
+    adda.l  d0, a5
+.row8_n:
+    bsr     copy_row8_once                ; A6 on to the next row, A5 kept
+    lea     CART_EIGHT_ROW_BYTES(a5), a5
+    addq.w  #1, UFW8_ROW
+    cmpi.w  #CART_EIGHT_ROWS, UFW8_ROW
+    beq.s   .part8_done
+    subq.w  #1, UFW8_LEFT
+    bne.s   .row8_n
+    bra     .ym_done                      ; the rest next VBL
 .part8_done:
     clr.w   UFW8_ROW
     moveq   #0, d0
     move.b  UFW8_SEQ+1, d0
     lea     PARTACK_WINDOW_BASE, a1
     tst.b   (a1, d0.w)                    ; copied: the RP may write the FB again
-    tst.w   UFW8_PART
-    beq     .ym_done                      ; part 1 no sooner than next VBL
-    ; Part 1: the frame is whole. Its page goes on screen at the next
-    ; VBL and its palette with it (.vbl8_palette). Nothing more is
-    ; copied in this VBL, so the next frame's palette cannot be latched
-    ; before this one is applied.
+    cmpi.w  #1, UFW8_PART
+    bne     .ym_done                      ; part 0, or the new frame's: no flip
+.flip8:
+    ; Part 1, or a melt step: the frame is whole. Its page goes on
+    ; screen at the next VBL and its palette with it (.vbl8_palette).
+    ; Nothing more is copied in this VBL, so the next frame's palette
+    ; cannot be latched before this one is applied, and the next melt
+    ; step cannot draw into the page still on screen.
     move.b  UFW_SCREEN_PAGE+1, VIDEO_BASE_ADDR_HIGH.w
     move.b  UFW_SCREEN_PAGE+2, VIDEO_BASE_ADDR_MID.w
     clr.b   VIDEO_BASE_ADDR_LOW.w
@@ -1953,6 +1999,35 @@ userfw:
     move.l  d0, UFW_SCREEN_PAGE
     st      UFW8_FLIPPED
     bra     .ym_done
+.melt8_start:
+    move.l  #UFW_FB_SRC, UFW8_MPOS        ; the step's display list
+    st      UFW8_MELT
+.melt8:
+    ; A melt step: its records into the page being drawn, as many as
+    ; this VBL has room for and at least one; then the ack and the flip.
+    movea.l UFW8_MPOS, a6
+    move.w  UFW8_MBUDGET, UFW8_MLEFT
+    bra.s   .melt8_go                     ; the first one whatever it costs
+.melt8_rec:
+    move.w  (a6), d0
+    cmp.w   UFW8_MLEFT, d0
+    bgt.s   .melt8_later                  ; no room left this VBL
+.melt8_go:
+    move.w  (a6), d0                      ; its cost, 0 = the end
+    beq.s   .melt8_done
+    sub.w   d0, UFW8_MLEFT
+    bsr     melt8_record                  ; A6 on to the next
+    bra.s   .melt8_rec
+.melt8_later:
+    move.l  a6, UFW8_MPOS
+    bra     .ym_done
+.melt8_done:
+    sf      UFW8_MELT
+    moveq   #0, d0
+    move.b  UFW8_SEQ+1, d0
+    lea     PARTACK_WINDOW_BASE, a1
+    tst.b   (a1, d0.w)                    ; done: the RP may write the FB again
+    bra     .flip8
 .reack8:
     ; Nothing new: the last part's ack again. The RP drains its capture
     ; ring only when it gets the chance, and a pack's flash erase holds it
@@ -2194,6 +2269,212 @@ copy_row8:
     lea     -CART_EIGHT_ROW_BYTES(a5), a5
     rts
 
+; copy_row8_once -- as copy_row8, one line whatever the machine: a
+; melt's new frame, into its buffer. Clobbers D0-D7/A1-A3.
+copy_row8_once:
+    moveq   #(CART_EIGHT_ROW_BYTES/40)-1, d7
+.once:
+    movem.l (a6)+, d0-d6/a1-a3
+    movem.l d0-d6/a1-a3, (a5)
+    lea     40(a5), a5
+    dbf     d7, .once
+    lea     -CART_EIGHT_ROW_BYTES(a5), a5
+    rts
+
+; -------------------------------------------------------------------
+; melt8_record -- one record of a melt step's display list at A6
+; (cart_shared.h, "the melt"), into the page being drawn from the
+; melt's new frame and the page on screen; A6 is left at the next
+; record. Every row of the record's group is written whole: each
+; source's words ANDed with its mask and ORed together, two planes to a
+; longword, on a TT to the line below as well. One full-width source is
+; just copied. A0 is not touched: userfw_vbl reloads it every VBL.
+; Clobbers D0-D7/A1-A5.
+melt8_record:
+    addq.l  #2, a6                        ; the cost: the caller's business
+    move.w  (a6)+, d7                     ; rows
+    subq.w  #1, d7                        ; for dbf
+    move.w  (a6)+, d2                     ; the top row
+    move.w  (a6)+, d3                     ; the group's byte offset
+    move.w  (a6)+, d4                     ; sources
+    subq.w  #1, d4
+    ; The page being drawn at the top row.
+    move.w  d2, d0
+    mulu    UFW8_STEP, d0
+    movea.l UFW_SCREEN_PAGE, a5
+    adda.l  UFW8_FIRST, a5
+    adda.l  d0, a5
+    adda.w  d3, a5
+    ; The new frame's same row (a record never spans rows 99 and 100).
+    movea.l #UFW8_N_A, a4
+    cmpi.w  #CART_EIGHT_ROWS, d2
+    blo.s   .n_half
+    movea.l #UFW8_N_B, a4
+    subi.w  #CART_EIGHT_ROWS, d2
+.n_half:
+    mulu    #CART_EIGHT_ROW_BYTES, d2
+    adda.l  d2, a4
+    adda.w  d3, a4
+    ; D5: the page on screen less the page being drawn.
+    move.l  UFW_SCREEN_PAGE, d0
+    move.l  UFW8_XOR, d5
+    eor.l   d0, d5
+    sub.l   d0, d5
+    ; The table: the new frame's mask (0 if none), then pairs of a mask
+    ; and the source's address less the destination's, then a 0 mask.
+    ; A mask is in both halves of a longword: two plane words at once.
+    lea     UFW8_MTAB, a3
+    movea.l a3, a2
+    clr.l   (a2)+
+.src:
+    move.w  (a6)+, d0                     ; the source
+    move.w  (a6)+, d1                     ; its mask
+    move.w  d1, d6
+    swap    d6
+    move.w  d1, d6
+    cmpi.w  #MELT_N, d0
+    bne.s   .src_old
+    move.l  d6, (a3)
+    bra.s   .src_next
+.src_old:
+    move.l  d6, (a2)+                     ; row - d of the page on screen
+    mulu    UFW8_STEP, d0
+    move.l  d5, d6
+    sub.l   d0, d6
+    move.l  d6, (a2)+
+.src_next:
+    dbf     d4, .src
+    clr.l   (a2)
+    ; One source, every column: a plain copy.
+    move.l  (a3), d5
+    beq.s   .fast_old
+    cmpi.l  #-1, d5
+    bne.s   .row
+    tst.l   4(a3)
+    bne.s   .row
+.fast_new:
+    movem.l (a4), d0-d3
+    movem.l d0-d3, (a5)
+    tst.b   UFW8_TWICE
+    beq.s   .fast_new_once
+    movem.l d0-d3, CART_EIGHT_ROW_BYTES(a5)
+.fast_new_once:
+    lea     CART_EIGHT_ROW_BYTES(a4), a4
+    adda.w  UFW8_STEP, a5
+    dbf     d7, .fast_new
+    rts
+.fast_old:
+    cmpi.l  #-1, 4(a3)
+    bne.s   .row
+    tst.l   12(a3)
+    bne.s   .row
+    move.l  8(a3), d6
+.fast_old_row:
+    movem.l 0(a5,d6.l), d0-d3
+    movem.l d0-d3, (a5)
+    tst.b   UFW8_TWICE
+    beq.s   .fast_old_once
+    movem.l d0-d3, CART_EIGHT_ROW_BYTES(a5)
+.fast_old_once:
+    adda.w  UFW8_STEP, a5
+    dbf     d7, .fast_old_row
+    rts
+    ; The general case, a row at a time: D0-D3 the row's four longwords.
+.row:
+    movea.l a3, a2
+    move.l  (a2)+, d5                     ; the new frame's mask
+    beq.s   .row_old
+    movem.l (a4), d0-d3
+    and.l   d5, d0
+    and.l   d5, d1
+    and.l   d5, d2
+    and.l   d5, d3
+    bra.s   .row_src
+.row_old:
+    moveq   #0, d0
+    moveq   #0, d1
+    moveq   #0, d2
+    moveq   #0, d3
+.row_src:
+    move.l  (a2)+, d5                     ; a mask, 0 = no more
+    beq.s   .row_store
+    move.l  (a2)+, d6
+    lea     0(a5,d6.l), a1
+    move.l  (a1)+, d4
+    and.l   d5, d4
+    or.l    d4, d0
+    move.l  (a1)+, d4
+    and.l   d5, d4
+    or.l    d4, d1
+    move.l  (a1)+, d4
+    and.l   d5, d4
+    or.l    d4, d2
+    move.l  (a1), d4
+    and.l   d5, d4
+    or.l    d4, d3
+    bra.s   .row_src
+.row_store:
+    movem.l d0-d3, (a5)
+    tst.b   UFW8_TWICE
+    beq.s   .row_once
+    movem.l d0-d3, CART_EIGHT_ROW_BYTES(a5)
+.row_once:
+    lea     CART_EIGHT_ROW_BYTES(a4), a4
+    adda.w  UFW8_STEP, a5
+    dbf     d7, .row
+    rts
+
+; -------------------------------------------------------------------
+; melt8_calibrate -- the melt's budget (UFW8_MBUDGET): the cost units
+; (cart_shared.h, "the melt") of two-source records, run into the page
+; not on screen from one VBL to the next, three quarters kept, as
+; eight_calibrate does for the copy. The page is overwritten by the
+; first frame. Needs interrupts at $2300. Clobbers D0-D7/A1-A6.
+melt8_calibrate:
+    lea     UFW8_MCAL, a1
+    moveq   #2+1, d0                      ; two sources and a line
+    tst.b   UFW8_TWICE
+    beq.s   .cost
+    addq.w  #1, d0                        ; and a TT's second line
+.cost:
+    mulu    #MELT_CAL_ROWS, d0
+    addq.w  #MELT_REC_COST, d0
+    move.w  d0, (a1)+                     ; cost
+    move.w  #MELT_CAL_ROWS, (a1)+         ; rows
+    clr.w   (a1)+                         ; from row 0
+    clr.w   (a1)+                         ; group 0
+    move.w  #2, (a1)+                     ; sources:
+    move.w  #MELT_N, (a1)+                ; half the new frame
+    move.w  #$5555, (a1)+
+    clr.w   (a1)+                         ; and half the page on screen
+    move.w  #$AAAA, (a1)+
+    clr.w   (a1)                          ; the end
+    clr.l   UFW8_MCOUNT
+    move.w  #-1, UFW_VBL_FLAG.w
+.sync:
+    stop    #$2300
+    tst.w   UFW_VBL_FLAG.w
+    bne.s   .sync
+    move.w  #-1, UFW_VBL_FLAG.w
+.run:
+    lea     UFW8_MCAL, a6
+    moveq   #0, d0
+    move.w  (a6), d0
+    add.l   d0, UFW8_MCOUNT
+    bsr     melt8_record
+    tst.w   UFW_VBL_FLAG.w
+    bne.s   .run
+    move.l  UFW8_MCOUNT, d0
+    move.l  d0, d1
+    lsr.l   #2, d1
+    sub.l   d1, d0                        ; three quarters
+    cmpi.l  #30000, d0                    ; a signed word's room, and then some
+    bls.s   .most
+    move.l  #30000, d0
+.most:
+    move.w  d0, UFW8_MBUDGET
+    rts
+
 ; -------------------------------------------------------------------
 ; eight_calibrate -- 256 colours: how many rows of a part a VBL has room
 ; to copy on this machine (UFW8_BUDGET), and the copy state from
@@ -2209,6 +2490,7 @@ eight_calibrate:
     move.w  d0, UFW8_PALSEQ               ; so the first part 0's palette is new
     clr.w   UFW8_ROW
     sf      UFW8_FLIPPED
+    sf      UFW8_MELT
     move.w  #-1, UFW_VBL_FLAG.w
 .sync:
     stop    #$2300
@@ -2236,7 +2518,7 @@ eight_calibrate:
     move.w  #CART_EIGHT_ROWS, d0
 .most:
     move.w  d0, UFW8_BUDGET
-    rts
+    bra     melt8_calibrate               ; and the melt's
 
 ; -------------------------------------------------------------------
 ; snd_measure -- UFW_SND_LEN's starting point: how many samples the DMA
@@ -2468,9 +2750,10 @@ userfw_dummy_irq:
     nop
 userfw_image_end:
 
-; Build-time guard: the destination is a fixed 8 KB window immediately
-; below screen page A, so an image that outgrows it would silently
-; overrun the screen -- and before that, the stack at its top.
-    ifgt (userfw_image_end - userfw_image_start) - (UFW_RAM_SIZE - UFW_STACK_SIZE)
-    fail "userfw image leaves less than UFW_STACK_SIZE of UFW_RAM_SIZE for the stack"
+; Build-time guard: the destination is a fixed 16 KB window immediately
+; below screen page A, with the stack at its top and the 256-colour
+; state below that, so an image that outgrows the rest would silently
+; overrun them.
+    ifgt (userfw_image_end - userfw_image_start) - (UFW8_STATE - UFW_RAM_DEST)
+    fail "userfw image runs into the 256-colour state below the stack"
     endc
