@@ -193,9 +193,10 @@ emu/emumd/tools/mdfw hatari            # once: builds EmuMD's Hatari, downloads 
 make emu                               # builds and runs MD/DOOM in Hatari
 make emu MONO=1                        # the same on a mono monitor
 make emu RECORD=doom.avi               # records picture and sound until you quit
+make emu-tt                            # the same on a TT, in 256 colours
 ```
 
-EmuMD boots EmuTOS unless you give it another TOS image with `TOS=/path/to/tos.img`.
+EmuMD boots EmuTOS unless you give it another TOS image with `TOS=/path/to/tos.img`. A TT needs EmuTOS's 512k image, which `make emu-tt` downloads the first time; `RECORD=` and `TOS=` work with it too.
 
 To record only part of a session, press Cmd+A (AltGr+A on Linux) to start and stop instead. QuickTime can't play the AVI that Hatari makes, but VLC can, and `ffmpeg -i doom.avi doom.mp4` converts it.
 
